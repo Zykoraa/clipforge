@@ -1,0 +1,671 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <!--CLIPFORGE_TOKEN_META-->
+  <title>ClipForge — AI Video Editor & MCP Studio</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <!-- Top Studio Header -->
+  <header class="topbar">
+    <div class="topbar-left">
+      <div class="brand">
+        <span class="brand-icon">◈</span>
+        <span class="brand-title">CLIPFORGE</span>
+        <span class="brand-tag">MCP NLE</span>
+      </div>
+      <input id="projectNameInput" class="project-name-input" type="text" value="ClipForge Project" title="Project Name" />
+      <select id="aspectSelect" class="select-compact" title="Canvas Resolution / Aspect Ratio">
+        <option value="1920x1080">16:9 Landscape (1920×1080)</option>
+        <option value="1080x1920">9:16 Vertical Shorts (1080×1920)</option>
+        <option value="1080x1080">1:1 Square (1080×1080)</option>
+        <option value="1280x720">16:9 HD (1280×720)</option>
+      </select>
+    </div>
+
+    <div class="topbar-center">
+      <div id="mcpStatusBadge" class="mcp-badge connected">
+        <span class="status-dot"></span>
+        <span id="mcpStatusText">MCP LIVE SYNC · v1</span>
+      </div>
+      <button id="btnOpenModels" class="models-pill-btn" title="Manage Local AI Models (E:\ComfyUI)">
+        <span class="models-dot" id="headerModelsDot"></span>
+        <span>Models</span>
+        <span id="modelsBadgeText" class="models-badge-count">...</span>
+      </button>
+    </div>
+
+    <div class="topbar-right">
+      <button id="btnUndo" class="btn btn-ghost" title="Undo (Ctrl+Z)">↶ Undo</button>
+      <button id="btnRedo" class="btn btn-ghost" title="Redo (Ctrl+Y)">↷ Redo</button>
+      <button id="btnClearTimeline" class="btn btn-ghost" title="Clear Timeline">✕ Clear</button>
+      <a id="btnDownloadRender" class="btn btn-secondary hidden" href="/api/render/download" download>⬇ Download MP4</a>
+      <button id="btnRender" class="btn btn-primary">▶ Export / Render MP4</button>
+    </div>
+  </header>
+
+  <!-- Main Workspace Grid -->
+  <main class="workspace">
+    <!-- Left Dock: Media Bin, Smart Stitch, Auto-Subtitles -->
+    <aside class="left-panel">
+      <nav class="panel-tabs">
+        <button class="tab-btn active" data-tab="tab-media">Media</button>
+        <button class="tab-btn" data-tab="tab-generate">AI Studio</button>
+        <button class="tab-btn" data-tab="tab-stitch">Stitch</button>
+        <button class="tab-btn" data-tab="tab-subs">Subs</button>
+      </nav>
+
+      <!-- TAB 1: Media Bin -->
+      <section id="tab-media" class="tab-content active">
+        <div class="import-box">
+          <div class="input-row">
+            <input id="importPathInput" type="text" placeholder="Paste file or folder path (C:\Videos\...)" />
+            <button id="btnImportPath" class="btn btn-secondary">Import</button>
+          </div>
+          <label class="dropzone" id="uploadDropzone">
+            <input id="fileUploadInput" type="file" multiple accept="video/*,audio/*,image/*" hidden />
+            <span>+ Drop video, audio, or meme image clips here</span>
+          </label>
+        </div>
+        <div id="mediaBinList" class="media-list"></div>
+      </section>
+
+      <!-- TAB 2: Offline AI Image & Video Studio -->
+      <section id="tab-generate" class="tab-content">
+        <!-- Compact Engine Strip -->
+        <div class="studio-status-strip">
+          <div class="studio-engine-state">
+            <span id="comfyStatusDot" class="mini-dot offline"></span>
+            <span id="comfyStatusText">Checking local engine...</span>
+          </div>
+          <div class="studio-status-actions">
+            <button id="btnStartComfy" class="btn btn-secondary btn-xs hidden">⚡ Start</button>
+            <button id="btnOpenModelsInline" class="btn btn-ghost btn-xs">📦 Models</button>
+          </div>
+        </div>
+
+        <!-- Mode Segmented Control -->
+        <div class="mode-switcher" role="tablist">
+          <button id="btnModeImage" class="mode-btn" type="button" data-mode="image">🖼 Image / Meme</button>
+          <button id="btnModeVideo" class="mode-btn active" type="button" data-mode="video">🎬 Video</button>
+        </div>
+
+        <div class="form-card studio-card">
+          <!-- Model Selector -->
+          <div class="field-group">
+            <div class="field-header-row">
+              <label class="field-label" for="genModelSelect">Model</label>
+              <span id="genModelBadge" class="badge">LOCAL</span>
+            </div>
+            <select id="genModelSelect" class="input-full"></select>
+            <div id="genModelHint" class="hint"></div>
+          </div>
+
+          <!-- Inline Missing / Downloading Banner -->
+          <div id="genModelBanner" class="model-banner hidden">
+            <div class="model-banner-top">
+              <span id="genModelBannerTitle" class="model-banner-title">Model not downloaded</span>
+              <span id="genModelBannerMeta" class="model-banner-meta"></span>
+            </div>
+            <div id="genModelBannerProgressWrap" class="progress-track hidden">
+              <div id="genModelBannerProgressBar" class="progress-fill" style="width:0%"></div>
+            </div>
+            <div class="model-banner-actions">
+              <button id="btnInlineDownload" class="btn btn-primary btn-sm" type="button">⬇ Download Model</button>
+              <button id="btnInlineCancel" class="btn btn-ghost btn-sm hidden" type="button">Cancel</button>
+              <button id="btnInlineOpenModels" class="btn btn-secondary btn-sm" type="button">Manage All</button>
+            </div>
+          </div>
+
+          <!-- Friend Photo / Reference Image #1 -->
+          <div id="genRef1Section" class="field-group">
+            <label id="genRef1Label" class="field-label">Friend Photo / Start Frame</label>
+            <label class="dropzone compact-dropzone" id="genRefDropzone">
+              <input id="genRefFileInput" type="file" accept="image/*" hidden />
+              <span id="genRefLabel">+ Drop friend photo or click to browse</span>
+            </label>
+            <div id="genRefPreviewCard" class="ref-preview-card hidden">
+              <img id="genRefPreviewImg" class="ref-preview-thumb" alt="Reference 1" />
+              <div class="ref-preview-info">
+                <div id="genRefPreviewName" class="ref-preview-name">photo.png</div>
+                <div class="ref-preview-sub">Attached reference #1</div>
+              </div>
+              <button id="btnClearRef1" class="btn btn-ghost btn-xs" type="button" title="Remove photo">✕</button>
+            </div>
+            <div id="genRecentRefsStrip" class="recent-refs-strip hidden"></div>
+          </div>
+
+          <!-- Second Friend Photo (Qwen-Image-Edit Multi-Photo) -->
+          <div id="genRef2Section" class="field-group hidden">
+            <label class="field-label">Second Friend Photo (Optional — Multi-Person)</label>
+            <label class="dropzone compact-dropzone" id="genRef2Dropzone">
+              <input id="genRef2FileInput" type="file" accept="image/*" hidden />
+              <span id="genRef2Label">+ Drop 2nd friend photo</span>
+            </label>
+            <div id="genRef2PreviewCard" class="ref-preview-card hidden">
+              <img id="genRef2PreviewImg" class="ref-preview-thumb" alt="Reference 2" />
+              <div class="ref-preview-info">
+                <div id="genRef2PreviewName" class="ref-preview-name">photo2.png</div>
+                <div class="ref-preview-sub">Attached reference #2</div>
+              </div>
+              <button id="btnClearRef2" class="btn btn-ghost btn-xs" type="button" title="Remove 2nd photo">✕</button>
+            </div>
+          </div>
+
+          <!-- End Frame (Wan 2.2 First->Last Frame Morph) -->
+          <div id="genEndFrameSection" class="field-group hidden">
+            <label class="field-label">End Frame (Optional — First → Last Frame Morph)</label>
+            <label class="dropzone compact-dropzone" id="genEndDropzone">
+              <input id="genEndFileInput" type="file" accept="image/*" hidden />
+              <span>+ Drop end frame photo (optional)</span>
+            </label>
+            <div id="genEndPreviewCard" class="ref-preview-card hidden">
+              <img id="genEndPreviewImg" class="ref-preview-thumb" alt="End Frame" />
+              <div class="ref-preview-info">
+                <div id="genEndPreviewName" class="ref-preview-name">end.png</div>
+                <div class="ref-preview-sub">Morph target (Last Frame)</div>
+              </div>
+              <button id="btnClearEndFrame" class="btn btn-ghost btn-xs" type="button" title="Remove end frame">✕</button>
+            </div>
+          </div>
+
+          <!-- Style / Meme Presets (Categorized) -->
+          <div class="field-group">
+            <div class="field-header-row">
+              <label class="field-label">Style Preset</label>
+              <span id="genActivePresetTag" class="badge">Raw Prompt</span>
+            </div>
+            <div id="genPresetCats" class="preset-cat-tabs">
+              <button type="button" class="cat-tab active" data-cat="all">All</button>
+              <button type="button" class="cat-tab" data-cat="candid">Candid</button>
+              <button type="button" class="cat-tab" data-cat="footage">Footage</button>
+              <button type="button" class="cat-tab" data-cat="meme">Meme</button>
+              <button type="button" class="cat-tab" data-cat="cinema">Cinema</button>
+            </div>
+            <div id="genPresetPills" class="preset-pills preset-pills-scroll"></div>
+          </div>
+
+          <!-- Video Camera Motion Presets -->
+          <div id="genCameraGroup" class="field-group">
+            <label class="field-label" for="genCameraSelect">Camera Motion</label>
+            <select id="genCameraSelect" class="input-full">
+              <option value="none">Auto Camera</option>
+            </select>
+          </div>
+
+          <!-- Prompt -->
+          <div class="field-group">
+            <div class="field-header-row">
+              <label class="field-label" for="genPromptInput">Prompt</label>
+              <div style="display:flex;align-items:center;gap:6px;">
+                <button id="btnExpandPrompt" class="btn btn-ghost btn-xs" type="button" title="Expand short idea into vivid prompt (uses local LM Studio/Ollama if online)">✨ Enhance</button>
+                <span class="shortcut-hint">Ctrl+Enter</span>
+              </div>
+            </div>
+            <textarea id="genPromptInput" class="input-full prompt-textarea" rows="3" placeholder="Describe the scene, action, camera angle, or meme caption..."></textarea>
+          </div>
+
+          <!-- Aspect / Batch / Length Row -->
+          <div class="field-row">
+            <div>
+              <label class="field-label" for="genResSelect">Resolution</label>
+              <select id="genResSelect" class="input-full"></select>
+            </div>
+            <div id="genBatchGroup" class="hidden">
+              <label class="field-label" for="genBatchSelect">Variations</label>
+              <select id="genBatchSelect" class="input-full">
+                <option value="1" selected>1 Image</option>
+                <option value="2">2 Seeds</option>
+                <option value="4">4 Seeds (Grid)</option>
+              </select>
+            </div>
+            <div id="genFramesGroup">
+              <label class="field-label" for="genFramesSelect">Duration</label>
+              <select id="genFramesSelect" class="input-full">
+                <option value="49">Short (~2s / 49f)</option>
+                <option value="73" selected>Standard (~3s / 73f)</option>
+                <option value="81">Medium (~4-5s / 81f)</option>
+                <option value="113">Long (~5-7s / 113f)</option>
+              </select>
+            </div>
+          </div>
+
+          <!-- Collapsible Advanced Settings -->
+          <details class="advanced-drawer">
+            <summary>Advanced Settings</summary>
+            <div class="advanced-body">
+              <div>
+                <label class="field-label" for="genNegPromptInput">Negative Prompt</label>
+                <textarea id="genNegPromptInput" class="input-full" rows="2" placeholder="Leave blank for model default..."></textarea>
+              </div>
+              <div class="field-row">
+                <div>
+                  <label class="field-label" for="genStepsInput">Steps</label>
+                  <input id="genStepsInput" type="number" class="input-full" placeholder="Auto" min="4" max="40" />
+                </div>
+                <div>
+                  <label class="field-label" for="genCfgInput">CFG</label>
+                  <input id="genCfgInput" type="number" class="input-full" placeholder="Auto" min="1" max="12" step="0.1" />
+                </div>
+                <div>
+                  <label class="field-label" for="genSeedInput">Seed</label>
+                  <input id="genSeedInput" type="number" class="input-full" value="-1" />
+                </div>
+              </div>
+              <div>
+                <label class="field-label" for="genRefPathInput">Local Photo Path #1 (optional)</label>
+                <input id="genRefPathInput" type="text" class="input-full" placeholder="C:\Pictures\friend.png" />
+              </div>
+              <div id="genRef2PathWrap" class="hidden">
+                <label class="field-label" for="genRef2PathInput">Local Photo Path #2 (optional)</label>
+                <input id="genRef2PathInput" type="text" class="input-full" placeholder="C:\Pictures\friend2.png" />
+              </div>
+              <label class="checkbox-row">
+                <input id="genAutoTimeline" type="checkbox" checked />
+                <span>Auto-import & append to timeline when finished</span>
+              </label>
+            </div>
+          </details>
+
+          <button id="btnRunGenerate" class="btn btn-primary btn-block" type="button">🎬 Generate Video</button>
+          <div id="genJobsList" class="gen-jobs-list"></div>
+        </div>
+
+        <!-- Generated Image Gallery -->
+        <div id="genGallerySection" class="form-card gallery-card hidden">
+          <div class="field-header-row">
+            <h3>Generated Images</h3>
+            <span id="genGalleryCount" class="badge">0</span>
+          </div>
+          <div id="genGalleryGrid" class="gallery-grid"></div>
+        </div>
+      </section>
+
+      <!-- TAB 2: AI Smart Stitch -->
+      <section id="tab-stitch" class="tab-content">
+        <div class="form-card">
+          <h3>Intelligent Auto-Stitch</h3>
+          <p class="hint">Automatically trims dead air, removes long pauses, normalizes clips, and adds transitions.</p>
+
+          <label class="field-label">Clip Ordering</label>
+          <select id="stitchOrder" class="input-full">
+            <option value="custom">Media Bin Order</option>
+            <option value="chronological">Chronological (Timestamp)</option>
+            <option value="filename">Alphabetical (Filename)</option>
+            <option value="duration">Shortest to Longest</option>
+          </select>
+
+          <div class="field-row">
+            <div>
+              <label class="field-label">Transition Style</label>
+              <select id="stitchTransition" class="input-full">
+                <option value="crossfade">Crossfade (Smooth)</option>
+                <option value="fadeblack">Dip to Black</option>
+                <option value="wipeleft">Wipe Left</option>
+                <option value="wiperight">Wipe Right</option>
+                <option value="slideup">Slide Up</option>
+                <option value="dissolve">Dissolve</option>
+                <option value="circleopen">Circle Open</option>
+                <option value="cut">Hard Cut</option>
+              </select>
+            </div>
+            <div>
+              <label class="field-label">Overlap (sec)</label>
+              <input id="stitchTransDur" type="number" class="input-full" value="0.35" min="0" max="2.5" step="0.05" />
+            </div>
+          </div>
+
+          <label class="checkbox-row">
+            <input id="stitchTrimSilence" type="checkbox" checked />
+            <span>Auto-trim leading & trailing silence</span>
+          </label>
+
+          <label class="checkbox-row">
+            <input id="stitchSplitSilence" type="checkbox" />
+            <span>Cut mid-clip dead air pauses (Jump-Cut mode)</span>
+          </label>
+
+          <div class="field-row">
+            <div>
+              <label class="field-label">Min Silence (s)</label>
+              <input id="stitchMinSilence" type="number" class="input-full" value="0.55" min="0.2" max="5.0" step="0.05" />
+            </div>
+            <div>
+              <label class="field-label">Silence Floor (dB)</label>
+              <input id="stitchNoiseDb" type="number" class="input-full" value="-35" min="-60" max="-15" step="1" />
+            </div>
+          </div>
+
+          <label class="checkbox-row">
+            <input id="stitchAutoSub" type="checkbox" checked />
+            <span>Auto-transcribe & generate subtitles</span>
+          </label>
+
+          <button id="btnRunSmartStitch" class="btn btn-primary btn-block">⚡ Run Smart Stitch</button>
+          <div id="stitchReportBox" class="report-box hidden"></div>
+        </div>
+      </section>
+
+      <!-- TAB 3: Auto-Subtitles & Style -->
+      <section id="tab-subs" class="tab-content">
+        <div class="form-card">
+          <h3>Whisper Auto-Subtitler</h3>
+          <div class="field-row">
+            <div>
+              <label class="field-label">Whisper Model</label>
+              <select id="subModelSize" class="input-full">
+                <option value="tiny">Tiny (Fastest)</option>
+                <option value="base" selected>Base (Balanced)</option>
+                <option value="small">Small (High Accuracy)</option>
+              </select>
+            </div>
+            <div>
+              <label class="field-label">Style Preset</label>
+              <select id="subPresetSelect" class="input-full">
+                <option value="hormozi">Hormozi Karaoke (Green)</option>
+                <option value="mrbeast">MrBeast Bold Yellow</option>
+                <option value="tiktok_clean">TikTok Clean Pill</option>
+                <option value="meme_impact">Classic Impact Meme</option>
+                <option value="gaming_rgb">Gaming Highlight Cyan</option>
+                <option value="news_ticker">Breaking News Bar</option>
+                <option value="whisper_red">Dark Horror Red</option>
+                <option value="cinema">Cinema Classic</option>
+                <option value="minimal">Minimal Clean</option>
+                <option value="neon_box">Neon Box Pink</option>
+              </select>
+            </div>
+          </div>
+
+          <button id="btnRunAutoSub" class="btn btn-primary btn-block">💬 Auto-Subtitle Timeline</button>
+
+          <hr class="divider" />
+          <h3>Caption Styling</h3>
+
+          <div class="field-row">
+            <div>
+              <label class="field-label">Text Color</label>
+              <input id="stylePrimaryColor" type="color" class="color-input" value="#FFFFFF" />
+            </div>
+            <div>
+              <label class="field-label">Active Word Color</label>
+              <input id="styleHighlightColor" type="color" class="color-input" value="#00FF66" />
+            </div>
+            <div>
+              <label class="field-label">Outline Color</label>
+              <input id="styleOutlineColor" type="color" class="color-input" value="#000000" />
+            </div>
+          </div>
+
+          <div class="field-row">
+            <div>
+              <label class="field-label">Font Size (px)</label>
+              <input id="styleFontSize" type="number" class="input-full" value="64" min="20" max="140" />
+            </div>
+            <div>
+              <label class="field-label">Words / Caption</label>
+              <input id="styleMaxWords" type="number" class="input-full" value="4" min="1" max="16" />
+            </div>
+          </div>
+
+          <div class="field-row">
+            <div>
+              <label class="field-label">Position</label>
+              <select id="styleAlignment" class="input-full">
+                <option value="2">Bottom Center</option>
+                <option value="5">Middle Center</option>
+                <option value="8">Top Center</option>
+              </select>
+            </div>
+            <div>
+              <label class="field-label">Margin V (px)</label>
+              <input id="styleMarginV" type="number" class="input-full" value="130" min="0" max="500" />
+            </div>
+          </div>
+
+          <label class="checkbox-row">
+            <input id="styleWordHighlight" type="checkbox" checked />
+            <span>Word-by-word active karaoke highlight</span>
+          </label>
+
+          <label class="checkbox-row">
+            <input id="styleUppercase" type="checkbox" checked />
+            <span>UPPERCASE captions</span>
+          </label>
+
+          <div class="field-row" style="margin-top: 8px;">
+            <button id="btnAddManualSub" class="btn btn-secondary btn-block">+ Add Caption at Playhead</button>
+          </div>
+        </div>
+
+        <!-- Meme Layout Templates -->
+        <div class="form-card">
+          <h3>Meme Layout Template</h3>
+          <label class="field-label" for="memeTemplateSelect">Overlay Format</label>
+          <select id="memeTemplateSelect" class="input-full">
+            <option value="none">None (Clean Video)</option>
+            <option value="pov_top_bar">POV White Top Bar</option>
+            <option value="pov_dark_bar">POV Dark Mode Top Bar</option>
+            <option value="impact_top_bottom">Classic Top / Bottom Impact</option>
+            <option value="breaking_news">Breaking News Chyron</option>
+            <option value="demotivational">Demotivational Black Poster</option>
+            <option value="bodycam_hud">AXON Bodycam / CCTV HUD</option>
+          </select>
+
+          <div id="memeBannerWrap" class="hidden">
+            <label class="field-label" for="memeBannerLabel">News Pill Label</label>
+            <input id="memeBannerLabel" type="text" class="input-full" value="BREAKING NEWS" />
+          </div>
+          <div id="memeTopWrap" class="hidden">
+            <label class="field-label" for="memeTopText">Top / Headline Text</label>
+            <input id="memeTopText" type="text" class="input-full" placeholder="POV: he said 'trust me bro'..." />
+          </div>
+          <div id="memeBottomWrap" class="hidden">
+            <label class="field-label" for="memeBottomText">Bottom / Ticker Text</label>
+            <input id="memeBottomText" type="text" class="input-full" placeholder="BOTTOM TEXT" />
+          </div>
+          <button id="btnApplyMemeLayout" class="btn btn-secondary btn-block" type="button">Apply Meme Layout</button>
+        </div>
+
+        <!-- Built-in Meme SFX Soundboard -->
+        <div class="form-card">
+          <div class="field-header-row">
+            <h3>Meme SFX Soundboard</h3>
+            <span class="hint">Drops at playhead</span>
+          </div>
+          <div class="field-row">
+            <div>
+              <label class="field-label" for="sfxVolumeInput">Volume</label>
+              <input id="sfxVolumeInput" type="number" class="input-full" value="1.0" min="0.1" max="3.0" step="0.1" />
+            </div>
+            <div style="display:flex;align-items:flex-end;padding-bottom:4px;">
+              <label class="checkbox-row">
+                <input id="sfxDuckCheckbox" type="checkbox" checked />
+                <span>Auto-duck clip audio</span>
+              </label>
+            </div>
+          </div>
+          <div id="sfxSoundboardGrid" class="sfx-grid"></div>
+        </div>
+      </section>
+    </aside>
+
+    <!-- Center Panel: Dual-Video Canvas Compositor Preview -->
+    <section class="center-panel">
+      <div class="player-stage" id="playerStage">
+        <div class="canvas-wrapper" id="canvasWrapper">
+          <canvas id="previewCanvas" width="1920" height="1080"></canvas>
+          <div id="memeLayoutOverlay" class="meme-layout-overlay hidden"></div>
+          <div id="subtitleOverlay" class="subtitle-overlay"></div>
+        </div>
+        <!-- Hidden hardware-decoded video elements for real-time dual-stream transitions -->
+        <video id="videoA" preload="auto" playsinline crossorigin="anonymous" hidden></video>
+        <video id="videoB" preload="auto" playsinline crossorigin="anonymous" hidden></video>
+      </div>
+
+      <!-- Player Transport Bar -->
+      <div class="transport-bar">
+        <div class="transport-controls">
+          <button id="btnSeekStart" class="btn-icon" title="Jump to Start">⏮</button>
+          <button id="btnStepBack" class="btn-icon" title="Step Back 0.1s (←)">⏪</button>
+          <button id="btnPlayPause" class="btn-play" title="Play / Pause (Space)">▶</button>
+          <button id="btnStepFwd" class="btn-icon" title="Step Forward 0.1s (→)">⏩</button>
+          <span class="timecode">
+            <strong id="currTimeText">00:00.00</strong> / <span id="totalTimeText">00:00.00</span>
+          </span>
+        </div>
+
+        <div class="transport-actions">
+          <button id="btnContinueShot" class="btn btn-secondary btn-sm" title="Extract final frame of clip and animate next shot">⏭ Continue Shot</button>
+          <button id="btnSplitAtPlayhead" class="btn btn-secondary btn-sm" title="Split Clip at Playhead (S)">✂ Split (S)</button>
+          <button id="btnDeleteSelected" class="btn btn-ghost btn-sm" title="Delete Selected Clip/Caption/SFX (Del)">🗑 Delete</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- Right Dock: Inspector & MCP Activity Feed -->
+    <aside class="right-panel">
+      <div class="inspector-header">INSPECTOR</div>
+      <div id="inspectorBody" class="inspector-body">
+        <p class="empty-hint">Select a clip or subtitle block on the timeline to inspect and edit its properties.</p>
+      </div>
+
+      <div class="inspector-header" style="border-top: 1px solid var(--border);">LIVE MCP / ENGINE LOG</div>
+      <div id="mcpLogFeed" class="mcp-log-feed"></div>
+    </aside>
+  </main>
+
+  <!-- Bottom Multi-Track Timeline -->
+  <footer class="timeline-dock">
+    <div class="timeline-toolbar">
+      <div class="tl-tools-left">
+        <span class="tl-label">TIMELINE</span>
+        <span id="tlStatsText" class="tl-stats">0 clips · 0 captions</span>
+      </div>
+      <div class="tl-tools-right">
+        <label class="zoom-label">
+          <span>Zoom</span>
+          <input id="zoomSlider" type="range" min="25" max="240" value="75" />
+        </label>
+      </div>
+    </div>
+
+    <div class="timeline-scroll-container" id="timelineScroll">
+      <div class="timeline-canvas-area" id="timelineArea">
+        <!-- Time Ruler -->
+        <div class="time-ruler" id="timeRuler"></div>
+
+        <!-- Track 1: Video & Audio Clips -->
+        <div class="track-row" id="videoTrackRow">
+          <div class="track-header">VIDEO / AUDIO</div>
+          <div class="track-lane" id="videoTrackLane"></div>
+        </div>
+
+        <!-- Track 2: Subtitles -->
+        <div class="track-row" id="subTrackRow">
+          <div class="track-header">SUBTITLES</div>
+          <div class="track-lane" id="subTrackLane"></div>
+        </div>
+
+        <!-- Track 3: Meme SFX / BGM Overlays -->
+        <div class="track-row" id="sfxTrackRow">
+          <div class="track-header">SFX / BGM</div>
+          <div class="track-lane" id="sfxTrackLane"></div>
+        </div>
+
+        <!-- Playhead Cursor -->
+        <div class="playhead-line" id="playheadLine">
+          <div class="playhead-head"></div>
+        </div>
+      </div>
+    </div>
+  </footer>
+
+  <!-- Render Modal -->
+  <div id="renderModal" class="modal-backdrop hidden">
+    <div class="modal-card">
+      <h3>Export / Render Final MP4</h3>
+      <label class="field-label">Output File Path (optional — leave blank for auto-timestamped file)</label>
+      <input id="renderOutputPath" type="text" class="input-full" placeholder="final.mp4 (saved inside workspace/renders/)" />
+
+      <div class="field-row">
+        <div>
+          <label class="field-label">Quality Preset</label>
+          <select id="renderQuality" class="input-full">
+            <option value="draft">Draft (Ultra Fast)</option>
+            <option value="balanced" selected>Balanced (Recommended)</option>
+            <option value="high">High Quality (Master)</option>
+          </select>
+        </div>
+      </div>
+
+      <label class="checkbox-row">
+        <input id="renderBurnSubs" type="checkbox" checked />
+        <span>Burn styled subtitles into video (also exports .srt & .ass)</span>
+      </label>
+      <label class="checkbox-row">
+        <input id="renderNormAudio" type="checkbox" checked />
+        <span>Dynamic audio loudness normalization</span>
+      </label>
+      <label class="checkbox-row">
+        <input id="renderHwAccel" type="checkbox" checked />
+        <span>Use NVIDIA NVENC hardware acceleration (RTX 4060)</span>
+      </label>
+
+      <div id="renderResultBox" class="report-box hidden"></div>
+
+      <div class="modal-actions">
+        <button id="btnCloseRenderModal" class="btn btn-ghost">Close</button>
+        <button id="btnConfirmRender" class="btn btn-primary">▶ Start Render</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Local AI Model Manager Modal -->
+  <div id="modelsModal" class="modal-backdrop hidden">
+    <div class="modal-card modal-wide">
+      <div class="modal-header-bar">
+        <div>
+          <h3>Local AI Model Manager</h3>
+          <p class="hint">100% offline weights stored on <code>E:\ComfyUI\models</code> · Resumable HTTP downloads · Zero refusals</p>
+        </div>
+        <div class="modal-header-right">
+          <span id="modelsModalComfyBadge" class="badge">Checking...</span>
+          <button id="btnModalStartComfy" class="btn btn-secondary btn-sm" type="button">⚡ Start ComfyUI</button>
+          <button id="btnCloseModelsModal" class="btn btn-ghost btn-sm" type="button">✕</button>
+        </div>
+      </div>
+
+      <div class="models-section-title">🖼 Image & Friend-Photo Editing Models</div>
+      <div id="modelsImageList" class="models-list"></div>
+
+      <div class="models-section-title">🎬 Video Generation Models</div>
+      <div id="modelsVideoList" class="models-list"></div>
+    </div>
+  </div>
+
+  <!-- Generated Image Preview Lightbox -->
+  <div id="imageLightboxModal" class="modal-backdrop hidden">
+    <div class="modal-card modal-lightbox">
+      <div class="modal-header-bar">
+        <h3 id="lightboxTitle">Generated Image</h3>
+        <button id="btnCloseLightbox" class="btn btn-ghost btn-sm" type="button">✕</button>
+      </div>
+      <div class="lightbox-img-wrap">
+        <img id="lightboxImg" alt="Generated preview" />
+      </div>
+      <div class="modal-actions">
+        <button id="btnLightboxAnimate" class="btn btn-primary" type="button">🎬 Animate to Video</button>
+        <button id="btnLightboxEdit" class="btn btn-secondary" type="button">✏ Edit Photo</button>
+        <button id="btnLightboxTimeline" class="btn btn-secondary" type="button">+ Timeline (3s)</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast Notification Stack -->
+  <div id="toastContainer" class="toast-container" aria-live="polite"></div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
