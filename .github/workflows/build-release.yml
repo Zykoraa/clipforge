@@ -24,7 +24,7 @@ jobs:
             artifact_pattern: dist/ClipForge-windows-*.zip
             binary_path: dist/ClipForge/ClipForge.exe
           - name: Linux (x86_64)
-            os: ubuntu-22.04
+            os: ubuntu-24.04
             artifact_pattern: dist/ClipForge-linux-*.tar.gz
             binary_path: dist/ClipForge/ClipForge
 
@@ -63,7 +63,8 @@ jobs:
       - name: Smoke-test compiled binary
         if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
         shell: bash
-        run: "${{ matrix.binary_path }}" --help
+        run: |
+          "${{ matrix.binary_path }}" --help
 
       - name: Upload build artifact
         if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
