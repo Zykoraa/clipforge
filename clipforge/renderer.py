@@ -2,17 +2,35 @@
 
 from __future__ import annotations
 
+import re
 import shutil
 import subprocess
 import textwrap
 import time
 import uuid
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
 from .models import MemeLayoutConfig, ProjectState, ensure_even_dimension, sanitize_hex_color
 from .platform_utils import resolve_ffmpeg_fontfile as _resolve_ffmpeg_fontfile
 from .subtitles import write_subtitle_file
+
+
+@lru_cache(maxsize=1)
+def _ffmpeg_filter_script_flag() -> str:
+    """Use '-/filter_complex' on FFmpeg 7+ (required on FFmpeg 8/9) and '-filter_complex_script' on FFmpeg 4-6."""
+    try:
+        res = subprocess.run(["ffmpeg", "-version"], capture_output=True, text=True, timeout=5)
+        first_line = (res.stdout or res.stderr or "").splitlines()[0] if (res.stdout or res.stderr) else ""
+        if "version N-" in first_line:
+            return "-/filter_complex"
+        m = re.search(r"ffmpeg version\s+(?:n)?(\d+)\.", first_line, flags=re.IGNORECASE)
+        if m and int(m.group(1)) < 7:
+            return "-filter_complex_script"
+    except Exception:
+        pass
+    return "-/filter_complex"
 
 
 def _append_meme_layout_filters(
@@ -470,7 +488,7 @@ def render_project_to_mp4(
                 "-y",
                 "-hide_banner",
                 *input_args,
-                "-/filter_complex",
+                _ffmpeg_filter_script_flag(),
                 temp_fg_path.name,
                 "-map",
                 f"[{curr_v}]",
