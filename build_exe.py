@@ -23,7 +23,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
 WORK_DIR = Path(os.environ.get("CLIPFORGE_BUILD_DIR", str(ROOT / "build" / "pyinstaller")))
-DIST_DIR = ROOT / "dist"
+DIST_DIR = Path(os.environ.get("CLIPFORGE_DIST_DIR", str(ROOT / "dist")))
 SPEC_DIR = WORK_DIR / "spec"
 
 
@@ -86,10 +86,24 @@ def main() -> None:
         action="store_true",
         help="Also package dist/ClipForge into a platform release archive (.zip / .tar.gz).",
     )
+    parser.add_argument(
+        "--build-native",
+        action="store_true",
+        help="Compile clipforge-native (Rust egui/wgpu desktop app) before packaging.",
+    )
     args = parser.parse_args()
 
     is_win = sys.platform == "win32"
     exe_name = "ClipForge.exe" if is_win else "ClipForge"
+    native_name = "ClipForgeNative.exe" if is_win else "ClipForgeNative"
+
+    # Preserve an existing prebuilt ClipForgeNative binary if PyInstaller --clean wipes dist/ClipForge
+    native_backup: Path | None = None
+    existing_native = DIST_DIR / "ClipForge" / native_name
+    if existing_native.exists():
+        WORK_DIR.mkdir(parents=True, exist_ok=True)
+        native_backup = WORK_DIR / native_name
+        shutil.copy2(existing_native, native_backup)
 
     print("[1/2] Byte-compiling all ClipForge modules...", flush=True)
     ok = compileall.compile_dir(str(ROOT / "clipforge"), quiet=1, force=True)
@@ -115,6 +129,12 @@ def main() -> None:
         "clipforge.mcp_server",
         "clipforge.platform_utils",
         "clipforge.cast",
+        "clipforge.civitai",
+        "clipforge.director",
+        "clipforge.generator",
+        "clipforge.renderer",
+        "clipforge.sfx",
+        "clipforge.subtitles",
         "clipforge.voice",
     ]
     if not is_win:
@@ -172,6 +192,32 @@ def main() -> None:
     if not exe.exists():
         raise SystemExit(f"Expected compiled binary not found: {exe}")
     print(f"SUCCESS: Compiled {exe} ({exe.stat().st_size / (1024*1024):.2f} MB)", flush=True)
+
+    # Optionally build or bundle the true Native Rust egui/wgpu desktop app right alongside ClipForge(.exe)
+    native_dir = ROOT / "clipforge-native"
+    if args.build_native and native_dir.is_dir():
+        print(f"[2b] Building native Rust desktop UI ({native_name})...", flush=True)
+        r_cargo = subprocess.run(["cargo", "build", "--release"], cwd=str(native_dir))
+        if r_cargo.returncode != 0:
+            raise SystemExit(r_cargo.returncode)
+
+    native_candidates: list[Path] = []
+    cargo_target = os.environ.get("CARGO_TARGET_DIR", "").strip()
+    if cargo_target:
+        native_candidates.append(Path(cargo_target) / "release" / native_name)
+    native_candidates.append(native_dir / "target" / "release" / native_name)
+    if native_backup is not None:
+        native_candidates.append(native_backup)
+
+    for cand in native_candidates:
+        if cand.exists() and cand.is_file():
+            dst_native = bundle_dir / native_name
+            shutil.copy2(cand, dst_native)
+            print(
+                f"BUNDLED NATIVE UI: {dst_native} ({dst_native.stat().st_size / (1024*1024):.2f} MB)",
+                flush=True,
+            )
+            break
 
     if args.archive:
         tag = _platform_tag()
