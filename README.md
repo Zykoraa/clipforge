@@ -14,8 +14,8 @@ ClipForge is a cross-platform (Windows & Linux) local-first Non-Linear Video Edi
   - Multi-track timeline (`VIDEO / AUDIO`, `SUBTITLES`, `SFX / BGM`) with audio waveforms, drag-to-trim handles, drag-to-reorder, razor split (`S`), and `⏭ Continue Shot` final-frame extraction.
 - **Offline AI Image & Video Studio (`clipforge/generator.py`)**
   - Direct local ComfyUI client with WebSocket live step progress and built-in resumable HTTP `Range` Model Manager:
-    - **Video**: `Wan 2.2 TI2V 5B`, `Wan 2.2 I2V 14B` (incl. `WanFirstLastFrameToVideo` Start→End morph), `LTX-2.3 22B` (synchronized native audio/SFX).
-    - **Image / Photo Editing**: `FLUX.2 [klein] 4B` (4-step T2I + photo edit), `Z-Image-Turbo` (8-step candid realism + crisp meme text), `Qwen-Image-Edit 2509` (1–2 photo compositor).
+    - **Video**: `Wan 2.2 TI2V 5B`, `Wan 2.2 I2V 14B` (incl. `WanFirstLastFrameToVideo` Start→End morph), `Wan 2.2 T2V 14B` (4-step Lightx2v), `LTX-2.3 22B` (synchronized native audio/SFX).
+    - **Image / Photo Editing**: `FLUX.2 [klein] 4B` & `9B` (4-step T2I + photo edit), `Z-Image-Turbo` (8-step candid realism + crisp meme text), `Qwen-Image-Edit 2509` & `2511` (4-step Lightning 1–2 photo compositor).
   - **4-Seed Contact Sheet** batching, **24 categorized AI style presets**, **8 video camera motion presets**, and a local LLM prompt enhancer (`clipforge/director.py` — LM Studio / Ollama OpenAI-compatible).
 - **FFmpeg Filtergraph Compiler (`clipforge/renderer.py`, `clipforge/subtitles.py`, `clipforge/sfx.py`)**
   - `xfade` + `acrossfade` transitions, `apad`/`tpad` A/V sync lock, static image `-loop 1` support, NVIDIA NVENC (`h264_nvenc`) with `libx264` fallback.

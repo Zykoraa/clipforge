@@ -438,11 +438,14 @@ def test_offline_generator_workflows_and_ref_upload_security(tmp_path: Path, mon
     status_json = r_status.json()
     assert set(status_json["models"].keys()) == {
         "wan22_i2v",
+        "wan22_t2v",
         "wan22_5b",
         "ltx23",
         "flux2_klein",
+        "flux2_klein_9b",
         "z_image_turbo",
         "qwen_edit",
+        "qwen_edit_2511",
     }
     assert "raw_iphone" in status_json["presets"]
     assert len(status_json["presets"]) >= 20
@@ -580,7 +583,10 @@ def test_cross_platform_helpers_fonts_and_env(tmp_path: Path, monkeypatch) -> No
 
     # 6. Safetensors / FP8 / BF16 auto-detection satisfies model availability & switches to UNETLoader
     from clipforge.generator import (
+        build_flux2_klein_workflow,
+        build_qwen_edit_workflow,
         build_wan22_i2v_workflow,
+        build_wan22_t2v_workflow,
         build_z_image_turbo_workflow,
         get_model_availability,
     )
@@ -594,6 +600,10 @@ def test_cross_platform_helpers_fonts_and_env(tmp_path: Path, monkeypatch) -> No
         "models/diffusion_models/wan2.2_i2v_low_noise_14B_fp8_scaled.safetensors",
         "models/loras/wan2.2_i2v_lightx2v_4steps_lora_v1_high_noise.safetensors",
         "models/loras/wan2.2_i2v_lightx2v_4steps_lora_v1_low_noise.safetensors",
+        "models/diffusion_models/wan2.2_t2v_high_noise_14B_fp8_scaled.safetensors",
+        "models/diffusion_models/wan2.2_t2v_low_noise_14B_fp8_scaled.safetensors",
+        "models/loras/wan2.2_t2v_lightx2v_4steps_lora_v1.1_high_noise.safetensors",
+        "models/loras/wan2.2_t2v_lightx2v_4steps_lora_v1.1_low_noise.safetensors",
         "models/text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors",
         "models/vae/wan_2.1_vae.safetensors",
     ):
@@ -606,6 +616,8 @@ def test_cross_platform_helpers_fonts_and_env(tmp_path: Path, monkeypatch) -> No
     assert avail_st["z_image_turbo"]["variant"] == "safetensors"
     assert avail_st["wan22_i2v"]["ready"] is True
     assert avail_st["wan22_i2v"]["variant"] == "safetensors"
+    assert avail_st["wan22_t2v"]["ready"] is True
+    assert avail_st["wan22_t2v"]["variant"] == "safetensors"
 
     wf_zit_st = build_z_image_turbo_workflow(
         "test",
@@ -627,5 +639,39 @@ def test_cross_platform_helpers_fonts_and_env(tmp_path: Path, monkeypatch) -> No
     assert wf_wan_st["1"]["class_type"] == "UNETLoader"
     assert wf_wan_st["2"]["class_type"] == "UNETLoader"
     assert wf_wan_st["3"]["inputs"]["lora_name"] == "wan2.2_i2v_lightx2v_4steps_lora_v1_high_noise.safetensors"
+
+    wf_t2v_st = build_wan22_t2v_workflow(
+        "test t2v",
+        high_unet="wan2.2_t2v_high_noise_14B_fp8_scaled.safetensors",
+        low_unet="wan2.2_t2v_low_noise_14B_fp8_scaled.safetensors",
+        high_lora="wan2.2_t2v_lightx2v_4steps_lora_v1.1_high_noise.safetensors",
+        low_lora="wan2.2_t2v_lightx2v_4steps_lora_v1.1_low_noise.safetensors",
+    )
+    assert wf_t2v_st["1"]["class_type"] == "UNETLoader"
+    assert wf_t2v_st["11"]["class_type"] == "EmptyHunyuanLatentVideo"
+    assert wf_t2v_st["16"]["class_type"] == "SaveVideo"
+
+    wf_fk9 = build_flux2_klein_workflow(
+        "test 9b",
+        image_filename="friend.png",
+        unet_name="flux-2-klein-9b-Q5_K_M.gguf",
+        clip_name="qwen_3_8b_fp8mixed.safetensors",
+    )
+    assert wf_fk9["1"]["class_type"] == "UnetLoaderGGUF"
+    assert wf_fk9["2"]["inputs"]["clip_name"] == "qwen_3_8b_fp8mixed.safetensors"
+    assert wf_fk9["9"]["class_type"] == "ReferenceLatent"
+
+    wf_qw2511 = build_qwen_edit_workflow(
+        "test 2511",
+        image_filename="f1.png",
+        image_filename_2="f2.png",
+        steps=4,
+        cfg=1.0,
+        unet_name="qwen-image-edit-2511-Q4_K_M.gguf",
+        lora_name="Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors",
+    )
+    assert wf_qw2511["1b"]["class_type"] == "LoraLoaderModelOnly"
+    assert wf_qw2511["2"]["inputs"]["model"] == ["1b", 0]
+    assert wf_qw2511["9"]["inputs"]["steps"] == 4
 
 

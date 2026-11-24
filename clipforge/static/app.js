@@ -2343,7 +2343,15 @@ function animateImageInVideoMode(item) {
 function editImageInStudio(item) {
   switchLeftTab("tab-generate");
   const models = genState.statusData?.models || {};
-  const bestEdit = models.flux2_klein?.ready ? "flux2_klein" : models.qwen_edit?.ready ? "qwen_edit" : "flux2_klein";
+  const bestEdit = models.flux2_klein_9b?.ready
+    ? "flux2_klein_9b"
+    : models.qwen_edit_2511?.ready
+      ? "qwen_edit_2511"
+      : models.flux2_klein?.ready
+        ? "flux2_klein"
+        : models.qwen_edit?.ready
+          ? "qwen_edit"
+          : "flux2_klein_9b";
   genState.userPickedModel = true;
   setStudioMode("image", { userInitiated: true, preferredModel: bestEdit });
   setRefSlot(1, { path: item.image_path, filename: item.filename, url: item.url });

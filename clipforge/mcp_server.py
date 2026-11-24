@@ -49,10 +49,10 @@ Workflow recommendations for AI agents:
 1. Call `get_project_state` or `configure_project` to inspect/set canvas resolution (e.g. 1920x1080 landscape or 1080x1920 vertical shorts).
 2. Call `import_media` with file paths or folder paths to load video, audio, or static meme image files into the Media Bin.
 3. For offline AI Image & Video Generation (local ComfyUI, zero refusals):
-   - Call `get_video_generator_status` to inspect installed Video (`wan22_5b`, `wan22_i2v`, `ltx23`) and Image (`flux2_klein`, `z_image_turbo`, `qwen_edit`) models plus available style presets.
+   - Call `get_video_generator_status` to inspect installed Video (`wan22_5b`, `wan22_i2v`, `wan22_t2v`, `ltx23`) and Image (`flux2_klein`, `flux2_klein_9b`, `z_image_turbo`, `qwen_edit`, `qwen_edit_2511`) models plus available style presets.
    - Call `download_model_bundle` to download any missing model weights in the background into the local ComfyUI models directory (`CLIPFORGE_COMFYUI_DIR`).
-   - Call `generate_image` to create photorealistic memes or edit/composite 1-2 friend photos (`flux2_klein`, `z_image_turbo`, `qwen_edit`), optionally adding a 3s still to the timeline.
-   - Call `generate_video_clip` to animate any friend photo or generated meme image into a video clip (`wan22_5b`, `wan22_i2v`, `ltx23`) and auto-append to the timeline.
+   - Call `generate_image` to create photorealistic memes or edit/composite 1-2 friend photos (`flux2_klein`, `flux2_klein_9b`, `z_image_turbo`, `qwen_edit`, `qwen_edit_2511`), optionally adding a 3s still to the timeline.
+   - Call `generate_video_clip` to animate any friend photo or generate text-to-video clips (`wan22_5b`, `wan22_i2v`, `wan22_t2v`, `ltx23`) and auto-append to the timeline.
    - Call `list_generated_assets` to browse previously generated images, videos, and uploaded friend photos.
 4. For intelligent content-aware editing:
    - Call `analyze_clip` on each clip to detect silent dead-air intervals, visual scene cuts, and full word-level speech transcripts.
@@ -508,8 +508,8 @@ def download_model_bundle(model_id: str) -> dict[str, Any]:
     """Start (or resume) a background HuggingFace download for a local ComfyUI model bundle into CLIPFORGE_COMFYUI_DIR.
 
     Valid `model_id` values:
-    - Video: 'wan22_5b', 'wan22_i2v', 'ltx23'
-    - Image: 'flux2_klein', 'z_image_turbo', 'qwen_edit'
+    - Video: 'wan22_5b', 'wan22_i2v', 'wan22_t2v', 'ltx23'
+    - Image: 'flux2_klein', 'flux2_klein_9b', 'z_image_turbo', 'qwen_edit', 'qwen_edit_2511'
     """
     with contextlib.redirect_stdout(sys.stderr):
         dl_state = download_manager.start_download(model_id)
@@ -569,8 +569,10 @@ def generate_image(
     """Generate 1-4 photorealistic meme images or edit/composite friend photos offline via local ComfyUI.
 
     - `model='flux2_klein'`: Ultra-fast 4-step T2I + friend-photo editing (`image_path` optional).
+    - `model='flux2_klein_9b'`: 16GB VRAM 4-step HQ upgrade over 4B (`image_path` optional).
     - `model='z_image_turbo'`: 8-step hyper-real candid photography & crisp embedded meme text (T2I).
     - `model='qwen_edit'`: Instruction-based 1-2 friend photo compositor (`image_path` required, `image_path_2` optional).
+    - `model='qwen_edit_2511'`: Upgraded 4-step Lightning 1-2 friend photo compositor with tighter multi-person identity lock.
     - `batch_size`: 1..4 distinct seeds (4-seed meme contact sheet).
     - `style_preset`: Optional preset ('none', 'raw_iphone', 'cctv', 'breaking_news', 'podcast', 'movie_poster', 'meme_reaction').
     """
@@ -638,6 +640,7 @@ def generate_video_clip(
 
     - `model='wan22_5b'`: Fast Text-to-Video or Image-to-Video on 8GB VRAM (default).
     - `model='wan22_i2v'`: Best face likeness & motion for Image-to-Video (requires `image_path`, supports optional `end_image_path` for first->last frame morph!).
+    - `model='wan22_t2v'`: HQ dual-expert 14B Text-to-Video + 4-step Lightx2v LoRAs.
     - `model='ltx23'`: Fast 8-step distilled Text-to-Video or Image-to-Video with synchronized native audio/SFX.
     - `style_preset`: Optional preset ('none', 'raw_iphone', 'cctv', 'breaking_news', 'podcast', 'movie_poster', 'meme_reaction').
     """

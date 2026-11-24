@@ -32,9 +32,19 @@ COMFYUI_PYTHON = resolve_comfyui_python(COMFYUI_DIR) or (
     COMFYUI_DIR / ".venv" / ("Scripts" if sys.platform == "win32" else "bin") / ("python.exe" if sys.platform == "win32" else "python")
 )
 
-VideoModelId = Literal["wan22_5b", "wan22_i2v", "ltx23"]
-ImageModelId = Literal["flux2_klein", "z_image_turbo", "qwen_edit"]
-GeneratorModelId = Literal["wan22_5b", "wan22_i2v", "ltx23", "flux2_klein", "z_image_turbo", "qwen_edit"]
+VideoModelId = Literal["wan22_5b", "wan22_i2v", "wan22_t2v", "ltx23"]
+ImageModelId = Literal["flux2_klein", "flux2_klein_9b", "z_image_turbo", "qwen_edit", "qwen_edit_2511"]
+GeneratorModelId = Literal[
+    "wan22_5b",
+    "wan22_i2v",
+    "wan22_t2v",
+    "ltx23",
+    "flux2_klein",
+    "flux2_klein_9b",
+    "z_image_turbo",
+    "qwen_edit",
+    "qwen_edit_2511",
+]
 
 PROMPT_PRESETS: dict[str, dict[str, str]] = {
     "none": {"label": "Raw Prompt", "category": "all", "suffix": ""},
@@ -300,6 +310,67 @@ MODEL_SPECS: dict[str, dict[str, Any]] = {
             },
         ],
     },
+    "wan22_t2v": {
+        "kind": "video",
+        "display_name": "Wan 2.2 T2V 14B (HQ Text -> Video)",
+        "badge": "HQ TEXT -> VIDEO",
+        "description": "Dual-expert 14B Text-to-Video + 4-step Lightx2v LoRAs. Realistic human motion & physics (supports FP8 safetensors & GGUF).",
+        "requires_image": False,
+        "supports_image": False,
+        "supports_end_image": False,
+        "supports_second_image": False,
+        "supports_audio": False,
+        "default_width": 480,
+        "default_height": 832,
+        "default_fps": 16,
+        "default_steps": 6,
+        "default_cfg": 1.0,
+        "default_frames": 81,
+        "frame_step": 4,
+        "dim_step": 16,
+        "files": [
+            {
+                "repo_id": "QuantStack/Wan2.2-T2V-A14B-GGUF",
+                "remote_path": "HighNoise/Wan2.2-T2V-A14B-HighNoise-Q4_K_M.gguf",
+                "local_rel": "models/diffusion_models/Wan2.2-T2V-A14B-HighNoise-Q4_K_M.gguf",
+                "alt_local_rels": ["models/diffusion_models/wan2.2_t2v_high_noise_14B_fp8_scaled.safetensors"],
+                "size_gb": 8.99,
+            },
+            {
+                "repo_id": "QuantStack/Wan2.2-T2V-A14B-GGUF",
+                "remote_path": "LowNoise/Wan2.2-T2V-A14B-LowNoise-Q4_K_M.gguf",
+                "local_rel": "models/diffusion_models/Wan2.2-T2V-A14B-LowNoise-Q4_K_M.gguf",
+                "alt_local_rels": ["models/diffusion_models/wan2.2_t2v_low_noise_14B_fp8_scaled.safetensors"],
+                "size_gb": 8.99,
+            },
+            {
+                "repo_id": "lightx2v/Wan2.2-Distill-Loras",
+                "remote_path": "wan2.2_t2v_A14b_high_noise_lora_rank64_lightx2v_4step_1217.safetensors",
+                "local_rel": "models/loras/wan2.2_t2v_A14b_high_noise_lora_rank64_lightx2v_4step_1217.safetensors",
+                "alt_local_rels": ["models/loras/wan2.2_t2v_lightx2v_4steps_lora_v1.1_high_noise.safetensors"],
+                "size_gb": 0.57,
+            },
+            {
+                "repo_id": "lightx2v/Wan2.2-Distill-Loras",
+                "remote_path": "wan2.2_t2v_A14b_low_noise_lora_rank64_lightx2v_4step_1217.safetensors",
+                "local_rel": "models/loras/wan2.2_t2v_A14b_low_noise_lora_rank64_lightx2v_4step_1217.safetensors",
+                "alt_local_rels": ["models/loras/wan2.2_t2v_lightx2v_4steps_lora_v1.1_low_noise.safetensors"],
+                "size_gb": 0.57,
+            },
+            {
+                "repo_id": "Comfy-Org/Wan_2.2_ComfyUI_Repackaged",
+                "remote_path": "split_files/text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+                "local_rel": "models/text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+                "size_gb": 6.27,
+            },
+            {
+                "repo_id": "Comfy-Org/Wan_2.2_ComfyUI_Repackaged",
+                "remote_path": "split_files/vae/wan_2.1_vae.safetensors",
+                "local_rel": "models/vae/wan_2.1_vae.safetensors",
+                "size_gb": 0.24,
+            },
+        ],
+    },
     "ltx23": {
         "kind": "video",
         "display_name": "LTX-2.3 22B (Native Audio + Video)",
@@ -389,6 +460,47 @@ MODEL_SPECS: dict[str, dict[str, Any]] = {
             },
         ],
     },
+    "flux2_klein_9b": {
+        "kind": "image",
+        "display_name": "FLUX.2 [klein] 9B (HQ 4-Step Edit + T2I)",
+        "badge": "HQ 4-STEP 9B",
+        "description": "16GB VRAM upgrade over 4B: sharper faces, hands, lighting, and prompt adherence in 4 steps (T2I + friend photo edit).",
+        "requires_image": False,
+        "supports_image": True,
+        "supports_second_image": False,
+        "supports_audio": False,
+        "default_width": 1024,
+        "default_height": 1024,
+        "default_steps": 4,
+        "default_cfg": 1.0,
+        "dim_step": 16,
+        "files": [
+            {
+                "repo_id": "unsloth/FLUX.2-klein-9B-GGUF",
+                "remote_path": "flux-2-klein-9b-Q5_K_M.gguf",
+                "local_rel": "models/diffusion_models/flux-2-klein-9b-Q5_K_M.gguf",
+                "alt_local_rels": [
+                    "models/diffusion_models/flux-2-klein-9b-fp8.safetensors",
+                    "models/diffusion_models/flux-2-klein-9b-Q6_K.gguf",
+                    "models/diffusion_models/flux-2-klein-9b-Q4_K_M.gguf",
+                ],
+                "size_gb": 6.54,
+            },
+            {
+                "repo_id": "Comfy-Org/flux2-klein-9B",
+                "remote_path": "split_files/text_encoders/qwen_3_8b_fp8mixed.safetensors",
+                "local_rel": "models/text_encoders/qwen_3_8b_fp8mixed.safetensors",
+                "alt_local_rels": ["models/text_encoders/qwen_3_8b.safetensors"],
+                "size_gb": 8.07,
+            },
+            {
+                "repo_id": "Comfy-Org/flux2-klein",
+                "remote_path": "split_files/vae/flux2-vae.safetensors",
+                "local_rel": "models/vae/flux2-vae.safetensors",
+                "size_gb": 0.31,
+            },
+        ],
+    },
     "z_image_turbo": {
         "kind": "image",
         "display_name": "Z-Image-Turbo (Realism & Meme Text)",
@@ -446,6 +558,51 @@ MODEL_SPECS: dict[str, dict[str, Any]] = {
                 "remote_path": "Qwen-Image-Edit-2509-Q4_K_M.gguf",
                 "local_rel": "models/diffusion_models/Qwen-Image-Edit-2509-Q4_K_M.gguf",
                 "size_gb": 12.17,
+            },
+            {
+                "repo_id": "Comfy-Org/Qwen-Image_ComfyUI",
+                "remote_path": "split_files/text_encoders/qwen_2.5_vl_7b_fp8_scaled.safetensors",
+                "local_rel": "models/text_encoders/qwen_2.5_vl_7b_fp8_scaled.safetensors",
+                "size_gb": 8.74,
+            },
+            {
+                "repo_id": "Comfy-Org/Qwen-Image_ComfyUI",
+                "remote_path": "split_files/vae/qwen_image_vae.safetensors",
+                "local_rel": "models/vae/qwen_image_vae.safetensors",
+                "size_gb": 0.24,
+            },
+        ],
+    },
+    "qwen_edit_2511": {
+        "kind": "image",
+        "display_name": "Qwen-Image-Edit 2511 (4-Step Lightning)",
+        "badge": "4-STEP COMPOSITOR",
+        "description": "Upgraded 1–2 friend photo compositor with tighter multi-person face lock, less drift, and 4-step Lightning LoRA.",
+        "requires_image": True,
+        "supports_image": True,
+        "supports_second_image": True,
+        "supports_audio": False,
+        "default_width": 1024,
+        "default_height": 1024,
+        "default_steps": 4,
+        "default_cfg": 1.0,
+        "dim_step": 16,
+        "files": [
+            {
+                "repo_id": "unsloth/Qwen-Image-Edit-2511-GGUF",
+                "remote_path": "qwen-image-edit-2511-Q4_K_M.gguf",
+                "local_rel": "models/diffusion_models/qwen-image-edit-2511-Q4_K_M.gguf",
+                "alt_local_rels": [
+                    "models/diffusion_models/qwen_image_edit_2511_fp8_e4m3fn_scaled.safetensors",
+                    "models/diffusion_models/qwen-image-edit-2511-Q5_K_M.gguf",
+                ],
+                "size_gb": 11.96,
+            },
+            {
+                "repo_id": "lightx2v/Qwen-Image-Edit-2511-Lightning",
+                "remote_path": "Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors",
+                "local_rel": "models/loras/Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors",
+                "size_gb": 0.79,
             },
             {
                 "repo_id": "Comfy-Org/Qwen-Image_ComfyUI",
@@ -982,6 +1139,104 @@ def build_wan22_i2v_workflow(
     return graph
 
 
+def build_wan22_t2v_workflow(
+    prompt: str,
+    negative_prompt: str = DEFAULT_NEGATIVE_PROMPT,
+    width: int = 480,
+    height: int = 832,
+    num_frames: int = 81,
+    fps: int = 16,
+    steps: int = 6,
+    cfg: float = 1.0,
+    seed: int = -1,
+    filename_prefix: str = "clipforge/wan22_t2v",
+    high_unet: str = "Wan2.2-T2V-A14B-HighNoise-Q4_K_M.gguf",
+    low_unet: str = "Wan2.2-T2V-A14B-LowNoise-Q4_K_M.gguf",
+    high_lora: str = "wan2.2_t2v_A14b_high_noise_lora_rank64_lightx2v_4step_1217.safetensors",
+    low_lora: str = "wan2.2_t2v_A14b_low_noise_lora_rank64_lightx2v_4step_1217.safetensors",
+) -> dict[str, Any]:
+    """Wan 2.2 T2V 14B dual-expert + 4-step Lightx2v LoRAs (GGUF or FP8 safetensors)."""
+    w = snap_dim(width, 16)
+    h = snap_dim(height, 16)
+    length = snap_frames(num_frames, 4)
+    total_steps = max(4, min(30, int(steps)))
+    split_step = max(2, total_steps // 2)
+    actual_seed = random.randint(1, 2**50) if seed < 0 else int(seed)
+
+    return {
+        "1": _unet_loader_node(high_unet),
+        "2": _unet_loader_node(low_unet),
+        "3": {
+            "class_type": "LoraLoaderModelOnly",
+            "inputs": {
+                "model": ["1", 0],
+                "lora_name": high_lora,
+                "strength_model": 1.0,
+            },
+        },
+        "4": {
+            "class_type": "LoraLoaderModelOnly",
+            "inputs": {
+                "model": ["2", 0],
+                "lora_name": low_lora,
+                "strength_model": 1.0,
+            },
+        },
+        "5": {"class_type": "ModelSamplingSD3", "inputs": {"model": ["3", 0], "shift": 5.0}},
+        "6": {"class_type": "ModelSamplingSD3", "inputs": {"model": ["4", 0], "shift": 5.0}},
+        "7": {
+            "class_type": "CLIPLoader",
+            "inputs": {"clip_name": "umt5_xxl_fp8_e4m3fn_scaled.safetensors", "type": "wan", "device": "default"},
+        },
+        "8": {"class_type": "VAELoader", "inputs": {"vae_name": "wan_2.1_vae.safetensors"}},
+        "9": {"class_type": "CLIPTextEncode", "inputs": {"clip": ["7", 0], "text": prompt}},
+        "10": {"class_type": "CLIPTextEncode", "inputs": {"clip": ["7", 0], "text": negative_prompt}},
+        "11": {
+            "class_type": "EmptyHunyuanLatentVideo",
+            "inputs": {"width": w, "height": h, "length": length, "batch_size": 1},
+        },
+        "12": {
+            "class_type": "KSamplerAdvanced",
+            "inputs": {
+                "model": ["5", 0],
+                "add_noise": "enable",
+                "noise_seed": actual_seed,
+                "steps": total_steps,
+                "cfg": float(cfg),
+                "sampler_name": "euler",
+                "scheduler": "simple",
+                "positive": ["9", 0],
+                "negative": ["10", 0],
+                "latent_image": ["11", 0],
+                "start_at_step": 0,
+                "end_at_step": split_step,
+                "return_with_leftover_noise": "enable",
+            },
+        },
+        "13": {
+            "class_type": "KSamplerAdvanced",
+            "inputs": {
+                "model": ["6", 0],
+                "add_noise": "disable",
+                "noise_seed": 0,
+                "steps": total_steps,
+                "cfg": float(cfg),
+                "sampler_name": "euler",
+                "scheduler": "simple",
+                "positive": ["9", 0],
+                "negative": ["10", 0],
+                "latent_image": ["12", 0],
+                "start_at_step": split_step,
+                "end_at_step": total_steps,
+                "return_with_leftover_noise": "disable",
+            },
+        },
+        "14": {"class_type": "VAEDecode", "inputs": {"samples": ["13", 0], "vae": ["8", 0]}},
+        "15": {"class_type": "CreateVideo", "inputs": {"images": ["14", 0], "fps": float(fps)}},
+        "16": {"class_type": "SaveVideo", "inputs": {"video": ["15", 0], "filename_prefix": filename_prefix, "format": "mp4"}},
+    }
+
+
 def build_wan22_5b_workflow(
     prompt: str,
     image_filename: str | None = None,
@@ -1255,8 +1510,10 @@ def build_qwen_edit_workflow(
     cfg: float = 2.5,
     seed: int = -1,
     filename_prefix: str = "clipforge/qwen_edit",
+    unet_name: str = "Qwen-Image-Edit-2509-Q4_K_M.gguf",
+    lora_name: str | None = None,
 ) -> dict[str, Any]:
-    """Qwen-Image-Edit 2509 Q4_K_M: Heavyweight instruction-based 1-2 friend photo compositor."""
+    """Qwen-Image-Edit (2509 or 2511 + optional 4-step Lightning LoRA): 1-2 friend photo compositor."""
     w = snap_dim(width, 16, minimum=512, maximum=1536)
     h = snap_dim(height, 16, minimum=512, maximum=1536)
     actual_seed = random.randint(1, 2**50) if seed < 0 else int(seed)
@@ -1264,9 +1521,10 @@ def build_qwen_edit_workflow(
     pos_inputs: dict[str, Any] = {"clip": ["3", 0], "prompt": prompt, "vae": ["4", 0], "image1": ["5", 0]}
     neg_inputs: dict[str, Any] = {"clip": ["3", 0], "prompt": negative_prompt, "vae": ["4", 0], "image1": ["5", 0]}
 
+    model_src: list[Any] = ["1", 0]
     graph: dict[str, Any] = {
-        "1": {"class_type": "UnetLoaderGGUF", "inputs": {"unet_name": "Qwen-Image-Edit-2509-Q4_K_M.gguf"}},
-        "2": {"class_type": "ModelSamplingAuraFlow", "inputs": {"model": ["1", 0], "shift": 3.0}},
+        "1": _unet_loader_node(unet_name),
+        "2": {"class_type": "ModelSamplingAuraFlow", "inputs": {"model": model_src, "shift": 3.0}},
         "3": {
             "class_type": "CLIPLoader",
             "inputs": {"clip_name": "qwen_2.5_vl_7b_fp8_scaled.safetensors", "type": "qwen_image", "device": "default"},
@@ -1281,7 +1539,7 @@ def build_qwen_edit_workflow(
             "inputs": {
                 "model": ["2", 0],
                 "seed": actual_seed,
-                "steps": max(8, min(40, int(steps))),
+                "steps": max(4, min(40, int(steps))),
                 "cfg": float(cfg),
                 "sampler_name": "euler",
                 "scheduler": "simple",
@@ -1294,6 +1552,12 @@ def build_qwen_edit_workflow(
         "10": {"class_type": "VAEDecode", "inputs": {"samples": ["9", 0], "vae": ["4", 0]}},
         "11": {"class_type": "SaveImage", "inputs": {"images": ["10", 0], "filename_prefix": filename_prefix}},
     }
+    if lora_name:
+        graph["1b"] = {
+            "class_type": "LoraLoaderModelOnly",
+            "inputs": {"model": ["1", 0], "lora_name": lora_name, "strength_model": 1.0},
+        }
+        graph["2"]["inputs"]["model"] = ["1b", 0]
     if image_filename_2:
         graph["5b"] = {"class_type": "LoadImage", "inputs": {"image": image_filename_2}}
         pos_inputs["image2"] = ["5b", 0]
@@ -1453,7 +1717,7 @@ def generate_video_via_comfyui(
 ) -> dict[str, Any]:
     """Queue a Wan 2.2 or LTX-2.3 video workflow on local ComfyUI and save the rendered MP4."""
     if model not in MODEL_SPECS or MODEL_SPECS[model]["kind"] != "video":
-        raise ValueError(f"Unknown video model '{model}'. Valid: wan22_5b, wan22_i2v, ltx23")
+        raise ValueError(f"Unknown video model '{model}'. Valid: wan22_5b, wan22_i2v, wan22_t2v, ltx23")
 
     spec = MODEL_SPECS[model]
     if spec["requires_image"] and not image_path:
@@ -1514,6 +1778,23 @@ def generate_video_via_comfyui(
             low_unet=_resolve_model_slot_filename("wan22_i2v", 1, comfy_dir),
             high_lora=_resolve_model_slot_filename("wan22_i2v", 2, comfy_dir),
             low_lora=_resolve_model_slot_filename("wan22_i2v", 3, comfy_dir),
+        )
+    elif model == "wan22_t2v":
+        workflow = build_wan22_t2v_workflow(
+            prompt=full_prompt,
+            negative_prompt=negative_prompt,
+            width=use_w,
+            height=use_h,
+            num_frames=use_frames,
+            fps=use_fps,
+            steps=use_steps,
+            cfg=use_cfg,
+            seed=seed,
+            filename_prefix=f"clipforge/wan22_t2v_{run_id}",
+            high_unet=_resolve_model_slot_filename("wan22_t2v", 0, comfy_dir),
+            low_unet=_resolve_model_slot_filename("wan22_t2v", 1, comfy_dir),
+            high_lora=_resolve_model_slot_filename("wan22_t2v", 2, comfy_dir),
+            low_lora=_resolve_model_slot_filename("wan22_t2v", 3, comfy_dir),
         )
     elif model == "wan22_5b":
         workflow = build_wan22_5b_workflow(
@@ -1591,7 +1872,9 @@ def generate_image_via_comfyui(
 ) -> dict[str, Any]:
     """Queue 1-4 FLUX.2-klein, Z-Image-Turbo, or Qwen-Image-Edit runs (4-seed meme contact sheet)."""
     if model not in MODEL_SPECS or MODEL_SPECS[model]["kind"] != "image":
-        raise ValueError(f"Unknown image model '{model}'. Valid: flux2_klein, z_image_turbo, qwen_edit")
+        raise ValueError(
+            f"Unknown image model '{model}'. Valid: flux2_klein, flux2_klein_9b, z_image_turbo, qwen_edit, qwen_edit_2511"
+        )
 
     spec = MODEL_SPECS[model]
     if spec["requires_image"] and not image_path:
@@ -1640,7 +1923,7 @@ def generate_image_via_comfyui(
         cur_seed = base_seed + i if seed >= 0 else random.randint(1, 2**50)
         run_id = uuid.uuid4().hex[:8]
 
-        if model == "flux2_klein":
+        if model in ("flux2_klein", "flux2_klein_9b"):
             workflow = build_flux2_klein_workflow(
                 prompt=full_prompt,
                 image_filename=up_img1,
@@ -1650,9 +1933,9 @@ def generate_image_via_comfyui(
                 steps=use_steps,
                 cfg=use_cfg,
                 seed=cur_seed,
-                filename_prefix=f"clipforge/flux2_klein_{run_id}",
-                unet_name=_resolve_model_slot_filename("flux2_klein", 0, comfy_dir),
-                clip_name=_resolve_model_slot_filename("flux2_klein", 1, comfy_dir),
+                filename_prefix=f"clipforge/{model}_{run_id}",
+                unet_name=_resolve_model_slot_filename(model, 0, comfy_dir),
+                clip_name=_resolve_model_slot_filename(model, 1, comfy_dir),
             )
         elif model == "z_image_turbo":
             workflow = build_z_image_turbo_workflow(
@@ -1667,6 +1950,22 @@ def generate_image_via_comfyui(
                 unet_name=_resolve_model_slot_filename("z_image_turbo", 0, comfy_dir),
                 clip_name=_resolve_model_slot_filename("z_image_turbo", 1, comfy_dir),
             )
+        elif model == "qwen_edit_2511":
+            assert up_img1 is not None
+            workflow = build_qwen_edit_workflow(
+                prompt=full_prompt,
+                image_filename=up_img1,
+                image_filename_2=up_img2,
+                negative_prompt=negative_prompt,
+                width=use_w,
+                height=use_h,
+                steps=use_steps,
+                cfg=use_cfg,
+                seed=cur_seed,
+                filename_prefix=f"clipforge/qwen_edit_2511_{run_id}",
+                unet_name=_resolve_model_slot_filename("qwen_edit_2511", 0, comfy_dir),
+                lora_name=_resolve_model_slot_filename("qwen_edit_2511", 1, comfy_dir),
+            )
         else:
             assert up_img1 is not None
             workflow = build_qwen_edit_workflow(
@@ -1680,6 +1979,7 @@ def generate_image_via_comfyui(
                 cfg=use_cfg,
                 seed=cur_seed,
                 filename_prefix=f"clipforge/qwen_edit_{run_id}",
+                unet_name=_resolve_model_slot_filename("qwen_edit", 0, comfy_dir),
             )
 
         def _batch_prog(msg: str, pct: int | None) -> None:
