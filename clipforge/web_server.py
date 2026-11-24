@@ -8,6 +8,7 @@ import hmac
 import re
 import secrets
 import sys
+import time
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path, PurePosixPath, PureWindowsPath
@@ -15,11 +16,12 @@ from typing import Any
 from urllib.parse import urlparse
 
 import uvicorn
-from fastapi import FastAPI, File, HTTPException, Request, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+from .cast import CastManager
 from .director import discover_local_llm, expand_meme_prompt_local
 from .engine import ProjectEngine
 from .generator import (
@@ -27,10 +29,9 @@ from .generator import (
     COMFYUI_DIR,
     COMFYUI_URL,
     DEFAULT_NEGATIVE_PROMPT,
-    ImageModelId,
+    GenerationCanceledError,
     MODEL_SPECS,
     PROMPT_PRESETS,
-    VideoModelId,
     download_manager,
     ensure_comfyui_running,
     generate_image_via_comfyui,
@@ -38,11 +39,15 @@ from .generator import (
     get_model_availability,
     is_comfyui_reachable,
     job_manager,
+    polish_image_hd,
+    read_asset_metadata,
+    resolve_auto_model,
 )
 from .media import IMAGE_EXTENSIONS, MEDIA_EXTENSIONS
 from .models import MemeTemplateType, TransitionType
 from .platform_utils import detect_gpu_info
 from .sfx import ensure_builtin_sfx_file, list_builtin_sfx
+from .voice import clone_voice_offline, get_voice_cloner_status
 
 
 def _resolve_static_dir() -> Path:
@@ -56,6 +61,20 @@ def _resolve_static_dir() -> Path:
 
 STATIC_DIR = _resolve_static_dir()
 engine = ProjectEngine()
+
+_voice_status_cache: dict[str, Any] = {"ts": 0.0, "val": None}
+
+
+def get_cast_manager() -> CastManager:
+    return CastManager(engine.workspace_dir)
+
+
+def _cached_voice_status() -> dict[str, Any]:
+    now = time.monotonic()
+    if _voice_status_cache["val"] is None or (now - _voice_status_cache["ts"]) > 30.0:
+        _voice_status_cache["val"] = get_voice_cloner_status()
+        _voice_status_cache["ts"] = now
+    return _voice_status_cache["val"]
 
 # Cryptographic per-process CSRF/session token (injected into same-origin index.html only)
 SESSION_TOKEN = secrets.token_urlsafe(32)
@@ -346,11 +365,14 @@ class GenerateVideoRequest(BaseModel):
     negative_prompt: str = DEFAULT_NEGATIVE_PROMPT
     style_preset: str | None = None
     camera_preset: str | None = None
-    model: VideoModelId = "wan22_5b"
+    model: str = "auto"
     image_path: str | None = None
     end_image_path: str | None = None
     width: int | None = None
     height: int | None = None
+    match_photo_aspect: bool = False
+    want_audio: bool = False
+    fast_draft: bool = False
     num_frames: int | None = None
     fps: int | None = None
     steps: int | None = None
@@ -365,11 +387,12 @@ class GenerateImageRequest(BaseModel):
     prompt: str
     negative_prompt: str = ""
     style_preset: str | None = None
-    model: ImageModelId = "flux2_klein"
+    model: str = "auto"
     image_path: str | None = None
     image_path_2: str | None = None
     width: int | None = None
     height: int | None = None
+    match_photo_aspect: bool = False
     steps: int | None = None
     cfg: float | None = None
     seed: int = -1
@@ -377,6 +400,22 @@ class GenerateImageRequest(BaseModel):
     add_to_timeline: bool = False
     transition: TransitionType = "crossfade"
     transition_duration: float = 0.35
+
+
+class SmoothFpsRequest(BaseModel):
+    target_fps: float = 32.0
+
+
+class CloneVoiceRequest(BaseModel):
+    text: str
+    cast_id: str | None = None
+    ref_audio_path: str | None = None
+    ref_text: str = ""
+    speed: float = 1.0
+    add_to_timeline: bool = True
+    start_sec: float = 0.0
+    volume: float = 1.15
+    duck_main_audio: bool = True
 
 
 class AddAudioOverlayRequest(BaseModel):
@@ -637,6 +676,173 @@ async def api_clip_end_frame(clip_id: str) -> dict[str, Any]:
         raise HTTPException(status_code=400, detail=str(e)) from e
 
 
+@app.post("/api/timeline/clip/{clip_id}/smooth-fps")
+async def api_clip_smooth_fps(clip_id: str, req: SmoothFpsRequest) -> dict[str, Any]:
+    try:
+        res = await asyncio.to_thread(engine.smooth_clip_fps, clip_id, req.target_fps)
+        return {"smooth": res, "state": await asyncio.to_thread(engine.get_summary_dict)}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+
+# -------------------------------------------------------------------------
+# Cast / Friend Profiles & Offline Voice Cloning (F5-TTS)
+# -------------------------------------------------------------------------
+@app.get("/api/cast")
+async def api_list_cast() -> dict[str, Any]:
+    return {"cast": await asyncio.to_thread(get_cast_manager().list_members)}
+
+
+@app.post("/api/cast")
+async def api_create_cast(
+    name: str = Form(...),
+    photo: UploadFile = File(...),
+    voice: UploadFile | None = File(None),
+    voice_ref_text: str = Form(""),
+) -> dict[str, Any]:
+    try:
+        p_bytes = await photo.read()
+        if len(p_bytes) > 40 * 1024 * 1024:
+            raise ValueError("Photo exceeds 40 MB limit.")
+        v_bytes = None
+        v_name = None
+        if voice is not None and voice.filename:
+            v_bytes = await voice.read()
+            if len(v_bytes) > 80 * 1024 * 1024:
+                raise ValueError("Voice clip exceeds 80 MB limit.")
+            v_name = voice.filename
+        member = await asyncio.to_thread(
+            get_cast_manager().save_member,
+            name=name,
+            photo_bytes=p_bytes,
+            photo_filename=photo.filename,
+            voice_bytes=v_bytes,
+            voice_filename=v_name,
+            voice_ref_text=voice_ref_text,
+        )
+        return {"member": member, "cast": await asyncio.to_thread(get_cast_manager().list_members)}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+
+@app.post("/api/cast/{cast_id}/voice")
+async def api_attach_cast_voice(
+    cast_id: str,
+    voice: UploadFile = File(...),
+    voice_ref_text: str = Form(""),
+) -> dict[str, Any]:
+    try:
+        v_bytes = await voice.read()
+        if len(v_bytes) > 80 * 1024 * 1024:
+            raise ValueError("Voice clip exceeds 80 MB limit.")
+        member = await asyncio.to_thread(
+            get_cast_manager().attach_voice,
+            cast_id,
+            v_bytes,
+            voice.filename or "voice.wav",
+            voice_ref_text,
+        )
+        return {"member": member, "cast": await asyncio.to_thread(get_cast_manager().list_members)}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+
+@app.get("/api/cast/{cast_id}/photo")
+async def api_get_cast_photo(cast_id: str) -> FileResponse:
+    m = await asyncio.to_thread(get_cast_manager().get_member, cast_id)
+    if not m or not m.get("photo_path") or not Path(m["photo_path"]).exists():
+        raise HTTPException(status_code=404, detail="Cast photo not found.")
+    return FileResponse(m["photo_path"])
+
+
+@app.get("/api/cast/{cast_id}/voice")
+async def api_get_cast_voice(cast_id: str) -> FileResponse:
+    m = await asyncio.to_thread(get_cast_manager().get_member, cast_id)
+    if not m or not m.get("voice_path") or not Path(m["voice_path"]).exists():
+        raise HTTPException(status_code=404, detail="Cast voice sample not found.")
+    return FileResponse(m["voice_path"], media_type="audio/wav")
+
+
+@app.delete("/api/cast/{cast_id}")
+async def api_delete_cast(cast_id: str) -> dict[str, Any]:
+    deleted = await asyncio.to_thread(get_cast_manager().delete_member, cast_id)
+    return {"deleted": deleted, "cast": await asyncio.to_thread(get_cast_manager().list_members)}
+
+
+@app.get("/api/voice/status")
+async def api_voice_status() -> dict[str, Any]:
+    return await asyncio.to_thread(_cached_voice_status)
+
+
+@app.get("/api/voice/file/{filename}")
+async def api_get_cloned_voice_file(filename: str) -> FileResponse:
+    target = _resolve_safe_dir_file(engine.workspace_dir / "cloned_voices", filename, {".wav", ".mp3"})
+    return FileResponse(str(target), media_type="audio/wav", filename=target.name)
+
+
+@app.post("/api/voice/clone")
+async def api_clone_voice(req: CloneVoiceRequest) -> dict[str, Any]:
+    clean_text = (req.text or "").strip()
+    if not clean_text:
+        raise HTTPException(status_code=400, detail="Dialogue text cannot be empty.")
+
+    ref_audio = req.ref_audio_path
+    ref_text = req.ref_text
+    speaker_label = "Cloned Voice"
+    if req.cast_id:
+        member = await asyncio.to_thread(get_cast_manager().get_member, req.cast_id)
+        if not member:
+            raise HTTPException(status_code=404, detail="Cast member not found.")
+        if not member.get("voice_path"):
+            raise HTTPException(status_code=400, detail=f"Attach a 5-12s voice sample to '{member['name']}' first.")
+        ref_audio = member["voice_path"]
+        ref_text = ref_text or member.get("voice_ref_text", "")
+        speaker_label = f"🎙 {member['name']}: {clean_text[:28]}"
+
+    if not ref_audio:
+        raise HTTPException(status_code=400, detail="Select a Cast member with voice audio or provide ref_audio_path.")
+
+    job = job_manager.create(kind="voice", model="f5_tts", prompt=clean_text)
+
+    async def _run_voice_job() -> None:
+        gpu_label = detect_gpu_info().get("short_name") or "local GPU"
+        job_manager.update(job.id, status="running", progress_pct=20, message=f"Cloning voice on {gpu_label} (F5-TTS)...")
+        try:
+            out_dir = engine.workspace_dir / "cloned_voices"
+            res = await asyncio.to_thread(
+                clone_voice_offline,
+                text=clean_text,
+                ref_audio_path=ref_audio,
+                output_dir=out_dir,
+                ref_text=ref_text,
+                speed=req.speed,
+            )
+            overlay_id = None
+            if req.add_to_timeline:
+                ov = await asyncio.to_thread(
+                    engine.add_audio_overlay,
+                    None,
+                    res["audio_path"],
+                    req.start_sec,
+                    req.volume,
+                    req.duck_main_audio,
+                    speaker_label,
+                )
+                overlay_id = ov.id
+            job_manager.update(
+                job.id,
+                status="completed",
+                progress_pct=100,
+                message=f"Cloned {res['duration_sec']}s voice in {res['generation_time_sec']}s",
+                result={**res, "audio_url": f"/api/voice/file/{res['filename']}", "overlay_id": overlay_id},
+            )
+        except Exception as exc:
+            job_manager.update(job.id, status="failed", message=str(exc), error=str(exc))
+
+    asyncio.create_task(_run_voice_job())
+    return {"job_id": job.id, "status": "queued", "jobs": job_manager.list_jobs()}
+
+
 @app.get("/api/sfx/catalog")
 async def api_sfx_catalog() -> dict[str, Any]:
     return {"sfx": list_builtin_sfx()}
@@ -713,17 +919,35 @@ async def api_director_status(endpoint: str | None = None) -> dict[str, Any]:
 @app.post("/api/director/expand")
 async def api_director_expand(req: DirectorExpandRequest) -> dict[str, Any]:
     try:
+        # Detect @FriendName cast mentions so the LLM director knows reference photo(s) will be attached
+        has_p1 = req.has_friend_photo
+        has_p2 = req.has_second_photo
+        if "@" in (req.idea or ""):
+            _, m_img1, m_img2, matched = await asyncio.to_thread(
+                get_cast_manager().resolve_prompt_mentions,
+                req.idea,
+                "__attached__" if has_p1 else None,
+                "__attached__" if has_p2 else None,
+            )
+            if matched:
+                has_p1 = bool(m_img1)
+                has_p2 = bool(m_img2)
+
+        eff_model_id = req.model_id
+        if eff_model_id == "auto":
+            eff_model_id = await asyncio.to_thread(resolve_auto_model, req.mode, has_p1, has_p2)
+
         return await asyncio.to_thread(
             expand_meme_prompt_local,
             req.idea,
             req.mode,
-            req.has_friend_photo,
+            has_p1,
             req.endpoint,
             req.model_name,
-            req.model_id,
+            eff_model_id,
             req.style_preset,
             req.camera_preset,
-            req.has_second_photo,
+            has_p2,
             req.has_end_frame,
         )
     except Exception as e:
@@ -909,6 +1133,7 @@ def _list_image_gallery(limit: int = 36) -> list[dict[str, Any]]:
             "url": f"/api/generate/image/{p.name}",
             "size_bytes": p.stat().st_size,
             "mtime": p.stat().st_mtime,
+            "meta": read_asset_metadata(p),
         }
         for p in files[:limit]
     ]
@@ -938,6 +1163,8 @@ async def api_generate_status() -> dict[str, Any]:
     gallery = await asyncio.to_thread(_list_image_gallery)
     ref_images = await asyncio.to_thread(_list_ref_images)
     gpu = await asyncio.to_thread(detect_gpu_info)
+    cast = await asyncio.to_thread(get_cast_manager().list_members)
+    voice_st = await asyncio.to_thread(_cached_voice_status)
     return {
         "comfyui_url": COMFYUI_URL,
         "comfyui_dir": str(COMFYUI_DIR),
@@ -953,7 +1180,29 @@ async def api_generate_status() -> dict[str, Any]:
         "camera_presets": CAMERA_PRESETS,
         "gallery": gallery,
         "ref_images": ref_images,
+        "cast": cast,
+        "voice": voice_st,
     }
+
+
+@app.post("/api/generate/jobs/{job_id}/cancel")
+async def api_cancel_generation_job(job_id: str) -> dict[str, Any]:
+    canceled = await asyncio.to_thread(job_manager.cancel, job_id)
+    return {"job_id": job_id, "canceled": canceled, "jobs": job_manager.list_jobs()}
+
+
+@app.post("/api/generate/image/{filename}/polish")
+async def api_polish_generated_image(filename: str) -> dict[str, Any]:
+    target = _resolve_safe_dir_file(engine.workspace_dir / "generated_images", filename, IMAGE_EXTENSIONS)
+    try:
+        res = await asyncio.to_thread(polish_image_hd, target, engine.workspace_dir / "generated_images", 2)
+        return {
+            **res,
+            "url": f"/api/generate/image/{res['filename']}",
+            "gallery": await asyncio.to_thread(_list_image_gallery),
+        }
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
 
 
 @app.post("/api/generate/start-comfyui")
@@ -1029,32 +1278,44 @@ async def api_get_generated_image(filename: str) -> FileResponse:
 async def api_delete_generated_image(filename: str) -> dict[str, Any]:
     target = _resolve_safe_dir_file(engine.workspace_dir / "generated_images", filename, IMAGE_EXTENSIONS)
     target.unlink(missing_ok=True)
+    target.with_suffix(target.suffix + ".meta.json").unlink(missing_ok=True)
     return {"deleted": filename, "gallery": await asyncio.to_thread(_list_image_gallery)}
 
 
 @app.post("/api/generate/image")
 async def api_generate_image(req: GenerateImageRequest) -> dict[str, Any]:
-    prompt_clean = (req.prompt or "").strip()
-    if not prompt_clean:
+    prompt_raw = (req.prompt or "").strip()
+    if not prompt_raw:
         raise HTTPException(status_code=400, detail="Prompt cannot be empty.")
 
-    spec = MODEL_SPECS.get(req.model)
+    # Auto-resolve @Friend cast mentions and attach their saved reference photo(s)
+    prompt_clean, img1, img2, _matched_cast = await asyncio.to_thread(
+        get_cast_manager().resolve_prompt_mentions, prompt_raw, req.image_path, req.image_path_2
+    )
+
+    chosen_model = req.model
+    if chosen_model == "auto":
+        chosen_model = await asyncio.to_thread(
+            resolve_auto_model, "image", bool(img1), bool(img2)
+        )
+
+    spec = MODEL_SPECS.get(chosen_model)
     if not spec or spec["kind"] != "image":
-        raise HTTPException(status_code=400, detail=f"Invalid image model '{req.model}'.")
-    if spec["requires_image"] and not req.image_path:
+        raise HTTPException(status_code=400, detail=f"Invalid image model '{chosen_model}'.")
+    if spec["requires_image"] and not img1:
         raise HTTPException(
             status_code=400,
-            detail=f"{spec['display_name']} requires a friend/reference photo.",
+            detail=f"{spec['display_name']} requires a friend/reference photo (or type @FriendName).",
         )
 
     avail = await asyncio.to_thread(get_model_availability)
-    if not avail[req.model]["ready"]:
+    if not avail[chosen_model]["ready"]:
         raise HTTPException(
             status_code=400,
-            detail=f"{spec['display_name']} needs {avail[req.model]['missing_gb']} GB downloaded first (click Download in Model Manager).",
+            detail=f"{spec['display_name']} needs {avail[chosen_model]['missing_gb']} GB downloaded first (click Download in Model Manager).",
         )
 
-    job = job_manager.create(kind="image", model=req.model, prompt=prompt_clean)
+    job = job_manager.create(kind="image", model=chosen_model, prompt=prompt_raw)
 
     async def _run_image_job() -> None:
         job_manager.update(job.id, status="running", progress_pct=3, message="Starting offline image generation...")
@@ -1067,17 +1328,24 @@ async def api_generate_image(req: GenerateImageRequest) -> dict[str, Any]:
                     upd["progress_pct"] = pct
                 job_manager.update(job.id, **upd)
 
+            def _preview(data_url: str) -> None:
+                job_manager.update(job.id, preview_data_url=data_url)
+
+            def _on_pid(pid: str) -> None:
+                job_manager.update(job.id, prompt_id=pid)
+
             res = await asyncio.to_thread(
                 generate_image_via_comfyui,
                 prompt=prompt_clean,
                 output_dir=out_dir,
-                model=req.model,
-                image_path=req.image_path,
-                image_path_2=req.image_path_2,
+                model=chosen_model,  # type: ignore[arg-type]
+                image_path=img1,
+                image_path_2=img2,
                 negative_prompt=req.negative_prompt,
                 style_preset=req.style_preset,
                 width=req.width,
                 height=req.height,
+                match_photo_aspect=req.match_photo_aspect,
                 steps=req.steps,
                 cfg=req.cfg,
                 seed=req.seed,
@@ -1087,6 +1355,9 @@ async def api_generate_image(req: GenerateImageRequest) -> dict[str, Any]:
                 auto_start=True,
                 timeout_sec=600.0,
                 on_progress=_progress,
+                on_preview=_preview,
+                on_prompt_id=_on_pid,
+                cancel_event=job.cancel_event,
             )
 
             media_id = None
@@ -1107,7 +1378,7 @@ async def api_generate_image(req: GenerateImageRequest) -> dict[str, Any]:
                     req.transition_duration if cur_tl else 0.0,
                     1.0,
                     1.0,
-                    f"{req.model}: {prompt_clean[:28]}",
+                    f"{chosen_model}: {prompt_raw[:28]}",
                 )
 
             cnt = int(res.get("batch_size", 1))
@@ -1127,36 +1398,48 @@ async def api_generate_image(req: GenerateImageRequest) -> dict[str, Any]:
                     "media_id": media_id,
                 },
             )
+        except GenerationCanceledError:
+            job_manager.update(job.id, status="canceled", message="Canceled by user")
         except Exception as exc:
             job_manager.update(job.id, status="failed", message=str(exc), error=str(exc))
 
     asyncio.create_task(_run_image_job())
-    return {"job_id": job.id, "status": "queued", "jobs": job_manager.list_jobs()}
+    return {"job_id": job.id, "model": chosen_model, "status": "queued", "jobs": job_manager.list_jobs()}
 
 
 @app.post("/api/generate/video")
 async def api_generate_video(req: GenerateVideoRequest) -> dict[str, Any]:
-    prompt_clean = (req.prompt or "").strip()
-    if not prompt_clean:
+    prompt_raw = (req.prompt or "").strip()
+    if not prompt_raw:
         raise HTTPException(status_code=400, detail="Prompt cannot be empty.")
 
-    spec = MODEL_SPECS.get(req.model)
+    prompt_clean, img1, _img2, _matched_cast = await asyncio.to_thread(
+        get_cast_manager().resolve_prompt_mentions, prompt_raw, req.image_path, None
+    )
+
+    chosen_model = req.model
+    if chosen_model == "auto":
+        chosen_model = await asyncio.to_thread(
+            resolve_auto_model, "video", bool(img1), False, req.want_audio, req.fast_draft
+        )
+
+    spec = MODEL_SPECS.get(chosen_model)
     if not spec or spec["kind"] != "video":
-        raise HTTPException(status_code=400, detail=f"Invalid video model '{req.model}'.")
-    if spec["requires_image"] and not req.image_path:
+        raise HTTPException(status_code=400, detail=f"Invalid video model '{chosen_model}'.")
+    if spec["requires_image"] and not img1:
         raise HTTPException(
             status_code=400,
-            detail=f"{spec['display_name']} requires a friend photo / start frame.",
+            detail=f"{spec['display_name']} requires a friend photo / start frame (or type @FriendName).",
         )
 
     avail = await asyncio.to_thread(get_model_availability)
-    if not avail[req.model]["ready"]:
+    if not avail[chosen_model]["ready"]:
         raise HTTPException(
             status_code=400,
-            detail=f"{spec['display_name']} needs {avail[req.model]['missing_gb']} GB downloaded first (click Download in Model Manager).",
+            detail=f"{spec['display_name']} needs {avail[chosen_model]['missing_gb']} GB downloaded first (click Download in Model Manager).",
         )
 
-    job = job_manager.create(kind="video", model=req.model, prompt=prompt_clean)
+    job = job_manager.create(kind="video", model=chosen_model, prompt=prompt_raw)
 
     async def _run_job() -> None:
         job_manager.update(job.id, status="running", progress_pct=3, message="Starting offline video generation...")
@@ -1169,18 +1452,25 @@ async def api_generate_video(req: GenerateVideoRequest) -> dict[str, Any]:
                     upd["progress_pct"] = pct
                 job_manager.update(job.id, **upd)
 
+            def _preview(data_url: str) -> None:
+                job_manager.update(job.id, preview_data_url=data_url)
+
+            def _on_pid(pid: str) -> None:
+                job_manager.update(job.id, prompt_id=pid)
+
             res = await asyncio.to_thread(
                 generate_video_via_comfyui,
                 prompt=prompt_clean,
                 output_dir=gen_dir,
-                model=req.model,
-                image_path=req.image_path,
+                model=chosen_model,  # type: ignore[arg-type]
+                image_path=img1,
                 end_image_path=req.end_image_path,
                 negative_prompt=req.negative_prompt,
                 style_preset=req.style_preset,
                 camera_preset=req.camera_preset,
                 width=req.width,
                 height=req.height,
+                match_photo_aspect=req.match_photo_aspect,
                 num_frames=req.num_frames,
                 fps=req.fps,
                 steps=req.steps,
@@ -1191,6 +1481,9 @@ async def api_generate_video(req: GenerateVideoRequest) -> dict[str, Any]:
                 auto_start=True,
                 timeout_sec=1800.0,
                 on_progress=_progress,
+                on_preview=_preview,
+                on_prompt_id=_on_pid,
+                cancel_event=job.cancel_event,
             )
             _progress("Importing clip into ClipForge...", 98)
             imported = await asyncio.to_thread(engine.import_media, [res["video_path"]])
@@ -1208,7 +1501,7 @@ async def api_generate_video(req: GenerateVideoRequest) -> dict[str, Any]:
                     req.transition_duration if cur_tl else 0.0,
                     1.0,
                     1.0,
-                    f"{req.model}: {prompt_clean[:28]}",
+                    f"{chosen_model}: {prompt_raw[:28]}",
                 )
             job_manager.update(
                 job.id,
@@ -1217,11 +1510,13 @@ async def api_generate_video(req: GenerateVideoRequest) -> dict[str, Any]:
                 message=f"Done in {res['generation_time_sec']}s ({media_item.filename})",
                 result={**res, "media_id": media_item.id},
             )
+        except GenerationCanceledError:
+            job_manager.update(job.id, status="canceled", message="Canceled by user")
         except Exception as exc:
             job_manager.update(job.id, status="failed", message=str(exc), error=str(exc))
 
     asyncio.create_task(_run_job())
-    return {"job_id": job.id, "status": "queued", "jobs": job_manager.list_jobs()}
+    return {"job_id": job.id, "model": chosen_model, "status": "queued", "jobs": job_manager.list_jobs()}
 
 
 def main() -> None:

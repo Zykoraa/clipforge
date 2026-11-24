@@ -114,6 +114,8 @@ def main() -> None:
         "clipforge.web_server",
         "clipforge.mcp_server",
         "clipforge.platform_utils",
+        "clipforge.cast",
+        "clipforge.voice",
     ]
     if not is_win:
         hidden_imports.append("uvicorn.loops.uvloop")
@@ -133,6 +135,8 @@ def main() -> None:
         str(DIST_DIR),
         "--add-data",
         f"{ROOT / 'clipforge' / 'static'}{os.pathsep}clipforge/static",
+        "--add-data",
+        f"{ROOT / 'clipforge' / 'voice_worker.py'}{os.pathsep}clipforge",
         "--collect-all",
         "faster_whisper",
         "--collect-all",

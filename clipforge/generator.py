@@ -2,16 +2,20 @@
 
 from __future__ import annotations
 
+import base64
 import json
+import math
 import os
 import random
 import shlex
+import struct
 import subprocess
 import sys
 import threading
 import time
 import uuid
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Literal
 from urllib.parse import urlparse
@@ -540,17 +544,17 @@ MODEL_SPECS: dict[str, dict[str, Any]] = {
     },
     "qwen_edit": {
         "kind": "image",
-        "display_name": "Qwen-Image-Edit 2509 (Multi-Photo)",
-        "badge": "PRO PHOTO COMPOSITOR",
-        "description": "Instruction-based friend-photo compositor supporting 1–2 friend photos simultaneously with unmatched identity lock.",
+        "display_name": "Qwen-Image-Edit 2509 (4-Step Multi-Photo)",
+        "badge": "4-STEP MULTI-PHOTO",
+        "description": "4-step Lightning instruction-based compositor supporting 1–2 friend photos simultaneously with unmatched identity lock.",
         "requires_image": True,
         "supports_image": True,
         "supports_second_image": True,
         "supports_audio": False,
         "default_width": 1024,
         "default_height": 1024,
-        "default_steps": 20,
-        "default_cfg": 2.5,
+        "default_steps": 4,
+        "default_cfg": 1.0,
         "dim_step": 16,
         "files": [
             {
@@ -558,6 +562,13 @@ MODEL_SPECS: dict[str, dict[str, Any]] = {
                 "remote_path": "Qwen-Image-Edit-2509-Q4_K_M.gguf",
                 "local_rel": "models/diffusion_models/Qwen-Image-Edit-2509-Q4_K_M.gguf",
                 "size_gb": 12.17,
+            },
+            {
+                "repo_id": "lightx2v/Qwen-Image-Lightning",
+                "remote_path": "Qwen-Image-Edit-2509/Qwen-Image-Edit-2509-Lightning-4steps-V1.0-bf16.safetensors",
+                "local_rel": "models/loras/Qwen-Image-Edit-2509-Lightning-4steps-V1.0-bf16.safetensors",
+                "optional": True,
+                "size_gb": 0.79,
             },
             {
                 "repo_id": "Comfy-Org/Qwen-Image_ComfyUI",
@@ -619,6 +630,189 @@ MODEL_SPECS: dict[str, dict[str, Any]] = {
         ],
     },
 }
+
+
+class GenerationCanceledError(RuntimeError):
+    """Raised when a user cancels an active or queued ComfyUI generation job."""
+
+
+def read_image_dimensions(image_path: str | Path) -> tuple[int, int] | None:
+    """Fast zero-dependency PNG/JPEG/WebP header dimension reader with ffprobe fallback."""
+    p = Path(image_path)
+    if not p.exists() or not p.is_file():
+        return None
+    try:
+        with open(p, "rb") as fh:
+            head = fh.read(64)
+            # PNG
+            if head[:8] == b"\x89PNG\r\n\x1a\n" and len(head) >= 24:
+                w, h = struct.unpack(">II", head[16:24])
+                if w > 0 and h > 0:
+                    return int(w), int(h)
+            # WebP
+            if head[:4] == b"RIFF" and head[8:12] == b"WEBP":
+                chunk = head[12:16]
+                if chunk == b"VP8X" and len(head) >= 30:
+                    w = 1 + int.from_bytes(head[24:27], "little")
+                    h = 1 + int.from_bytes(head[27:30], "little")
+                    return w, h
+            # JPEG SOF scan
+            if head[:2] == b"\xff\xd8":
+                fh.seek(2)
+                while True:
+                    b = fh.read(1)
+                    if not b:
+                        break
+                    if b != b"\xff":
+                        continue
+                    marker = fh.read(1)
+                    while marker == b"\xff":
+                        marker = fh.read(1)
+                    if not marker:
+                        break
+                    m = marker[0]
+                    if m in (0xC0, 0xC1, 0xC2, 0xC3, 0xC5, 0xC6, 0xC7, 0xC9, 0xCA, 0xCB, 0xCD, 0xCE, 0xCF):
+                        seg = fh.read(7)
+                        if len(seg) == 7:
+                            h, w = struct.unpack(">HH", seg[3:7])
+                            if w > 0 and h > 0:
+                                return int(w), int(h)
+                        break
+                    elif m in (0xD8, 0xD9, 0x01) or (0xD0 <= m <= 0xD7):
+                        continue
+                    else:
+                        ln_b = fh.read(2)
+                        if len(ln_b) < 2:
+                            break
+                        seg_len = struct.unpack(">H", ln_b)[0]
+                        fh.seek(max(0, seg_len - 2), 1)
+    except Exception:
+        pass
+    try:
+        pr = subprocess.run(
+            ["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=width,height", "-of", "csv=p=0:s=x", str(p)],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        if pr.returncode == 0 and "x" in pr.stdout:
+            w_s, h_s = pr.stdout.strip().splitlines()[0].split("x", 1)
+            return int(w_s), int(h_s)
+    except Exception:
+        pass
+    return None
+
+
+def compute_aspect_matched_dims(
+    image_path: str | Path,
+    kind: str,
+    dim_step: int = 16,
+) -> tuple[int, int] | None:
+    """Compute aspect-ratio-preserving (width, height) within a fast, VRAM-friendly pixel budget."""
+    dims = read_image_dimensions(image_path)
+    if not dims:
+        return None
+    src_w, src_h = dims
+    if src_w <= 0 or src_h <= 0:
+        return None
+    aspect = max(0.45, min(2.2, src_w / src_h))
+    if kind == "image":
+        target_pixels = 1024 * 1024
+        min_d, max_d = 512, 1344
+    else:
+        target_pixels = 480 * 768
+        min_d, max_d = 384, 832
+    raw_w = math.sqrt(target_pixels * aspect)
+    raw_h = target_pixels / raw_w
+    w = snap_dim(int(round(raw_w)), dim_step, minimum=min_d, maximum=max_d)
+    h = snap_dim(int(round(raw_h)), dim_step, minimum=min_d, maximum=max_d)
+    return w, h
+
+
+def resolve_auto_model(
+    kind: str,
+    has_image1: bool = False,
+    has_image2: bool = False,
+    want_audio: bool = False,
+    fast_draft: bool = False,
+    comfy_dir: Path = COMFYUI_DIR,
+) -> str:
+    """Pick the highest-quality ready local model automatically based on inputs, intent, and installed weights."""
+    avail = get_model_availability(comfy_dir)
+    if kind == "image":
+        if has_image1 and has_image2:
+            priority = ["qwen_edit_2511", "qwen_edit", "flux2_klein_9b", "flux2_klein", "z_image_turbo"]
+        elif has_image1:
+            priority = ["flux2_klein_9b", "flux2_klein", "qwen_edit_2511", "qwen_edit", "z_image_turbo"]
+        else:
+            priority = ["z_image_turbo", "flux2_klein_9b", "flux2_klein"]
+    else:
+        if want_audio:
+            priority = ["ltx23", "wan22_i2v" if has_image1 else "wan22_t2v", "wan22_5b"]
+        elif has_image1 and not fast_draft:
+            priority = ["wan22_i2v", "wan22_5b", "ltx23"]
+        elif not has_image1 and not fast_draft:
+            priority = ["wan22_t2v", "wan22_5b", "ltx23"]
+        else:
+            priority = ["wan22_5b", "ltx23", "wan22_t2v", "wan22_i2v"]
+
+    for mid in priority:
+        if mid in avail and avail[mid]["ready"]:
+            if avail[mid]["requires_image"] and not has_image1:
+                continue
+            return mid
+    return priority[0]
+
+
+def write_asset_metadata(asset_path: Path, meta: dict[str, Any]) -> Path:
+    meta_path = asset_path.with_suffix(asset_path.suffix + ".meta.json")
+    payload = {**meta, "created_at": datetime.now(timezone.utc).isoformat()}
+    meta_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    return meta_path
+
+
+def read_asset_metadata(asset_path: Path) -> dict[str, Any] | None:
+    meta_path = asset_path.with_suffix(asset_path.suffix + ".meta.json")
+    if not meta_path.exists():
+        return None
+    try:
+        data = json.loads(meta_path.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else None
+    except Exception:
+        return None
+
+
+def polish_image_hd(image_path: Path, output_dir: Path, scale: int = 2) -> dict[str, Any]:
+    """1-click 2x HD Lanczos upscale + subtle detail/micro-contrast sharpening polish."""
+    src = Path(image_path).resolve()
+    if not src.exists() or not src.is_file():
+        raise FileNotFoundError(f"Image not found: {src}")
+    factor = 2 if scale >= 2 else 1
+    output_dir.mkdir(parents=True, exist_ok=True)
+    run_id = uuid.uuid4().hex[:6]
+    stem = src.stem[:48]
+    dest = (output_dir / f"{stem}_hd_{run_id}.png").resolve()
+
+    vf = f"scale=iw*{factor}:ih*{factor}:flags=lanczos,unsharp=5:5:0.75:3:3:0.30"
+    res = subprocess.run(
+        ["ffmpeg", "-y", "-hide_banner", "-i", str(src), "-vf", vf, "-frames:v", "1", str(dest)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if res.returncode != 0 or not dest.exists():
+        raise RuntimeError(f"HD polish failed: {(res.stderr or '')[-400:]}")
+
+    orig_meta = read_asset_metadata(src) or {}
+    write_asset_metadata(dest, {**orig_meta, "polished_from": src.name, "hd_scale": factor})
+    dims = read_image_dimensions(dest) or (0, 0)
+    return {
+        "image_path": str(dest),
+        "filename": dest.name,
+        "width": dims[0],
+        "height": dims[1],
+        "file_size_bytes": dest.stat().st_size,
+    }
 
 
 def apply_prompt_preset(
@@ -885,8 +1079,10 @@ def get_model_availability(comfy_dir: Path = COMFYUI_DIR) -> dict[str, dict[str,
     for model_id, spec in MODEL_SPECS.items():
         present: list[str] = []
         missing: list[dict[str, Any]] = []
+        required_missing: list[dict[str, Any]] = []
         total_gb = 0.0
         using_safetensors_unet = False
+        optional_present: set[str] = set()
         for f in spec["files"]:
             found_fp = _resolve_existing_slot_file(f, comfy_dir)
             if found_fp is not None:
@@ -895,6 +1091,8 @@ def get_model_availability(comfy_dir: Path = COMFYUI_DIR) -> dict[str, dict[str,
                 except ValueError:
                     rel_str = found_fp.name
                 present.append(rel_str)
+                if f.get("optional"):
+                    optional_present.add(f["local_rel"])
                 total_gb += found_fp.stat().st_size / (1024**3)
                 if "diffusion_models" in f["local_rel"] and found_fp.suffix.lower() == ".safetensors":
                     using_safetensors_unet = True
@@ -903,7 +1101,21 @@ def get_model_availability(comfy_dir: Path = COMFYUI_DIR) -> dict[str, dict[str,
                 fp = comfy_dir / f["local_rel"]
                 part = fp.with_name(fp.name + ".part")
                 partial_gb = round(part.stat().st_size / (1024**3), 2) if part.exists() else 0.0
-                missing.append({"file": f["local_rel"], "size_gb": f["size_gb"], "partial_gb": partial_gb})
+                miss_entry = {
+                    "file": f["local_rel"],
+                    "size_gb": f["size_gb"],
+                    "partial_gb": partial_gb,
+                    "optional": bool(f.get("optional")),
+                }
+                missing.append(miss_entry)
+                if not f.get("optional"):
+                    required_missing.append(miss_entry)
+
+        def_steps = spec["default_steps"]
+        def_cfg = spec["default_cfg"]
+        if model_id == "qwen_edit" and "models/loras/Qwen-Image-Edit-2509-Lightning-4steps-V1.0-bf16.safetensors" not in optional_present:
+            def_steps = 20
+            def_cfg = 2.5
 
         dl_state = download_manager.get_state_dict(model_id)
         report[model_id] = {
@@ -912,7 +1124,7 @@ def get_model_availability(comfy_dir: Path = COMFYUI_DIR) -> dict[str, dict[str,
             "display_name": spec["display_name"],
             "badge": spec["badge"],
             "description": spec["description"],
-            "ready": len(missing) == 0,
+            "ready": len(required_missing) == 0,
             "variant": "safetensors" if using_safetensors_unet else "gguf",
             "requires_image": spec["requires_image"],
             "supports_image": spec["supports_image"],
@@ -922,16 +1134,16 @@ def get_model_availability(comfy_dir: Path = COMFYUI_DIR) -> dict[str, dict[str,
             "defaults": {
                 "width": spec["default_width"],
                 "height": spec["default_height"],
-                "steps": spec["default_steps"],
-                "cfg": spec["default_cfg"],
+                "steps": def_steps,
+                "cfg": def_cfg,
                 "frames": spec.get("default_frames"),
                 "fps": spec.get("default_fps"),
             },
             "present_count": len(present),
             "total_files": len(spec["files"]),
             "total_gb": round(total_gb, 2),
-            "missing_files": missing,
-            "missing_gb": round(sum(m["size_gb"] for m in missing), 2),
+            "missing_files": required_missing,
+            "missing_gb": round(sum(m["size_gb"] for m in required_missing), 2),
             "download": dl_state,
         }
     return report
@@ -980,7 +1192,6 @@ def ensure_comfyui_running(
         "TMPDIR": str(tmp_dir),
         "PYTHONUTF8": "1",
     }
-
     extra_args_raw = os.environ.get("CLIPFORGE_COMFYUI_ARGS", "").strip()
     if extra_args_raw:
         extra_args = shlex.split(extra_args_raw)
@@ -995,6 +1206,18 @@ def ensure_comfyui_running(
             extra_args = ["--reserve-vram", "3.0"]
         else:
             extra_args = ["--reserve-vram", "2.0"]
+
+    if "--preview-method" not in extra_args:
+        extra_args.extend(["--preview-method", "latent2rgb"])
+
+    # Auto-enable SageAttention if installed in ComfyUI's venv (major RTX 40-series Ada speedup)
+    if "--use-sage-attention" not in extra_args:
+        venv_root = py_exe.parent.parent
+        has_sage = (venv_root / "Lib" / "site-packages" / "sageattention").exists() or any(
+            (venv_root / "lib").glob("python*/site-packages/sageattention")
+        )
+        if has_sage:
+            extra_args.append("--use-sage-attention")
 
     cmd = [
         str(py_exe),
@@ -1512,9 +1735,10 @@ def build_qwen_edit_workflow(
     negative_prompt: str = "",
     width: int = 1024,
     height: int = 1024,
-    steps: int = 20,
-    cfg: float = 2.5,
+    steps: int = 4,
+    cfg: float = 1.0,
     seed: int = -1,
+    use_lightning_lora: bool | None = None,
     filename_prefix: str = "clipforge/qwen_edit",
     unet_name: str = "Qwen-Image-Edit-2509-Q4_K_M.gguf",
     lora_name: str | None = None,
@@ -1524,13 +1748,18 @@ def build_qwen_edit_workflow(
     h = snap_dim(height, 16, minimum=512, maximum=1536)
     actual_seed = random.randint(1, 2**50) if seed < 0 else int(seed)
 
+    effective_lora = lora_name
+    if use_lightning_lora is False:
+        effective_lora = None
+    elif effective_lora is None and use_lightning_lora is True:
+        effective_lora = "Qwen-Image-Edit-2509-Lightning-4steps-V1.0-bf16.safetensors"
+
     pos_inputs: dict[str, Any] = {"clip": ["3", 0], "prompt": prompt, "vae": ["4", 0], "image1": ["5", 0]}
     neg_inputs: dict[str, Any] = {"clip": ["3", 0], "prompt": negative_prompt, "vae": ["4", 0], "image1": ["5", 0]}
 
-    model_src: list[Any] = ["1", 0]
     graph: dict[str, Any] = {
         "1": _unet_loader_node(unet_name),
-        "2": {"class_type": "ModelSamplingAuraFlow", "inputs": {"model": model_src, "shift": 3.0}},
+        "2": {"class_type": "ModelSamplingAuraFlow", "inputs": {"model": ["1", 0], "shift": 3.0}},
         "3": {
             "class_type": "CLIPLoader",
             "inputs": {"clip_name": "qwen_2.5_vl_7b_fp8_scaled.safetensors", "type": "qwen_image", "device": "default"},
@@ -1558,10 +1787,10 @@ def build_qwen_edit_workflow(
         "10": {"class_type": "VAEDecode", "inputs": {"samples": ["9", 0], "vae": ["4", 0]}},
         "11": {"class_type": "SaveImage", "inputs": {"images": ["10", 0], "filename_prefix": filename_prefix}},
     }
-    if lora_name:
+    if effective_lora:
         graph["1b"] = {
             "class_type": "LoraLoaderModelOnly",
-            "inputs": {"model": ["1", 0], "lora_name": lora_name, "strength_model": 1.0},
+            "inputs": {"model": ["1", 0], "lora_name": effective_lora, "strength_model": 1.0},
         }
         graph["2"]["inputs"]["model"] = ["1b", 0]
     if image_filename_2:
@@ -1657,12 +1886,14 @@ def _execute_comfyui_workflow(
     timeout_sec: float,
     extensions: tuple[str, ...],
     on_progress: Callable[[str, int | None], None] | None = None,
+    on_preview: Callable[[str], None] | None = None,
+    on_prompt_id: Callable[[str], None] | None = None,
+    cancel_event: threading.Event | None = None,
 ) -> tuple[str, dict[str, str], float]:
-    """Queue workflow, stream live step progress over ComfyUI WebSocket, and return saved artifact info."""
+    """Queue workflow, stream live step progress + latent previews over WebSocket, and support instant cancellation."""
     client_id = f"clipforge_{uuid.uuid4().hex[:8]}"
     t0 = time.perf_counter()
 
-    # Optional background WS listener for exact sampling step percentages
     ws_stop = threading.Event()
     gpu_label = detect_gpu_info().get("short_name") or "local GPU"
     step_info = {"pct": 5, "label": f"Queued on {gpu_label}..."}
@@ -1677,6 +1908,15 @@ def _execute_comfyui_workflow(
                     try:
                         raw = ws.recv(timeout=1.0)
                     except TimeoutError:
+                        continue
+                    if isinstance(raw, bytes):
+                        # ComfyUI binary preview packet: >II (event_type=1, fmt=1 JPEG / 2 PNG) + raw image bytes
+                        if on_preview and len(raw) > 12:
+                            ev_type, img_fmt = struct.unpack(">II", raw[:8])
+                            if ev_type == 1:
+                                mime = "image/png" if img_fmt == 2 else "image/jpeg"
+                                b64 = base64.b64encode(raw[8:]).decode("ascii")
+                                on_preview(f"data:{mime};base64,{b64}")
                         continue
                     if not isinstance(raw, str):
                         continue
@@ -1705,6 +1945,9 @@ def _execute_comfyui_workflow(
     ws_thread.start()
 
     try:
+        if cancel_event and cancel_event.is_set():
+            raise GenerationCanceledError("Canceled before queueing.")
+
         resp = httpx.post(
             f"{base_url}/prompt",
             json={"prompt": workflow, "client_id": client_id},
@@ -1714,9 +1957,14 @@ def _execute_comfyui_workflow(
             raise RuntimeError(f"ComfyUI rejected workflow ({resp.status_code}): {resp.text[:1200]}")
 
         prompt_id = resp.json()["prompt_id"]
+        if on_prompt_id:
+            on_prompt_id(prompt_id)
         deadline = time.monotonic() + timeout_sec
 
         while time.monotonic() < deadline:
+            if cancel_event and cancel_event.is_set():
+                raise GenerationCanceledError("Canceled by user.")
+
             hist_resp = httpx.get(f"{base_url}/history/{prompt_id}", timeout=15.0)
             if hist_resp.status_code == 200:
                 hist = hist_resp.json()
@@ -1725,6 +1973,8 @@ def _execute_comfyui_workflow(
                     status = entry.get("status", {})
                     if status.get("status_str") == "error":
                         msgs = status.get("messages", [])
+                        if any("interrupt" in str(m).lower() for m in msgs):
+                            raise GenerationCanceledError("Interrupted on GPU.")
                         err_text = _format_comfyui_error(msgs)
                         if "out of memory" in err_text.lower() or "outofmemory" in err_text.lower():
                             _free_comfyui_memory(base_url)
@@ -1737,7 +1987,7 @@ def _execute_comfyui_workflow(
             if on_progress:
                 elapsed_s = int(time.perf_counter() - t0)
                 on_progress(f"{step_info['label']} · {elapsed_s}s", step_info["pct"])
-            time.sleep(1.5)
+            time.sleep(1.2)
 
         raise TimeoutError(f"ComfyUI generation timed out after {timeout_sec}s (prompt_id={prompt_id}).")
     finally:
@@ -1755,6 +2005,7 @@ def generate_video_via_comfyui(
     camera_preset: str | None = None,
     width: int | None = None,
     height: int | None = None,
+    match_photo_aspect: bool = False,
     num_frames: int | None = None,
     fps: int | None = None,
     steps: int | None = None,
@@ -1765,8 +2016,11 @@ def generate_video_via_comfyui(
     auto_start: bool = True,
     timeout_sec: float = 1800.0,
     on_progress: Callable[[str, int | None], None] | None = None,
+    on_preview: Callable[[str], None] | None = None,
+    on_prompt_id: Callable[[str], None] | None = None,
+    cancel_event: threading.Event | None = None,
 ) -> dict[str, Any]:
-    """Queue a Wan 2.2 or LTX-2.3 video workflow on local ComfyUI and save the rendered MP4."""
+    """Queue a Wan 2.2 or LTX-2.3 video workflow on local ComfyUI and save the rendered MP4 + remix metadata."""
     if model not in MODEL_SPECS or MODEL_SPECS[model]["kind"] != "video":
         raise ValueError(f"Unknown video model '{model}'. Valid: wan22_5b, wan22_i2v, wan22_t2v, ltx23")
 
@@ -1804,12 +2058,17 @@ def generate_video_via_comfyui(
         uploaded_end_name = _upload_image_to_comfyui(end_image_path, base_url=base_url)
 
     full_prompt = apply_prompt_preset(prompt, style_preset, camera_preset)
-    use_w = width or spec["default_width"]
-    use_h = height or spec["default_height"]
+    if (match_photo_aspect or (not width and not height)) and image_path:
+        matched = compute_aspect_matched_dims(image_path, kind="video", dim_step=spec["dim_step"])
+        use_w, use_h = matched if matched else (spec["default_width"], spec["default_height"])
+    else:
+        use_w = width or spec["default_width"]
+        use_h = height or spec["default_height"]
     use_frames = num_frames or spec["default_frames"]
     use_fps = fps or spec["default_fps"]
     use_steps = steps or spec["default_steps"]
     use_cfg = cfg if cfg is not None else spec["default_cfg"]
+    actual_seed = random.randint(1, 2**50) if seed < 0 else int(seed)
     run_id = uuid.uuid4().hex[:8]
 
     if model == "wan22_i2v":
@@ -1825,7 +2084,7 @@ def generate_video_via_comfyui(
             fps=use_fps,
             steps=use_steps,
             cfg=use_cfg,
-            seed=seed,
+            seed=actual_seed,
             filename_prefix=f"clipforge/wan22_i2v_{run_id}",
             high_unet=_resolve_model_slot_filename("wan22_i2v", 0, comfy_dir),
             low_unet=_resolve_model_slot_filename("wan22_i2v", 1, comfy_dir),
@@ -1842,7 +2101,7 @@ def generate_video_via_comfyui(
             fps=use_fps,
             steps=use_steps,
             cfg=use_cfg,
-            seed=seed,
+            seed=actual_seed,
             filename_prefix=f"clipforge/wan22_t2v_{run_id}",
             high_unet=_resolve_model_slot_filename("wan22_t2v", 0, comfy_dir),
             low_unet=_resolve_model_slot_filename("wan22_t2v", 1, comfy_dir),
@@ -1860,7 +2119,7 @@ def generate_video_via_comfyui(
             fps=use_fps,
             steps=use_steps,
             cfg=use_cfg,
-            seed=seed,
+            seed=actual_seed,
             filename_prefix=f"clipforge/wan22_5b_{run_id}",
         )
     else:
@@ -1874,7 +2133,7 @@ def generate_video_via_comfyui(
             fps=use_fps,
             steps=use_steps,
             cfg=use_cfg,
-            seed=seed,
+            seed=actual_seed,
             filename_prefix=f"clipforge/ltx23_{run_id}",
         )
 
@@ -1884,6 +2143,9 @@ def generate_video_via_comfyui(
         timeout_sec=timeout_sec,
         extensions=(".mp4", ".webm", ".mkv", ".mov"),
         on_progress=on_progress,
+        on_preview=on_preview,
+        on_prompt_id=on_prompt_id,
+        cancel_event=cancel_event,
     )
 
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -1892,11 +2154,36 @@ def generate_video_via_comfyui(
     view_resp.raise_for_status()
     dest.write_bytes(view_resp.content)
 
+    write_asset_metadata(
+        dest,
+        {
+            "kind": "video",
+            "model": model,
+            "raw_prompt": prompt,
+            "prompt": full_prompt,
+            "negative_prompt": negative_prompt,
+            "style_preset": style_preset or "none",
+            "camera_preset": camera_preset or "none",
+            "width": use_w,
+            "height": use_h,
+            "num_frames": use_frames,
+            "steps": use_steps,
+            "cfg": use_cfg,
+            "seed": actual_seed,
+            "image_path": image_path,
+            "end_image_path": end_image_path,
+            "generation_time_sec": elapsed,
+        },
+    )
+
     return {
         "video_path": str(dest.resolve()),
         "filename": dest.name,
         "model": model,
         "prompt": full_prompt,
+        "seed": actual_seed,
+        "width": use_w,
+        "height": use_h,
         "prompt_id": prompt_id,
         "generation_time_sec": elapsed,
         "file_size_bytes": dest.stat().st_size,
@@ -1913,6 +2200,7 @@ def generate_image_via_comfyui(
     style_preset: str | None = None,
     width: int | None = None,
     height: int | None = None,
+    match_photo_aspect: bool = False,
     steps: int | None = None,
     cfg: float | None = None,
     seed: int = -1,
@@ -1922,8 +2210,11 @@ def generate_image_via_comfyui(
     auto_start: bool = True,
     timeout_sec: float = 600.0,
     on_progress: Callable[[str, int | None], None] | None = None,
+    on_preview: Callable[[str], None] | None = None,
+    on_prompt_id: Callable[[str], None] | None = None,
+    cancel_event: threading.Event | None = None,
 ) -> dict[str, Any]:
-    """Queue 1-4 FLUX.2-klein, Z-Image-Turbo, or Qwen-Image-Edit runs (4-seed meme contact sheet)."""
+    """Queue 1-4 FLUX.2-klein, Z-Image-Turbo, or 4-step Lightning Qwen-Image-Edit runs with sidecar remix metadata."""
     if model not in MODEL_SPECS or MODEL_SPECS[model]["kind"] != "image":
         raise ValueError(
             f"Unknown image model '{model}'. Valid: flux2_klein, flux2_klein_9b, z_image_turbo, qwen_edit, qwen_edit_2511"
@@ -1963,18 +2254,29 @@ def generate_image_via_comfyui(
         up_img2 = _upload_image_to_comfyui(image_path_2, base_url=base_url)
 
     full_prompt = apply_prompt_preset(prompt, style_preset)
-    use_w = width or spec["default_width"]
-    use_h = height or spec["default_height"]
-    use_steps = steps or spec["default_steps"]
-    use_cfg = cfg if cfg is not None else spec["default_cfg"]
+    if (match_photo_aspect or (not width and not height)) and image_path and spec["supports_image"]:
+        matched = compute_aspect_matched_dims(image_path, kind="image", dim_step=spec["dim_step"])
+        use_w, use_h = matched if matched else (spec["default_width"], spec["default_height"])
+    else:
+        use_w = width or spec["default_width"]
+        use_h = height or spec["default_height"]
+    model_defaults = avail[model]["defaults"]
+    use_steps = steps or model_defaults["steps"]
+    use_cfg = cfg if cfg is not None else model_defaults["cfg"]
     count = max(1, min(4, int(batch_size)))
     base_seed = random.randint(1, 2**48) if seed < 0 else int(seed)
+
+    qwen2509_lora_fp = _resolve_existing_slot_file(MODEL_SPECS["qwen_edit"]["files"][1], comfy_dir)
+    qwen2509_lora_name = qwen2509_lora_fp.name if (qwen2509_lora_fp is not None and use_steps <= 10) else None
 
     output_dir.mkdir(parents=True, exist_ok=True)
     generated_list: list[dict[str, Any]] = []
     total_elapsed = 0.0
 
     for i in range(count):
+        if cancel_event and cancel_event.is_set():
+            raise GenerationCanceledError("Canceled by user.")
+
         cur_seed = base_seed + i if seed >= 0 else random.randint(1, 2**50)
         run_id = uuid.uuid4().hex[:8]
 
@@ -2035,6 +2337,7 @@ def generate_image_via_comfyui(
                 seed=cur_seed,
                 filename_prefix=f"clipforge/qwen_edit_{run_id}",
                 unet_name=_resolve_model_slot_filename("qwen_edit", 0, comfy_dir),
+                lora_name=qwen2509_lora_name,
             )
 
         def _batch_prog(msg: str, pct: int | None) -> None:
@@ -2053,6 +2356,9 @@ def generate_image_via_comfyui(
             timeout_sec=timeout_sec,
             extensions=(".png", ".jpg", ".jpeg", ".webp"),
             on_progress=_batch_prog,
+            on_preview=on_preview,
+            on_prompt_id=on_prompt_id,
+            cancel_event=cancel_event,
         )
         total_elapsed = round(total_elapsed + elapsed, 2)
 
@@ -2060,6 +2366,26 @@ def generate_image_via_comfyui(
         view_resp = httpx.get(f"{base_url}/view", params=img_info, timeout=60.0)
         view_resp.raise_for_status()
         dest.write_bytes(view_resp.content)
+
+        write_asset_metadata(
+            dest,
+            {
+                "kind": "image",
+                "model": model,
+                "raw_prompt": prompt,
+                "prompt": full_prompt,
+                "negative_prompt": negative_prompt,
+                "style_preset": style_preset or "none",
+                "width": use_w,
+                "height": use_h,
+                "steps": use_steps,
+                "cfg": use_cfg,
+                "seed": cur_seed,
+                "image_path": image_path,
+                "image_path_2": image_path_2,
+                "generation_time_sec": elapsed,
+            },
+        )
 
         generated_list.append(
             {
@@ -2080,6 +2406,8 @@ def generate_image_via_comfyui(
         "batch_size": len(generated_list),
         "model": model,
         "prompt": full_prompt,
+        "width": use_w,
+        "height": use_h,
         "prompt_id": first["prompt_id"],
         "generation_time_sec": total_elapsed,
         "file_size_bytes": first["file_size_bytes"],
@@ -2087,17 +2415,20 @@ def generate_image_via_comfyui(
 
 
 # ---------------------------------------------------------------------------
-# Background Job Registry for Non-Blocking Web UI Generation
+# Background Job Registry with Live Preview Frames & GPU Cancel/Interrupt
 # ---------------------------------------------------------------------------
 @dataclass
 class GenerationJob:
     id: str
-    kind: str  # "video" | "image"
+    kind: str  # "video" | "image" | "voice"
     model: str
     prompt: str
-    status: str = "queued"  # queued | running | completed | failed
+    status: str = "queued"  # queued | running | completed | failed | canceled
     message: str = "Queued"
     progress_pct: int = 0
+    prompt_id: str | None = None
+    preview_data_url: str | None = None
+    cancel_event: threading.Event = field(default_factory=threading.Event)
     created_at: float = field(default_factory=time.time)
     result: dict[str, Any] | None = None
     error: str | None = None
@@ -2117,12 +2448,42 @@ class GenerationJobManager:
                 del self._jobs[oldest]
         return job
 
+    def get(self, job_id: str) -> GenerationJob | None:
+        with self._lock:
+            return self._jobs.get(job_id)
+
     def update(self, job_id: str, **kwargs: Any) -> None:
         with self._lock:
             job = self._jobs.get(job_id)
             if job:
                 for k, v in kwargs.items():
                     setattr(job, k, v)
+
+    def cancel(self, job_id: str, base_url: str = COMFYUI_URL) -> bool:
+        with self._lock:
+            job = self._jobs.get(job_id)
+            if not job or job.status not in ("queued", "running"):
+                return False
+            job.cancel_event.set()
+            job.status = "canceled"
+            job.message = "Canceled by user"
+            pid = job.prompt_id
+
+        # Remove from ComfyUI pending queue AND interrupt active GPU execution if running
+        try:
+            if pid:
+                q = httpx.get(f"{base_url}/queue", timeout=3.0).json()
+                running_ids = [item[1] for item in q.get("queue_running", [])]
+                pending_ids = [item[1] for item in q.get("queue_pending", [])]
+                if pid in pending_ids:
+                    httpx.post(f"{base_url}/queue", json={"delete": [pid]}, timeout=3.0)
+                if pid in running_ids:
+                    httpx.post(f"{base_url}/interrupt", timeout=3.0)
+            else:
+                httpx.post(f"{base_url}/interrupt", timeout=3.0)
+        except Exception:
+            pass
+        return True
 
     def list_jobs(self) -> list[dict[str, Any]]:
         with self._lock:
@@ -2135,6 +2496,7 @@ class GenerationJobManager:
                     "status": j.status,
                     "message": j.message,
                     "progress_pct": j.progress_pct,
+                    "preview_data_url": j.preview_data_url if j.status == "running" else None,
                     "result": j.result,
                     "error": j.error,
                 }

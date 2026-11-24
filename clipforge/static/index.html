@@ -30,6 +30,10 @@
         <span class="status-dot"></span>
         <span id="mcpStatusText">MCP LIVE SYNC · v1</span>
       </div>
+      <button id="btnOpenCast" class="models-pill-btn" title="Saved Friends / Cast Profiles (@Name + Voice)">
+        <span>👥 Cast</span>
+        <span id="castBadgeCount" class="models-badge-count">0</span>
+      </button>
       <button id="btnOpenModels" class="models-pill-btn" title="Manage Local AI Models (ComfyUI)">
         <span class="models-dot" id="headerModelsDot"></span>
         <span>Models</span>
@@ -93,13 +97,26 @@
         </div>
 
         <div class="form-card studio-card">
+          <!-- Saved Cast / Friends Quick-Pick Strip -->
+          <div class="field-group">
+            <div class="field-header-row">
+              <label class="field-label">Saved Friends (Click or type <code>@Name</code>)</label>
+              <button id="btnAddCastInline" class="btn btn-ghost btn-xs" type="button">+ Add Friend</button>
+            </div>
+            <div id="genCastStrip" class="cast-strip"></div>
+          </div>
+
           <!-- Model Selector -->
           <div class="field-group">
             <div class="field-header-row">
               <label class="field-label" for="genModelSelect">Model</label>
-              <span id="genModelBadge" class="badge">LOCAL</span>
+              <span id="genModelBadge" class="badge">AUTO</span>
             </div>
             <select id="genModelSelect" class="input-full"></select>
+            <div id="genAutoVideoOpts" class="auto-opts-row hidden">
+              <label class="checkbox-row"><input id="genWantAudio" type="checkbox" /><span>🔊 Native Audio (LTX-2.3)</span></label>
+              <label class="checkbox-row"><input id="genFastDraft" type="checkbox" /><span>⚡ Fast Draft (5B)</span></label>
+            </div>
             <div id="genModelHint" class="hint"></div>
           </div>
 
@@ -489,6 +506,35 @@
           </div>
           <div id="sfxSoundboardGrid" class="sfx-grid"></div>
         </div>
+
+        <!-- Offline Friend Voice Cloner (F5-TTS) -->
+        <div class="form-card">
+          <div class="field-header-row">
+            <h3>🎙 Friend Voice Cloner</h3>
+            <span id="voiceStatusBadge" class="badge">F5-TTS</span>
+          </div>
+          <p class="hint">Attach a 5–12s voice/video clip to any friend in Cast, then synthesize custom lines offline.</p>
+          <div class="input-row">
+            <select id="voiceCastSelect" class="input-full">
+              <option value="">Select friend with voice...</option>
+            </select>
+            <button id="btnOpenCastFromVoice" class="btn btn-secondary btn-sm" type="button">+ Voice</button>
+          </div>
+          <textarea id="voiceTextInput" class="input-full" rows="2" placeholder="Type what you want your friend to say..."></textarea>
+          <div class="field-row">
+            <div>
+              <label class="field-label" for="voiceSpeedInput">Speed</label>
+              <input id="voiceSpeedInput" type="number" class="input-full" value="1.0" min="0.6" max="1.6" step="0.05" />
+            </div>
+            <div style="display:flex;align-items:flex-end;padding-bottom:4px;">
+              <label class="checkbox-row">
+                <input id="voiceAutoTimeline" type="checkbox" checked />
+                <span>Drop at playhead + duck</span>
+              </label>
+            </div>
+          </div>
+          <button id="btnCloneVoice" class="btn btn-primary btn-block" type="button">🎙 Generate Cloned Voice</button>
+        </div>
       </section>
     </aside>
 
@@ -657,10 +703,51 @@
         <img id="lightboxImg" alt="Generated preview" />
       </div>
       <div class="modal-actions">
-        <button id="btnLightboxAnimate" class="btn btn-primary" type="button">🎬 Animate to Video</button>
-        <button id="btnLightboxEdit" class="btn btn-secondary" type="button">✏ Edit Photo</button>
-        <button id="btnLightboxTimeline" class="btn btn-secondary" type="button">+ Timeline (3s)</button>
+        <button id="btnLightboxAnimate" class="btn btn-primary" type="button">🎬 Animate</button>
+        <button id="btnLightboxEdit" class="btn btn-secondary" type="button">✏ Edit</button>
+        <button id="btnLightboxPolish" class="btn btn-secondary" type="button">✨ 2× HD</button>
+        <button id="btnLightboxRemix" class="btn btn-secondary" type="button">♻ Remix</button>
+        <button id="btnLightboxTimeline" class="btn btn-secondary" type="button">+ Timeline</button>
       </div>
+    </div>
+  </div>
+
+  <!-- Saved Cast / Friends Manager Modal -->
+  <div id="castModal" class="modal-backdrop hidden">
+    <div class="modal-card modal-wide">
+      <div class="modal-header-bar">
+        <div>
+          <h3>Saved Cast / Friends Book</h3>
+          <p class="hint">Save friend photos & optional 5–12s voice clips once. Click their avatar or type <code>@Name</code> in any prompt.</p>
+        </div>
+        <button id="btnCloseCastModal" class="btn btn-ghost btn-sm" type="button">✕</button>
+      </div>
+
+      <div class="form-card">
+        <div class="field-row">
+          <div>
+            <label class="field-label" for="castNameInput">Friend Name (e.g. Jake)</label>
+            <input id="castNameInput" type="text" class="input-full" placeholder="Jake" />
+          </div>
+          <div>
+            <label class="field-label" for="castPhotoInput">Face Photo (Required)</label>
+            <input id="castPhotoInput" type="file" accept="image/*" class="input-full" />
+          </div>
+        </div>
+        <div class="field-row">
+          <div>
+            <label class="field-label" for="castVoiceInput">Voice Sample (Optional — 5–12s WAV/MP3/MP4)</label>
+            <input id="castVoiceInput" type="file" accept="audio/*,video/*" class="input-full" />
+          </div>
+          <div>
+            <label class="field-label" for="castVoiceTranscript">What they say in clip (optional)</label>
+            <input id="castVoiceTranscript" type="text" class="input-full" placeholder="Leave blank for auto-transcription" />
+          </div>
+        </div>
+        <button id="btnSaveCastMember" class="btn btn-primary btn-block" type="button">+ Save Friend Profile</button>
+      </div>
+
+      <div id="castListGrid" class="cast-list-grid"></div>
     </div>
   </div>
 

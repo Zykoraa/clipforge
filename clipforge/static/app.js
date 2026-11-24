@@ -35,6 +35,8 @@ const el = {
   aspectSelect: document.getElementById("aspectSelect"),
   mcpStatusBadge: document.getElementById("mcpStatusBadge"),
   mcpStatusText: document.getElementById("mcpStatusText"),
+  btnOpenCast: document.getElementById("btnOpenCast"),
+  castBadgeCount: document.getElementById("castBadgeCount"),
   btnOpenModels: document.getElementById("btnOpenModels"),
   headerModelsDot: document.getElementById("headerModelsDot"),
   modelsBadgeText: document.getElementById("modelsBadgeText"),
@@ -105,8 +107,13 @@ const el = {
   btnOpenModelsInline: document.getElementById("btnOpenModelsInline"),
   btnModeImage: document.getElementById("btnModeImage"),
   btnModeVideo: document.getElementById("btnModeVideo"),
+  btnAddCastInline: document.getElementById("btnAddCastInline"),
+  genCastStrip: document.getElementById("genCastStrip"),
   genModelSelect: document.getElementById("genModelSelect"),
   genModelBadge: document.getElementById("genModelBadge"),
+  genAutoVideoOpts: document.getElementById("genAutoVideoOpts"),
+  genWantAudio: document.getElementById("genWantAudio"),
+  genFastDraft: document.getElementById("genFastDraft"),
   genModelHint: document.getElementById("genModelHint"),
   genModelBanner: document.getElementById("genModelBanner"),
   genModelBannerTitle: document.getElementById("genModelBannerTitle"),
@@ -194,7 +201,25 @@ const el = {
   btnCloseLightbox: document.getElementById("btnCloseLightbox"),
   btnLightboxAnimate: document.getElementById("btnLightboxAnimate"),
   btnLightboxEdit: document.getElementById("btnLightboxEdit"),
+  btnLightboxPolish: document.getElementById("btnLightboxPolish"),
+  btnLightboxRemix: document.getElementById("btnLightboxRemix"),
   btnLightboxTimeline: document.getElementById("btnLightboxTimeline"),
+  // Cast Modal & Offline Voice Cloner
+  castModal: document.getElementById("castModal"),
+  btnCloseCastModal: document.getElementById("btnCloseCastModal"),
+  castNameInput: document.getElementById("castNameInput"),
+  castPhotoInput: document.getElementById("castPhotoInput"),
+  castVoiceInput: document.getElementById("castVoiceInput"),
+  castVoiceTranscript: document.getElementById("castVoiceTranscript"),
+  btnSaveCastMember: document.getElementById("btnSaveCastMember"),
+  castListGrid: document.getElementById("castListGrid"),
+  voiceStatusBadge: document.getElementById("voiceStatusBadge"),
+  voiceCastSelect: document.getElementById("voiceCastSelect"),
+  btnOpenCastFromVoice: document.getElementById("btnOpenCastFromVoice"),
+  voiceTextInput: document.getElementById("voiceTextInput"),
+  voiceSpeedInput: document.getElementById("voiceSpeedInput"),
+  voiceAutoTimeline: document.getElementById("voiceAutoTimeline"),
+  btnCloneVoice: document.getElementById("btnCloneVoice"),
   toastContainer: document.getElementById("toastContainer"),
 };
 
@@ -956,7 +981,10 @@ function renderInspector() {
         </label>
 
         <button id="btnSaveClipInsp" class="btn btn-primary btn-block">Apply Clip Changes</button>
-        <button id="btnInspContinueShot" class="btn btn-secondary btn-block" type="button">⏭ Continue From Last Frame</button>
+        <div class="field-row" style="margin-top:4px;">
+          <button id="btnInspContinueShot" class="btn btn-secondary btn-sm" type="button">⏭ Continue</button>
+          <button id="btnInspSmoothFps" class="btn btn-secondary btn-sm" type="button">⚡ Smooth 32fps</button>
+        </div>
       </div>
     `;
 
@@ -973,6 +1001,28 @@ function renderInspector() {
     document.getElementById("btnInspContinueShot").addEventListener("click", () => {
       continueFromClipEndFrame(s.clip_id);
     });
+    const btnSmooth = document.getElementById("btnInspSmoothFps");
+    if (media && media.is_image) {
+      btnSmooth.disabled = true;
+    } else {
+      btnSmooth.addEventListener("click", async () => {
+        btnSmooth.disabled = true;
+        btnSmooth.textContent = "⏳ Smoothing...";
+        try {
+          const res = await apiCall(`/api/timeline/clip/${encodeURIComponent(s.clip_id)}/smooth-fps`, "POST", {
+            target_fps: 32.0,
+          });
+          applyServerSummary(res.state);
+          showToast("Smoothed clip to 32fps with fast-seek keyframes!", "success");
+          logEvent(`Smoothed clip ${s.label} to 32fps.`);
+        } catch (err) {
+          showToast(err.message, "error");
+        } finally {
+          btnSmooth.disabled = false;
+          btnSmooth.textContent = "⚡ Smooth 32fps";
+        }
+      });
+    }
 
     document.getElementById("btnSaveClipInsp").addEventListener("click", async () => {
       try {
@@ -1937,6 +1987,7 @@ el.btnConfirmRender.addEventListener("click", async () => {
 // Offline AI Image & Video Studio + Resumable Model Manager + Gallery
 // ---------------------------------------------------------------------------
 const IMAGE_RES_OPTIONS = [
+  { value: "auto", label: "Auto (Match Friend Photo Aspect)" },
   { value: "1024x1024", label: "1:1 Square (1024×1024)" },
   { value: "896x1152", label: "3:4 Portrait (896×1152)" },
   { value: "1152x896", label: "4:3 Landscape (1152×896)" },
@@ -1944,6 +1995,7 @@ const IMAGE_RES_OPTIONS = [
 ];
 
 const VIDEO_RES_OPTIONS = [
+  { value: "auto", label: "Auto (Match Start Frame Aspect)" },
   { value: "480x608", label: "4:5 Fast Vertical (480×608)" },
   { value: "480x832", label: "9:16 Vertical Shorts (480×832)" },
   { value: "832x480", label: "16:9 Landscape (832×480)" },
@@ -1953,7 +2005,7 @@ const VIDEO_RES_OPTIONS = [
 const genState = {
   mode: "video", // "image" | "video"
   userPickedMode: false,
-  selectedModel: null,
+  selectedModel: "auto",
   preset: "none",
   presetCategory: "all",
   cameraPreset: "none",
@@ -1964,6 +2016,7 @@ const genState = {
   lastSelectKey: "",
   lastGalleryKey: "",
   lastRecentRefsKey: "",
+  lastCastKey: "",
   presetsBuilt: false,
   cameraPresetsBuilt: false,
   rawIdea: "",
@@ -2020,7 +2073,7 @@ function setStudioMode(mode, { userInitiated = false, preferredModel = null } = 
 
   if (modeChanged) {
     el.genAutoTimeline.checked = mode === "video";
-    genState.selectedModel = preferredModel;
+    genState.selectedModel = preferredModel || "auto";
     genState.lastSelectKey = "";
   } else if (preferredModel) {
     genState.selectedModel = preferredModel;
@@ -2126,28 +2179,49 @@ function renderCameraPresets(cameraPresets) {
   el.genCameraSelect.value = genState.cameraPreset;
 }
 
+function resolveAutoModelPreview(modelsMap) {
+  const has1 = Boolean(genState.ref1?.path || el.genRefPathInput.value.trim());
+  const has2 = Boolean(genState.ref2?.path || el.genRef2PathInput.value.trim());
+  if (genState.mode === "image") {
+    const order = has1 && has2
+      ? ["qwen_edit_2511", "qwen_edit", "flux2_klein_9b", "flux2_klein", "z_image_turbo"]
+      : has1
+        ? ["flux2_klein_9b", "flux2_klein", "qwen_edit_2511", "qwen_edit", "z_image_turbo"]
+        : ["z_image_turbo", "flux2_klein_9b", "flux2_klein"];
+    return order.find((id) => modelsMap[id]?.ready) || order[0];
+  }
+  const wantAudio = Boolean(el.genWantAudio?.checked);
+  const fastDraft = Boolean(el.genFastDraft?.checked);
+  const order = wantAudio
+    ? ["ltx23", has1 ? "wan22_i2v" : "wan22_t2v", "wan22_5b"]
+    : has1 && !fastDraft
+      ? ["wan22_i2v", "wan22_5b", "ltx23"]
+      : !has1 && !fastDraft
+        ? ["wan22_t2v", "wan22_5b", "ltx23"]
+        : ["wan22_5b", "ltx23", "wan22_t2v", "wan22_i2v"];
+  return order.find((id) => modelsMap[id]?.ready && (!modelsMap[id].requires_image || has1)) || order[0];
+}
+
 function syncModelDropdownAndControls() {
   const modelsMap = genState.statusData?.models || {};
   const modeModels = Object.values(modelsMap).filter((m) => m.kind === genState.mode);
   if (!modeModels.length) return;
 
-  // Smart auto-selection: always prefer a READY model when no explicit valid model is picked
-  const currentValid = modeModels.some((m) => m.id === genState.selectedModel);
-  const readyModels = modeModels.filter((m) => m.ready);
-
+  const isAuto = genState.selectedModel === "auto" || !genState.selectedModel;
+  const currentValid = isAuto || modeModels.some((m) => m.id === genState.selectedModel);
   if (!currentValid) {
-    genState.selectedModel = (readyModels[0] || modeModels[0]).id;
-  } else {
-    // If current selection became invalid or was never picked and a ready model exists
-    const curInfo = modelsMap[genState.selectedModel];
-    if (curInfo && !curInfo.ready && readyModels.length > 0 && !genState.userPickedModel) {
-      genState.selectedModel = readyModels[0].id;
-    }
+    genState.selectedModel = "auto";
   }
+
+  const effectiveId = genState.selectedModel === "auto"
+    ? resolveAutoModelPreview(modelsMap)
+    : genState.selectedModel;
 
   // Only rebuild <select> DOM when labels/status change (prevents closing dropdown while open)
   const selectKey =
     genState.mode +
+    "|" +
+    effectiveId +
     "|" +
     modeModels
       .map((m) => `${m.id}:${m.ready}:${m.missing_gb}:${m.download?.status || ""}:${Math.round(m.download?.pct || 0)}`)
@@ -2156,6 +2230,13 @@ function syncModelDropdownAndControls() {
   if (selectKey !== genState.lastSelectKey) {
     genState.lastSelectKey = selectKey;
     el.genModelSelect.innerHTML = "";
+
+    const autoOpt = document.createElement("option");
+    autoOpt.value = "auto";
+    const effName = modelsMap[effectiveId]?.display_name || effectiveId;
+    autoOpt.textContent = `✨ Auto Recommended → ${effName}`;
+    el.genModelSelect.appendChild(autoOpt);
+
     for (const m of modeModels) {
       const opt = document.createElement("option");
       opt.value = m.id;
@@ -2171,12 +2252,14 @@ function syncModelDropdownAndControls() {
       el.genModelSelect.appendChild(opt);
     }
   }
-  el.genModelSelect.value = genState.selectedModel;
+  el.genModelSelect.value = genState.selectedModel || "auto";
+  el.genAutoVideoOpts.classList.toggle("hidden", !(genState.mode === "video" && el.genModelSelect.value === "auto"));
 
-  const activeModel = modelsMap[genState.selectedModel];
+  const activeModel = modelsMap[effectiveId];
   if (!activeModel) return;
 
-  el.genModelBadge.textContent = activeModel.badge || "LOCAL";
+  el.genModelBadge.textContent =
+    genState.selectedModel === "auto" ? `AUTO · ${activeModel.badge}` : activeModel.badge || "LOCAL";
   el.genModelBadge.className = activeModel.ready ? "badge green" : "badge";
   el.genModelHint.textContent = activeModel.description || "";
 
@@ -2186,15 +2269,22 @@ function syncModelDropdownAndControls() {
     el.genCfgInput.placeholder = `Auto (${activeModel.defaults.cfg})`;
   }
 
-  // Toggle Reference Photo sections cleanly based on model capabilities
-  el.genRef1Section.classList.toggle("hidden", !activeModel.supports_image);
-  el.genRef1Label.textContent = activeModel.requires_image
-    ? "Friend Photo / Start Frame (Required)"
-    : genState.mode === "image"
-      ? "Friend Photo to Edit (Optional)"
-      : "Friend Photo / Start Frame (Optional)";
-  el.genRef2Section.classList.toggle("hidden", !activeModel.supports_second_image);
-  el.genRef2PathWrap.classList.toggle("hidden", !activeModel.supports_second_image);
+  // In Auto image mode, always allow dropping 1 or 2 photos so Auto can escalate to Qwen-Edit!
+  const allowImg1 = genState.selectedModel === "auto" ? true : activeModel.supports_image;
+  const allowImg2 =
+    genState.selectedModel === "auto"
+      ? genState.mode === "image" && Boolean(genState.ref1?.path || el.genRefPathInput.value.trim())
+      : activeModel.supports_second_image;
+
+  el.genRef1Section.classList.toggle("hidden", !allowImg1);
+  el.genRef1Label.textContent =
+    activeModel.requires_image && genState.selectedModel !== "auto"
+      ? "Friend Photo / Start Frame (Required)"
+      : genState.mode === "image"
+        ? "Friend Photo to Edit (Optional — or type @Name)"
+        : "Friend Photo / Start Frame (Optional — or type @Name)";
+  el.genRef2Section.classList.toggle("hidden", !allowImg2);
+  el.genRef2PathWrap.classList.toggle("hidden", !allowImg2);
   el.genEndFrameSection.classList.toggle("hidden", !(genState.mode === "video" && activeModel.supports_end_image));
 
   // Inline Model Readiness / Download Banner
@@ -2295,15 +2385,39 @@ function renderJobs(jobs) {
     const hdr = document.createElement("div");
     hdr.className = "gen-job-header";
     const left = document.createElement("span");
-    const icon = j.kind === "image" ? "🖼" : "🎬";
-    left.textContent = `${icon} ${j.model} · ${j.prompt.slice(0, 28)}`;
+    const icon = j.kind === "image" ? "🖼" : j.kind === "voice" ? "🎙" : "🎬";
+    left.textContent = `${icon} ${j.model} · ${j.prompt.slice(0, 24)}`;
+
+    const rightBox = document.createElement("span");
+    rightBox.style.cssText = "display:flex;align-items:center;gap:5px;";
     const pctSpan = document.createElement("span");
     pctSpan.textContent =
       j.status === "running"
         ? `${j.progress_pct || 0}%`
         : j.status.toUpperCase();
+    rightBox.appendChild(pctSpan);
+
+    if (j.status === "running" || j.status === "queued") {
+      const cancelBtn = document.createElement("button");
+      cancelBtn.type = "button";
+      cancelBtn.className = "btn btn-ghost btn-xs";
+      cancelBtn.textContent = "✕ Stop";
+      cancelBtn.title = "Cancel this generation on GPU immediately";
+      cancelBtn.addEventListener("click", async () => {
+        cancelBtn.disabled = true;
+        try {
+          await apiCall(`/api/generate/jobs/${encodeURIComponent(j.id)}/cancel`, "POST");
+          showToast(`Canceled ${j.model} job.`, "warning");
+          await refreshGeneratorStatus();
+        } catch (err) {
+          showToast(err.message, "error");
+        }
+      });
+      rightBox.appendChild(cancelBtn);
+    }
+
     hdr.appendChild(left);
-    hdr.appendChild(pctSpan);
+    hdr.appendChild(rightBox);
     card.appendChild(hdr);
 
     if (j.status === "running" || j.status === "queued") {
@@ -2316,11 +2430,186 @@ function renderJobs(jobs) {
       card.appendChild(track);
     }
 
+    if (j.preview_data_url && j.status === "running") {
+      const prevImg = document.createElement("img");
+      prevImg.className = "job-live-preview";
+      prevImg.src = j.preview_data_url;
+      prevImg.alt = "Live sampling preview";
+      card.appendChild(prevImg);
+    }
+
     const msg = document.createElement("div");
     msg.className = "gen-job-msg";
     msg.textContent = j.message || "";
     card.appendChild(msg);
     el.genJobsList.appendChild(card);
+  }
+}
+
+async function polishGalleryImage(item) {
+  try {
+    showToast(`Polishing "${item.filename}" to 2× HD...`, "info");
+    const res = await apiCall(`/api/generate/image/${encodeURIComponent(item.filename)}/polish`, "POST");
+    genState.lastGalleryKey = "";
+    await refreshGeneratorStatus();
+    el.imageLightboxModal.classList.add("hidden");
+    showToast(`Saved 2× HD image: ${res.filename} (${res.width}×${res.height})`, "success");
+    logEvent(`2× HD polished ${item.filename} -> ${res.filename}`);
+  } catch (err) {
+    showToast(err.message, "error");
+  }
+}
+
+function remixGalleryImage(item) {
+  const meta = item.meta;
+  switchLeftTab("tab-generate");
+  setStudioMode("image", { userInitiated: true, preferredModel: meta?.model || "auto" });
+  if (meta) {
+    el.genPromptInput.value = meta.raw_prompt || meta.prompt || "";
+    genState.rawIdea = el.genPromptInput.value.trim();
+    genState.lastEnhancedPrompt = "";
+    if (el.btnRevertPrompt) el.btnRevertPrompt.classList.add("hidden");
+    if (meta.negative_prompt) el.genNegPromptInput.value = meta.negative_prompt;
+    if (meta.style_preset) {
+      genState.preset = meta.style_preset;
+      renderPresetPills(genState.statusData?.presets);
+    }
+    if (meta.seed) el.genSeedInput.value = String(meta.seed);
+    if (meta.steps) el.genStepsInput.value = String(meta.steps);
+    if (meta.cfg) el.genCfgInput.value = String(meta.cfg);
+    if (meta.image_path) {
+      setRefSlot(1, { path: meta.image_path, filename: meta.image_path.split(/[\\/]/).pop(), url: null });
+    }
+    if (meta.image_path_2) {
+      setRefSlot(2, { path: meta.image_path_2, filename: meta.image_path_2.split(/[\\/]/).pop(), url: null });
+    }
+    showToast(`Loaded exact Remix settings (seed ${meta.seed || "random"}, ${meta.model}).`, "success");
+  } else {
+    editImageInStudio(item);
+  }
+  el.imageLightboxModal.classList.add("hidden");
+  el.genPromptInput.focus();
+}
+
+function renderCastUI(castList) {
+  const list = castList || [];
+  if (el.castBadgeCount) el.castBadgeCount.textContent = String(list.length);
+
+  const key = list.map((c) => `${c.id}:${c.name}:${c.has_voice}`).join("|") + "|" + (genState.ref1?.path || "") + "|" + (genState.ref2?.path || "");
+  if (key === genState.lastCastKey) return;
+  genState.lastCastKey = key;
+
+  // 1. Studio compact cast avatar strip
+  el.genCastStrip.innerHTML = "";
+  if (list.length === 0) {
+    const hint = document.createElement("span");
+    hint.className = "hint";
+    hint.textContent = "No saved friends yet — click + Add Friend to save a face & voice for 1-click reuse.";
+    el.genCastStrip.appendChild(hint);
+  } else {
+    for (const m of list) {
+      const chip = document.createElement("button");
+      chip.type = "button";
+      const isAttached = genState.ref1?.path === m.photo_path || genState.ref2?.path === m.photo_path;
+      chip.className = `cast-chip ${isAttached ? "active" : ""}`;
+      chip.title = `Click to attach ${m.name} (${m.handle})${m.has_voice ? " · Voice ready" : ""}`;
+      const img = document.createElement("img");
+      img.src = withToken(m.photo_url);
+      img.alt = m.name;
+      const lbl = document.createElement("span");
+      lbl.textContent = `${m.handle}${m.has_voice ? " 🎙" : ""}`;
+      chip.appendChild(img);
+      chip.appendChild(lbl);
+      chip.addEventListener("click", () => {
+        const refPayload = { path: m.photo_path, filename: `${m.name} (${m.handle})`, url: m.photo_url };
+        if (genState.ref1?.path === m.photo_path) {
+          clearRefSlot(1);
+        } else if (genState.ref2?.path === m.photo_path) {
+          clearRefSlot(2);
+        } else if (!genState.ref1) {
+          setRefSlot(1, refPayload);
+        } else if (genState.mode === "image") {
+          setRefSlot(2, refPayload);
+        } else {
+          setRefSlot(1, refPayload);
+        }
+        genState.lastCastKey = "";
+        renderCastUI(genState.statusData?.cast || list);
+      });
+      el.genCastStrip.appendChild(chip);
+    }
+  }
+
+  // 2. Voice Cloner dropdown
+  if (el.voiceCastSelect) {
+    const prev = el.voiceCastSelect.value;
+    el.voiceCastSelect.innerHTML = "";
+    const defOpt = document.createElement("option");
+    defOpt.value = "";
+    defOpt.textContent = "Select friend with voice...";
+    el.voiceCastSelect.appendChild(defOpt);
+    for (const m of list.filter((x) => x.has_voice)) {
+      const opt = document.createElement("option");
+      opt.value = m.id;
+      opt.textContent = `🎙 ${m.name} (${m.handle})`;
+      el.voiceCastSelect.appendChild(opt);
+    }
+    if ([...el.voiceCastSelect.options].some((o) => o.value === prev)) {
+      el.voiceCastSelect.value = prev;
+    } else if (el.voiceCastSelect.options.length > 1) {
+      el.voiceCastSelect.selectedIndex = 1;
+    }
+  }
+
+  // 3. Cast Manager Modal list
+  if (el.castListGrid) {
+    el.castListGrid.innerHTML = "";
+    if (list.length === 0) {
+      const p = document.createElement("p");
+      p.className = "empty-hint";
+      p.textContent = "Add a friend above to reuse their face and voice across memes.";
+      el.castListGrid.appendChild(p);
+    } else {
+      for (const m of list) {
+        const card = document.createElement("div");
+        card.className = "cast-card";
+        const img = document.createElement("img");
+        img.src = withToken(m.photo_url);
+        img.alt = m.name;
+
+        const body = document.createElement("div");
+        body.className = "cast-card-body";
+        const nm = document.createElement("div");
+        nm.className = "cast-card-name";
+        nm.textContent = `${m.name} (${m.handle})`;
+        const sub = document.createElement("div");
+        sub.className = "hint";
+        sub.textContent = m.has_voice ? "Photo + 🎙 Voice Ready" : "Photo Ready (no voice yet)";
+        body.appendChild(nm);
+        body.appendChild(sub);
+
+        const delBtn = document.createElement("button");
+        delBtn.type = "button";
+        delBtn.className = "btn btn-ghost btn-xs";
+        delBtn.textContent = "✕";
+        delBtn.title = `Remove ${m.name}`;
+        delBtn.addEventListener("click", async () => {
+          try {
+            await apiCall(`/api/cast/${encodeURIComponent(m.id)}`, "DELETE");
+            genState.lastCastKey = "";
+            showToast(`Removed ${m.name} from Cast.`, "info");
+            await refreshGeneratorStatus();
+          } catch (err) {
+            showToast(err.message, "error");
+          }
+        });
+
+        card.appendChild(img);
+        card.appendChild(body);
+        card.appendChild(delBtn);
+        el.castListGrid.appendChild(card);
+      }
+    }
   }
 }
 
@@ -2671,15 +2960,18 @@ async function refreshGeneratorStatus() {
       }
     }
 
-    if (!genState.presetsBuilt) {
-      genState.presetsBuilt = true;
-      renderPresetPills(data.presets);
-    }
+    renderPresetPills(data.presets);
     renderCameraPresets(data.camera_presets);
     syncModelDropdownAndControls();
+    renderCastUI(data.cast);
     renderRecentRefs(data.ref_images);
     renderJobs(data.jobs);
     renderGallery(data.gallery);
+
+    if (el.voiceStatusBadge && data.voice) {
+      el.voiceStatusBadge.textContent = data.voice.ready ? "F5-TTS Ready" : "F5-TTS Offline";
+      el.voiceStatusBadge.className = data.voice.ready ? "badge green" : "badge";
+    }
 
     if (!el.modelsModal.classList.contains("hidden")) {
       renderModelsModal();
@@ -2760,12 +3052,105 @@ el.btnLightboxAnimate.addEventListener("click", () => {
 el.btnLightboxEdit.addEventListener("click", () => {
   if (genState.lightboxItem) editImageInStudio(genState.lightboxItem);
 });
+el.btnLightboxPolish.addEventListener("click", () => {
+  if (genState.lightboxItem) polishGalleryImage(genState.lightboxItem);
+});
+el.btnLightboxRemix.addEventListener("click", () => {
+  if (genState.lightboxItem) remixGalleryImage(genState.lightboxItem);
+});
 el.btnLightboxTimeline.addEventListener("click", () => {
   if (genState.lightboxItem) addImageToTimeline(genState.lightboxItem);
 });
 
+function openCastModal() {
+  genState.lastCastKey = "";
+  renderCastUI(genState.statusData?.cast || []);
+  el.castModal.classList.remove("hidden");
+}
+el.btnOpenCast.addEventListener("click", openCastModal);
+el.btnAddCastInline.addEventListener("click", openCastModal);
+el.btnOpenCastFromVoice.addEventListener("click", openCastModal);
+el.btnCloseCastModal.addEventListener("click", () => el.castModal.classList.add("hidden"));
+
+el.btnSaveCastMember.addEventListener("click", async () => {
+  const name = el.castNameInput.value.trim();
+  const photo = el.castPhotoInput.files?.[0];
+  if (!name || !photo) {
+    showToast("Enter a friend name and pick a face photo.", "warning");
+    return;
+  }
+  const fd = new FormData();
+  fd.append("name", name);
+  fd.append("photo", photo);
+  const voice = el.castVoiceInput.files?.[0];
+  if (voice) fd.append("voice", voice);
+  fd.append("voice_ref_text", el.castVoiceTranscript.value.trim());
+
+  el.btnSaveCastMember.disabled = true;
+  el.btnSaveCastMember.textContent = "Saving...";
+  try {
+    const res = await fetch("/api/cast", {
+      method: "POST",
+      headers: { "X-ClipForge-Token": SESSION_TOKEN },
+      body: fd,
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: res.statusText }));
+      throw new Error(err.detail || "Failed to save cast profile");
+    }
+    el.castNameInput.value = "";
+    el.castPhotoInput.value = "";
+    el.castVoiceInput.value = "";
+    el.castVoiceTranscript.value = "";
+    genState.lastCastKey = "";
+    showToast(`Saved friend profile "${name}"! Click their avatar or type @${name.replace(/\s+/g, "")}.`, "success");
+    await refreshGeneratorStatus();
+  } catch (err) {
+    showToast(err.message, "error");
+  } finally {
+    el.btnSaveCastMember.disabled = false;
+    el.btnSaveCastMember.textContent = "+ Save Friend Profile";
+  }
+});
+
+el.btnCloneVoice.addEventListener("click", async () => {
+  const castId = el.voiceCastSelect.value;
+  const text = el.voiceTextInput.value.trim();
+  if (!castId) {
+    showToast("Select a saved friend with an attached voice clip first.", "warning");
+    return;
+  }
+  if (!text) {
+    showToast("Type the dialogue you want cloned.", "warning");
+    el.voiceTextInput.focus();
+    return;
+  }
+  el.btnCloneVoice.disabled = true;
+  try {
+    const res = await apiCall("/api/voice/clone", "POST", {
+      cast_id: castId,
+      text,
+      speed: parseFloat(el.voiceSpeedInput.value) || 1.0,
+      add_to_timeline: el.voiceAutoTimeline.checked,
+      start_sec: Number(state.playheadSec.toFixed(2)),
+      duck_main_audio: true,
+    });
+    const gpuName = genState.statusData?.gpu_name || "local GPU";
+    showToast(`Cloning voice on ${gpuName} (job ${res.job_id})...`, "info");
+    logEvent(`Queued offline voice clone job ${res.job_id}.`);
+    await refreshGeneratorStatus();
+  } catch (err) {
+    showToast(err.message, "error");
+  } finally {
+    el.btnCloneVoice.disabled = false;
+  }
+});
+
+el.genWantAudio.addEventListener("change", syncModelDropdownAndControls);
+el.genFastDraft.addEventListener("change", syncModelDropdownAndControls);
+
 // Close modals on backdrop click
-for (const backdrop of [el.modelsModal, el.imageLightboxModal, el.renderModal]) {
+for (const backdrop of [el.modelsModal, el.imageLightboxModal, el.renderModal, el.castModal]) {
   backdrop.addEventListener("click", (e) => {
     if (e.target === backdrop) backdrop.classList.add("hidden");
   });
@@ -2787,10 +3172,18 @@ el.genModelSelect.addEventListener("change", () => {
 });
 
 el.btnInlineDownload.addEventListener("click", () => {
-  if (genState.selectedModel) startModelDownload(genState.selectedModel);
+  const targetId =
+    genState.selectedModel === "auto" || !genState.selectedModel
+      ? resolveAutoModelPreview(genState.statusData?.models || {})
+      : genState.selectedModel;
+  if (targetId) startModelDownload(targetId);
 });
 el.btnInlineCancel.addEventListener("click", () => {
-  if (genState.selectedModel) cancelModelDownload(genState.selectedModel);
+  const targetId =
+    genState.selectedModel === "auto" || !genState.selectedModel
+      ? resolveAutoModelPreview(genState.statusData?.models || {})
+      : genState.selectedModel;
+  if (targetId) cancelModelDownload(targetId);
 });
 
 el.genRefFileInput.addEventListener("change", async (e) => {
@@ -2856,8 +3249,9 @@ async function submitGeneration() {
     return;
   }
 
-  const modelId = genState.selectedModel || el.genModelSelect.value;
-  const modelInfo = genState.statusData?.models?.[modelId];
+  const modelId = genState.selectedModel || el.genModelSelect.value || "auto";
+  const effectiveId = modelId === "auto" ? resolveAutoModelPreview(genState.statusData?.models || {}) : modelId;
+  const modelInfo = genState.statusData?.models?.[effectiveId];
   if (modelInfo && !modelInfo.ready) {
     showToast(`Download ${modelInfo.display_name} (${modelInfo.missing_gb} GB) first.`, "warning");
     return;
@@ -2865,14 +3259,17 @@ async function submitGeneration() {
 
   const imgPath1 = (genState.ref1?.path || el.genRefPathInput.value.trim()) || null;
   const imgPath2 = (genState.ref2?.path || el.genRef2PathInput.value.trim()) || null;
+  const hasMention = /@[A-Za-z0-9_-]{2,}/.test(prompt);
 
-  if (modelInfo?.requires_image && !imgPath1) {
-    showToast(`${modelInfo.display_name} requires a friend photo first.`, "warning");
+  if (modelInfo?.requires_image && !imgPath1 && !hasMention && modelId !== "auto") {
+    showToast(`${modelInfo.display_name} requires a friend photo (or @FriendName in prompt).`, "warning");
     el.genRefFileInput.click();
     return;
   }
 
-  const [w, h] = el.genResSelect.value.split("x").map(Number);
+  const resVal = el.genResSelect.value;
+  const matchPhoto = resVal === "auto";
+  const [w, h] = matchPhoto ? [null, null] : resVal.split("x").map(Number);
   const seedRaw = parseInt(el.genSeedInput.value, 10);
   const stepsRaw = el.genStepsInput.value.trim();
   const cfgRaw = el.genCfgInput.value.trim();
@@ -2886,10 +3283,11 @@ async function submitGeneration() {
         prompt,
         model: modelId,
         image_path: imgPath1,
-        image_path_2: modelInfo?.supports_second_image ? imgPath2 : null,
+        image_path_2: imgPath2,
         style_preset: genState.preset,
         width: w,
         height: h,
+        match_photo_aspect: matchPhoto,
         steps: stepsRaw ? parseInt(stepsRaw, 10) : null,
         cfg: cfgRaw ? parseFloat(cfgRaw) : null,
         seed: Number.isNaN(seedRaw) ? -1 : seedRaw,
@@ -2901,11 +3299,11 @@ async function submitGeneration() {
       const res = await apiCall("/api/generate/image", "POST", payload);
       showToast(
         batchSize > 1
-          ? `Generating ${batchSize} meme variations with ${modelInfo?.display_name || modelId}...`
-          : `Generating image with ${modelInfo?.display_name || modelId}...`,
+          ? `Generating ${batchSize} meme variations with ${res.model}...`
+          : `Generating image with ${res.model}...`,
         "info"
       );
-      logEvent(`Queued offline image job ${res.job_id} (${modelId} ×${batchSize}).`);
+      logEvent(`Queued offline image job ${res.job_id} (${res.model} ×${batchSize}).`);
     } else {
       const frames = parseInt(el.genFramesSelect.value, 10);
       const payload = {
@@ -2917,6 +3315,9 @@ async function submitGeneration() {
         camera_preset: el.genCameraSelect.value || "none",
         width: w,
         height: h,
+        match_photo_aspect: matchPhoto,
+        want_audio: Boolean(el.genWantAudio?.checked),
+        fast_draft: Boolean(el.genFastDraft?.checked),
         num_frames: frames,
         steps: stepsRaw ? parseInt(stepsRaw, 10) : null,
         cfg: cfgRaw ? parseFloat(cfgRaw) : null,
@@ -2926,8 +3327,8 @@ async function submitGeneration() {
       if (negPrompt) payload.negative_prompt = negPrompt;
 
       const res = await apiCall("/api/generate/video", "POST", payload);
-      showToast(`Generating video with ${modelInfo?.display_name || modelId}...`, "info");
-      logEvent(`Queued offline video job ${res.job_id} (${modelId}).`);
+      showToast(`Generating video with ${res.model}...`, "info");
+      logEvent(`Queued offline video job ${res.job_id} (${res.model}).`);
     }
     await refreshGeneratorStatus();
   } catch (err) {
@@ -3014,7 +3415,11 @@ el.btnExpandPrompt.addEventListener("click", async () => {
       : currentText;
   genState.rawIdea = idea;
 
-  const activeModel = genState.selectedModel || el.genModelSelect?.value || null;
+  const rawModel = genState.selectedModel || el.genModelSelect?.value || "auto";
+  const activeModel =
+    rawModel === "auto"
+      ? resolveAutoModelPreview(genState.statusData?.models || {})
+      : rawModel;
   el.btnExpandPrompt.disabled = true;
   el.btnExpandPrompt.textContent = "Thinking...";
   try {

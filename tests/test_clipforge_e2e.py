@@ -704,3 +704,117 @@ def test_cross_platform_helpers_fonts_and_env(tmp_path: Path, monkeypatch) -> No
     assert "torch.OutOfMemoryError" in formatted
 
 
+
+def test_cast_mentions_auto_router_aspect_match_hd_polish_and_qwen_lightning(tmp_path: Path, monkeypatch) -> None:
+    """Verify Cast Book (@Name mentions), Auto Router, Aspect-Safe Dims, Qwen 4-step Lightning LoRA, HD Polish, and Smooth FPS."""
+    from clipforge.cast import CastManager
+    from clipforge.generator import (
+        build_qwen_edit_workflow,
+        compute_aspect_matched_dims,
+        polish_image_hd,
+        read_asset_metadata,
+        read_image_dimensions,
+    )
+
+    ws = tmp_path / "ws_cast"
+    eng = ProjectEngine(workspace_dir=ws)
+    monkeypatch.setattr(web_server, "engine", eng)
+
+    # Create a real portrait PNG (540x960) and a landscape PNG (800x450)
+    p1 = tmp_path / "jake.png"
+    p2 = tmp_path / "mike.png"
+    subprocess.run(["ffmpeg", "-y", "-hide_banner", "-f", "lavfi", "-i", "color=c=teal:s=540x960:d=1", "-frames:v", "1", str(p1)], capture_output=True, check=True)
+    subprocess.run(["ffmpeg", "-y", "-hide_banner", "-f", "lavfi", "-i", "color=c=crimson:s=800x450:d=1", "-frames:v", "1", str(p2)], capture_output=True, check=True)
+
+    # 1. Zero-dependency PNG dimension reader + aspect-matched dimensions
+    assert read_image_dimensions(p1) == (540, 960)
+    w_img, h_img = compute_aspect_matched_dims(p1, kind="image", dim_step=16)
+    assert h_img > w_img and w_img % 16 == 0 and h_img % 16 == 0
+    w_vid, h_vid = compute_aspect_matched_dims(p2, kind="video", dim_step=32)
+    assert w_vid > h_vid and w_vid % 32 == 0 and h_vid % 32 == 0
+
+    # 2. Cast Manager + @Name auto-resolution
+    cm = CastManager(ws)
+    m1 = cm.save_member("Jake", photo_path=str(p1))
+    m2 = cm.save_member("Mike", photo_path=str(p2))
+    assert m1["handle"] == "@Jake" and m2["handle"] == "@Mike"
+
+    resolved, img1, img2, matched = cm.resolve_prompt_mentions("@Jake and @Mike arguing over pizza")
+    assert len(matched) == 2
+    assert img1 == m1["photo_path"] and img2 == m2["photo_path"]
+    assert "image 1" in resolved and "image 2" in resolved
+
+    # 3. Qwen 4-step Lightning LoRA workflow graph
+    wf_q = build_qwen_edit_workflow("test", image_filename="a.png", steps=4, cfg=1.0, use_lightning_lora=True)
+    assert wf_q["1b"]["class_type"] == "LoraLoaderModelOnly"
+    assert wf_q["2"]["inputs"]["model"] == ["1b", 0]
+    assert wf_q["9"]["inputs"]["steps"] == 4
+
+    # 4. 1-click 2x HD Polish
+    polished = polish_image_hd(p1, ws / "generated_images", scale=2)
+    assert polished["width"] == 1080 and polished["height"] == 1920
+    assert read_asset_metadata(Path(polished["image_path"]))["hd_scale"] == 2
+
+    # 5. Smooth 32fps interpolation on a 16fps clip
+    vid16 = tmp_path / "choppy16.mp4"
+    subprocess.run(
+        ["ffmpeg", "-y", "-hide_banner", "-f", "lavfi", "-i", "color=c=navy:s=320x240:r=16:d=1.0",
+         "-f", "lavfi", "-i", "aevalsrc=0.2*sin(440*2*PI*t):s=44100:c=stereo:d=1.0",
+         "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac", str(vid16)],
+        capture_output=True, check=True,
+    )
+    imp = eng.import_media([str(vid16)])
+    clip = eng.add_timeline_clip(imp[0].id)
+    sm = eng.smooth_clip_fps(clip.id, target_fps=32.0)
+    assert Path(sm["output_path"]).exists()
+    assert round(sm["media"]["fps"]) == 32
+
+    # 6. Cast + Cancel Job + Polish HTTP endpoints + Director auto/@mention resolution
+    client = TestClient(web_server.app)
+    token = re.search(r'<meta name="clipforge-token" content="([^"]+)"', client.get("/").text).group(1)
+    hdrs = {"X-ClipForge-Token": token}
+    r_cast = client.post(
+        "/api/cast",
+        headers=hdrs,
+        data={"name": "Alex"},
+        files={"photo": ("alex.png", p1.read_bytes(), "image/png")},
+    )
+    assert r_cast.status_code == 200
+    cid = r_cast.json()["member"]["id"]
+    assert client.get(f"/api/cast/{cid}/photo", headers=hdrs).status_code == 200
+    assert client.post("/api/generate/jobs/nonexistent/cancel", headers=hdrs).status_code == 200
+
+    r_dir_auto = client.post(
+        "/api/director/expand",
+        headers=hdrs,
+        json={"idea": "@Alex ordering 40 nuggets at 3am", "mode": "image", "model_id": "auto"},
+    )
+    assert r_dir_auto.status_code == 200
+    assert r_dir_auto.json().get("prompt") and r_dir_auto.json().get("negative_prompt")
+
+    # 7. Optional 2509 Lightning LoRA doesn't block readiness on Linux/minimal installs; 9-model auto router prefers HQ models when installed
+    from clipforge.generator import get_model_availability, resolve_auto_model
+
+    fake_comfy = tmp_path / "comfy_auto"
+    for rel in (
+        "models/diffusion_models/Qwen-Image-Edit-2509-Q4_K_M.gguf",
+        "models/text_encoders/qwen_2.5_vl_7b_fp8_scaled.safetensors",
+        "models/vae/qwen_image_vae.safetensors",
+        "models/diffusion_models/qwen-image-edit-2511-Q4_K_M.gguf",
+        "models/loras/Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors",
+        "models/diffusion_models/flux-2-klein-9b-Q5_K_M.gguf",
+        "models/text_encoders/qwen_3_8b_fp8mixed.safetensors",
+        "models/vae/flux2-vae.safetensors",
+    ):
+        fp = fake_comfy / rel
+        fp.parent.mkdir(parents=True, exist_ok=True)
+        fp.write_bytes(b"\x00" * (1024 * 1024 + 16))
+
+    av = get_model_availability(fake_comfy)
+    assert av["qwen_edit"]["ready"] is True
+    assert av["qwen_edit"]["defaults"]["steps"] == 20
+    assert av["qwen_edit_2511"]["ready"] is True
+    assert av["qwen_edit_2511"]["defaults"]["steps"] == 4
+    assert resolve_auto_model("image", True, False, comfy_dir=fake_comfy) == "flux2_klein_9b"
+    assert resolve_auto_model("image", True, True, comfy_dir=fake_comfy) == "qwen_edit_2511"
+

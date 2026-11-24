@@ -1,6 +1,6 @@
 # ClipForge — AI-Controllable Video Editor, Offline Media Studio & MCP Server
 
-ClipForge is a cross-platform (Windows & Linux) local-first Non-Linear Video Editor (NLE) with a live WebSocket-synced **MCP Server (32 tools)** and integrated **offline ComfyUI Image & Video Generation** (zero cloud filters, zero API fees).
+ClipForge is a cross-platform (Windows & Linux) local-first Non-Linear Video Editor (NLE) with a live WebSocket-synced **MCP Server (38 tools)** and integrated **offline ComfyUI Image & Video Generation** (zero cloud filters, zero API fees).
 
 ---
 
@@ -12,11 +12,12 @@ ClipForge is a cross-platform (Windows & Linux) local-first Non-Linear Video Edi
 - **Zero-Flash Dual-Video Canvas Compositor (`clipforge/static/app.js`)**
   - Hardware audio/video master-clock sync, idle-slot pre-warming for seamless cuts/crossfades, zero-black-flash frame holding, and native static meme image preview.
   - Multi-track timeline (`VIDEO / AUDIO`, `SUBTITLES`, `SFX / BGM`) with audio waveforms, drag-to-trim handles, drag-to-reorder, razor split (`S`), and `⏭ Continue Shot` final-frame extraction.
-- **Offline AI Image & Video Studio (`clipforge/generator.py`)**
-  - Direct local ComfyUI client with WebSocket live step progress and built-in resumable HTTP `Range` Model Manager:
+- **Offline AI Image & Video Studio (`clipforge/generator.py`, `clipforge/cast.py`, `clipforge/voice.py`)**
+  - Direct local ComfyUI client with WebSocket live step progress, **mid-render latent previews + instant GPU Cancel/Interrupt**, automatic **VRAM headroom (`--reserve-vram`) & model-switch `/free` unload**, and built-in resumable HTTP `Range` Model Manager:
     - **Video**: `Wan 2.2 TI2V 5B`, `Wan 2.2 I2V 14B` (incl. `WanFirstLastFrameToVideo` Start→End morph), `Wan 2.2 T2V 14B` (4-step Lightx2v), `LTX-2.3 22B` (synchronized native audio/SFX).
     - **Image / Photo Editing**: `FLUX.2 [klein] 4B` & `9B` (4-step T2I + photo edit), `Z-Image-Turbo` (8-step candid realism + crisp meme text), `Qwen-Image-Edit 2509` & `2511` (4-step Lightning 1–2 photo compositor).
-  - **4-Seed Contact Sheet** batching, **24 categorized AI style presets**, **8 video camera motion presets**, and a local LLM prompt enhancer (`clipforge/director.py` — LM Studio / Ollama OpenAI-compatible).
+  - **✨ Auto Best Model Router**, **Aspect-Ratio Photo Matching**, **Saved Cast / Friends Book (`@Name` auto-attach + optional voice clip)**, **1-click Remix sidecars**, **2× HD Polish**, **Smooth 32fps interpolation**, and **Offline F5-TTS Friend Voice Cloning**.
+  - **4-Seed Contact Sheet** batching, **24 categorized AI style presets**, **8 video camera motion presets**, and a **model- & style-aware local LLM positive/negative prompt director** (`clipforge/director.py` — Ollama / LM Studio).
 - **FFmpeg Filtergraph Compiler (`clipforge/renderer.py`, `clipforge/subtitles.py`, `clipforge/sfx.py`)**
   - `xfade` + `acrossfade` transitions, `apad`/`tpad` A/V sync lock, static image `-loop 1` support, NVIDIA NVENC (`h264_nvenc`) with `libx264` fallback.
   - `faster-whisper` word-level karaoke subtitles (**10 presets**: `hormozi`, `mrbeast`, `tiktok_clean`, `meme_impact`, `gaming_rgb`, `news_ticker`, `whisper_red`, `cinema`, `minimal`, `neon_box`).

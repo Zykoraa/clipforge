@@ -637,6 +637,67 @@ class ProjectEngine:
             "preview_url": f"/api/generate/ref/{fname}",
         }
 
+    def smooth_clip_fps(self, clip_id: str, target_fps: float = 32.0) -> dict[str, Any]:
+        """Motion-interpolate a choppy 16-24fps generated clip to silky smooth 32-48fps with fast-seek keyframes."""
+        state = self.get_state()
+        clip = state.get_clip(clip_id)
+        if not clip:
+            raise ValueError(f"Timeline clip '{clip_id}' not found.")
+        media = state.get_media(clip.media_id)
+        if not media or not media.has_video or media.is_image:
+            raise ValueError("Smooth FPS requires a video clip.")
+
+        fps_val = max(24.0, min(60.0, float(target_fps)))
+        smooth_dir = (self.workspace_dir / "generated").resolve()
+        smooth_dir.mkdir(parents=True, exist_ok=True)
+        out_mp4 = smooth_dir / f"{Path(media.filename).stem}_{int(fps_val)}fps_{uuid.uuid4().hex[:6]}.mp4"
+
+        vf = f"minterpolate=fps={fps_val:.2f}:mi_mode=mci:mc_mode=aobmc:me_mode=bidir:vsbmc=1"
+        cmd = [
+            "ffmpeg",
+            "-y",
+            "-hide_banner",
+            "-i",
+            media.path,
+            "-vf",
+            vf,
+            "-c:v",
+            "libx264",
+            "-preset",
+            "fast",
+            "-crf",
+            "18",
+            "-g",
+            "24",
+            "-pix_fmt",
+            "yuv420p",
+            "-c:a",
+            "copy",
+            "-movflags",
+            "+faststart",
+            str(out_mp4),
+        ]
+        res = subprocess.run(cmd, capture_output=True, text=True, check=False)
+        if res.returncode != 0 or not out_mp4.exists():
+            raise RuntimeError(f"Smooth FPS interpolation failed: {(res.stderr or '')[-500:]}")
+
+        new_media = self.import_media([str(out_mp4)])[0]
+        with self._lock:
+            st = self._read_unlocked()
+            target_clip = st.get_clip(clip_id)
+            if target_clip:
+                target_clip.media_id = new_media.id
+                target_clip.out_sec = min(target_clip.out_sec, new_media.duration_sec)
+                if not target_clip.label.endswith("fps)"):
+                    target_clip.label = f"{target_clip.label[:24]} ({int(fps_val)}fps)"
+                self._write_unlocked(st)
+        return {
+            "clip_id": clip_id,
+            "media": new_media.model_dump(),
+            "output_path": str(out_mp4),
+            "target_fps": fps_val,
+        }
+
     # -------------------------------------------------------------------------
     # Audio Overlays (Meme SFX / BGM + Auto-Ducking) & Meme Layout Templates
     # -------------------------------------------------------------------------

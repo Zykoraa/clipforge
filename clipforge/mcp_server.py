@@ -21,6 +21,7 @@ try:
 except ImportError:
     from mcp.server.fastmcp import FastMCP as MCPServer  # type: ignore
 
+from .cast import CastManager
 from .director import expand_meme_prompt_local
 from .engine import ProjectEngine
 from .generator import (
@@ -28,20 +29,21 @@ from .generator import (
     COMFYUI_DIR,
     COMFYUI_URL,
     DEFAULT_NEGATIVE_PROMPT,
-    ImageModelId,
     PROMPT_PRESETS,
-    VideoModelId,
     download_manager,
     ensure_comfyui_running,
     generate_image_via_comfyui,
     generate_video_via_comfyui,
     get_model_availability,
     is_comfyui_reachable,
+    polish_image_hd as _polish_image_hd,
+    resolve_auto_model,
 )
 from .media import IMAGE_EXTENSIONS
 from .models import MemeTemplateType, TransitionType
 from .platform_utils import detached_popen_kwargs
 from .sfx import list_builtin_sfx as _list_builtin_sfx
+from .voice import clone_voice_offline, get_voice_cloner_status
 
 INSTRUCTIONS = """ClipForge MCP — AI-Controllable Non-Linear Video Editor & Offline AI Media Studio.
 
@@ -551,13 +553,14 @@ def list_generated_assets(limit: int = 25) -> dict[str, Any]:
 @mcp.tool()
 def generate_image(
     prompt: str,
-    model: ImageModelId = "flux2_klein",
+    model: str = "auto",
     image_path: str | None = None,
     image_path_2: str | None = None,
     negative_prompt: str = "",
     style_preset: str | None = None,
     width: int | None = None,
     height: int | None = None,
+    match_photo_aspect: bool = True,
     steps: int | None = None,
     cfg: float | None = None,
     seed: int = -1,
@@ -568,27 +571,34 @@ def generate_image(
 ) -> dict[str, Any]:
     """Generate 1-4 photorealistic meme images or edit/composite friend photos offline via local ComfyUI.
 
+    - Supports `@FriendName` mentions from saved Cast profiles (auto-attaches their photos!).
+    - `model='auto'` (default): automatically picks the highest-quality ready model (`z_image_turbo` for 0 photos, `flux2_klein_9b`/`flux2_klein` for 1 photo, `qwen_edit_2511`/`qwen_edit` for 2 photos).
     - `model='flux2_klein'`: Ultra-fast 4-step T2I + friend-photo editing (`image_path` optional).
     - `model='flux2_klein_9b'`: 16GB VRAM 4-step HQ upgrade over 4B (`image_path` optional).
     - `model='z_image_turbo'`: 8-step hyper-real candid photography & crisp embedded meme text (T2I).
-    - `model='qwen_edit'`: Instruction-based 1-2 friend photo compositor (`image_path` required, `image_path_2` optional).
+    - `model='qwen_edit'`: Instruction-based 1-2 friend photo compositor (`image_path` required, `image_path_2` optional; auto-uses 4-step Lightning LoRA if installed).
     - `model='qwen_edit_2511'`: Upgraded 4-step Lightning 1-2 friend photo compositor with tighter multi-person identity lock.
+    - `match_photo_aspect=True`: automatically preserves the uploaded photo's aspect ratio to prevent stretched faces.
     - `batch_size`: 1..4 distinct seeds (4-seed meme contact sheet).
-    - `style_preset`: Optional preset ('none', 'raw_iphone', 'cctv', 'breaking_news', 'podcast', 'movie_poster', 'meme_reaction').
+    - `style_preset`: Optional preset ('none', 'raw_iphone', 'cctv', 'breaking_news', 'podcast', 'movie_poster', 'meme_reaction', etc.).
     """
     eng = get_engine()
+    cm = CastManager(eng.workspace_dir)
     out_dir = eng.workspace_dir / "generated_images"
     with contextlib.redirect_stdout(sys.stderr):
+        resolved_prompt, img1, img2, _ = cm.resolve_prompt_mentions(prompt, image_path, image_path_2)
+        chosen = resolve_auto_model("image", bool(img1), bool(img2)) if model == "auto" else model
         gen_res = generate_image_via_comfyui(
-            prompt=prompt,
+            prompt=resolved_prompt,
             output_dir=out_dir,
-            model=model,
-            image_path=image_path,
-            image_path_2=image_path_2,
+            model=chosen,  # type: ignore[arg-type]
+            image_path=img1,
+            image_path_2=img2,
             negative_prompt=negative_prompt,
             style_preset=style_preset,
             width=width,
             height=height,
+            match_photo_aspect=match_photo_aspect,
             steps=steps,
             cfg=cfg,
             seed=seed,
@@ -606,7 +616,7 @@ def generate_image(
                 media_id=media_item.id,
                 transition=use_trans,
                 transition_duration=transition_duration if cur_tl else 0.0,
-                label=f"{model}: {prompt[:28]}",
+                label=f"{chosen}: {prompt[:28]}",
             )
     return {
         "generation": gen_res,
@@ -619,7 +629,7 @@ def generate_image(
 @mcp.tool()
 def generate_video_clip(
     prompt: str,
-    model: VideoModelId = "wan22_5b",
+    model: str = "auto",
     image_path: str | None = None,
     end_image_path: str | None = None,
     negative_prompt: str = DEFAULT_NEGATIVE_PROMPT,
@@ -627,6 +637,9 @@ def generate_video_clip(
     camera_preset: str | None = None,
     width: int | None = None,
     height: int | None = None,
+    match_photo_aspect: bool = True,
+    want_audio: bool = False,
+    fast_draft: bool = False,
     num_frames: int | None = None,
     fps: int | None = None,
     steps: int | None = None,
@@ -636,28 +649,38 @@ def generate_video_clip(
     transition: TransitionType = "crossfade",
     transition_duration: float = 0.35,
 ) -> dict[str, Any]:
-    """Generate a video clip completely offline via local ComfyUI (Wan 2.2 TI2V 5B, Wan 2.2 I2V 14B, or LTX-2.3 with native audio).
+    """Generate a video clip completely offline via local ComfyUI (`auto`, `wan22_5b`, `wan22_i2v`, `wan22_t2v`, or `ltx23`).
 
-    - `model='wan22_5b'`: Fast Text-to-Video or Image-to-Video on 8GB VRAM (default).
+    - Supports `@FriendName` mentions from saved Cast profiles (auto-attaches their photo!).
+    - `model='auto'` (default): picks `ltx23` (when `want_audio=True`), `wan22_i2v` (photo + best likeness), `wan22_t2v` (14B T2V if installed), or `wan22_5b` (fast/T2V).
+    - `model='wan22_5b'`: Fast Text-to-Video or Image-to-Video on 8GB VRAM.
     - `model='wan22_i2v'`: Best face likeness & motion for Image-to-Video (requires `image_path`, supports optional `end_image_path` for first->last frame morph!).
     - `model='wan22_t2v'`: HQ dual-expert 14B Text-to-Video + 4-step Lightx2v LoRAs.
     - `model='ltx23'`: Fast 8-step distilled Text-to-Video or Image-to-Video with synchronized native audio/SFX.
-    - `style_preset`: Optional preset ('none', 'raw_iphone', 'cctv', 'breaking_news', 'podcast', 'movie_poster', 'meme_reaction').
+    - `style_preset`: Optional preset ('none', 'raw_iphone', 'cctv', 'breaking_news', 'podcast', 'movie_poster', 'meme_reaction', etc.).
     """
     eng = get_engine()
+    cm = CastManager(eng.workspace_dir)
     gen_dir = eng.workspace_dir / "generated"
     with contextlib.redirect_stdout(sys.stderr):
+        resolved_prompt, img1, _, _ = cm.resolve_prompt_mentions(prompt, image_path, None)
+        chosen = (
+            resolve_auto_model("video", bool(img1), False, want_audio=want_audio, fast_draft=fast_draft)
+            if model == "auto"
+            else model
+        )
         gen_res = generate_video_via_comfyui(
-            prompt=prompt,
+            prompt=resolved_prompt,
             output_dir=gen_dir,
-            model=model,
-            image_path=image_path,
+            model=chosen,  # type: ignore[arg-type]
+            image_path=img1,
             end_image_path=end_image_path,
             negative_prompt=negative_prompt,
             style_preset=style_preset,
             camera_preset=camera_preset,
             width=width,
             height=height,
+            match_photo_aspect=match_photo_aspect,
             num_frames=num_frames,
             fps=fps,
             steps=steps,
@@ -675,13 +698,112 @@ def generate_video_clip(
                 media_id=media_item.id,
                 transition=use_trans,
                 transition_duration=transition_duration if cur_tl else 0.0,
-                label=f"{model}: {prompt[:28]}",
+                label=f"{chosen}: {prompt[:28]}",
             )
     return {
         "generation": gen_res,
         "media": media_item.model_dump(),
         "added_clip": added_clip.model_dump() if added_clip else None,
         "summary": eng.get_summary_dict(),
+    }
+
+
+@mcp.tool()
+def list_cast_members() -> list[dict[str, Any]]:
+    """List saved friend / cast profiles (reference photos, @handles, and attached voice samples)."""
+    return CastManager(get_engine().workspace_dir).list_members()
+
+
+@mcp.tool()
+def save_cast_member(
+    name: str,
+    photo_path: str,
+    voice_path: str | None = None,
+    voice_ref_text: str = "",
+) -> dict[str, Any]:
+    """Save a named friend profile (`@Name`) with a reference photo and optional 5-12s voice sample for instant reuse."""
+    with contextlib.redirect_stdout(sys.stderr):
+        return CastManager(get_engine().workspace_dir).save_member(
+            name=name,
+            photo_path=photo_path,
+            voice_path=voice_path,
+            voice_ref_text=voice_ref_text,
+        )
+
+
+@mcp.tool()
+def delete_cast_member(cast_id: str) -> dict[str, Any]:
+    """Delete a saved friend / cast profile by its ID."""
+    ok = CastManager(get_engine().workspace_dir).delete_member(cast_id)
+    return {"deleted": ok}
+
+
+@mcp.tool()
+def polish_image_hd(image_path: str, scale: int = 2) -> dict[str, Any]:
+    """Run a 1-click 2x HD Lanczos upscale + micro-contrast detail polish on a generated meme image."""
+    eng = get_engine()
+    raw_p = Path(image_path).expanduser()
+    src = raw_p if raw_p.is_absolute() else (eng.workspace_dir / raw_p)
+    with contextlib.redirect_stdout(sys.stderr):
+        return _polish_image_hd(image_path=src, output_dir=eng.workspace_dir / "generated_images", scale=scale)
+
+
+@mcp.tool()
+def smooth_clip_fps(clip_id: str, target_fps: float = 32.0) -> dict[str, Any]:
+    """Motion-interpolate a 16-24fps timeline video clip up to silky smooth 32-48fps with fast-seek keyframes."""
+    with contextlib.redirect_stdout(sys.stderr):
+        res = get_engine().smooth_clip_fps(clip_id=clip_id, target_fps=target_fps)
+    return {"smooth": res, "summary": get_engine().get_summary_dict()}
+
+
+@mcp.tool()
+def clone_friend_voice(
+    text: str,
+    cast_id: str | None = None,
+    ref_audio_path: str | None = None,
+    ref_text: str = "",
+    speed: float = 1.0,
+    add_to_timeline: bool = True,
+    start_sec: float = 0.0,
+    duck_main_audio: bool = True,
+) -> dict[str, Any]:
+    """Synthesize custom speech in a friend's cloned voice offline (F5-TTS on GPU) and optionally drop it onto the SFX/BGM timeline track."""
+    eng = get_engine()
+    use_ref = ref_audio_path
+    use_ref_text = ref_text
+    label = "Cloned Voice"
+    if cast_id:
+        m = CastManager(eng.workspace_dir).get_member(cast_id)
+        if not m or not m.get("voice_path"):
+            raise ValueError(f"Cast member '{cast_id}' has no voice sample attached.")
+        use_ref = m["voice_path"]
+        use_ref_text = use_ref_text or m.get("voice_ref_text", "")
+        label = f"🎙 {m['name']}: {text[:28]}"
+    if not use_ref:
+        raise ValueError("Provide either `cast_id` or `ref_audio_path`.")
+
+    with contextlib.redirect_stdout(sys.stderr):
+        res = clone_voice_offline(
+            text=text,
+            ref_audio_path=use_ref,
+            output_dir=eng.workspace_dir / "cloned_voices",
+            ref_text=use_ref_text,
+            speed=speed,
+        )
+        overlay = None
+        if add_to_timeline:
+            overlay = eng.add_audio_overlay(
+                audio_path=res["audio_path"],
+                start_sec=start_sec,
+                volume=1.15,
+                duck_main_audio=duck_main_audio,
+                label=label,
+            )
+    return {
+        "voice": res,
+        "voice_status": get_voice_cloner_status(),
+        "overlay": overlay.model_dump() if overlay else None,
+        "summary": eng.get_summary_dict() if add_to_timeline else None,
     }
 
 
@@ -757,12 +879,17 @@ def expand_meme_prompt(
     endpoint: str | None = None,
 ) -> dict[str, Any]:
     """Expand a rough 1-line idea into model-tailored positive & negative prompts, caption, and SFX using local Ollama/LM Studio (or smart fallback)."""
+    resolved_model = (
+        resolve_auto_model(mode, has_friend_photo, has_second_photo)
+        if model_id == "auto"
+        else model_id
+    )
     return expand_meme_prompt_local(
         idea=idea,
         mode=mode,
         has_friend_photo=has_friend_photo,
         endpoint=endpoint,
-        model_id=model_id,
+        model_id=resolved_model,
         style_preset=style_preset,
         camera_preset=camera_preset,
         has_second_photo=has_second_photo,

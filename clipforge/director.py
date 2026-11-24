@@ -276,6 +276,10 @@ def _describe_target_for_llm(
             "and NEVER invent a conflicting age, hair color, or facial traits that might override their real face."
         )
 
+    rules.append(
+        "If the user's rough idea contains any `@FriendName` cast handles (e.g. `@Jake`), preserve those exact `@Name` handles verbatim in `prompt`."
+    )
+
     preset_info = PROMPT_PRESETS.get(style_preset or "")
     if style_preset and style_preset != "none" and preset_info:
         rules.append(
