@@ -656,6 +656,16 @@ pub struct AssetMeta {
     #[serde(default)]
     pub parent_image: Option<String>,
     #[serde(default)]
+    pub parent_video: Option<String>,
+    #[serde(default)]
+    pub duration_sec: Option<f64>,
+    #[serde(default)]
+    pub num_frames: Option<u32>,
+    #[serde(default)]
+    pub fps: Option<f64>,
+    #[serde(default)]
+    pub stitched_from: Option<Vec<String>>,
+    #[serde(default)]
     pub inpainted: Option<bool>,
     #[serde(default)]
     pub face_detailed: Option<bool>,

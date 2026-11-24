@@ -67,6 +67,9 @@ pub enum ApiCommand {
     DetailFaces { filename: String },
     DeleteGalleryImage(String),
     DeleteVaultVideo(String),
+    ExtractVaultEndFrame { filename: String },
+    SmoothVaultVideo { filename: String },
+    StitchVaultVideos { filenames: Vec<String> },
     DirectorExpand(Value),
     DirectorPull { model_tag: String },
     DirectorStoryboard(Value),
@@ -98,6 +101,8 @@ pub enum ApiEvent {
     Log(String),
     RefUploaded { slot: RefSlot, path: String, filename: String },
     EndFrameExtracted { path: String, filename: String },
+    VaultEndFrameExtracted { path: String, filename: String, parent_video: String },
+    VaultVideoCreated { filename: String },
     DirectorExpanded(DirectorExpandResponse),
     StoryboardPlanned { beats: Vec<StoryboardBeat>, source: String },
     RenderCompleted(RenderReport),
@@ -871,6 +876,55 @@ fn execute_command(base: &str, tok: &str, cmd: ApiCommand, tx: &Sender<ApiEvent>
                 Ok(_) => execute_command(base, tok, ApiCommand::RefreshGenStatus, tx),
                 Err(e) => emit_err(tx, e),
             }
+        }
+        ApiCommand::ExtractVaultEndFrame { filename } => {
+            let p = format!("/api/generate/video/{}/end-frame", urlencoding::encode(&filename));
+            match post_json_val(base, tok, &p, &json!({}), 60) {
+                Ok(v) => {
+                    let path = v.get("image_path").and_then(|x| x.as_str()).unwrap_or("").to_string();
+                    let fname = v.get("filename").and_then(|x| x.as_str()).unwrap_or("last_frame.png").to_string();
+                    let parent = v.get("parent_video").and_then(|x| x.as_str()).unwrap_or(&filename).to_string();
+                    if !path.is_empty() {
+                        let _ = tx.send(ApiEvent::VaultEndFrameExtracted {
+                            path,
+                            filename: fname,
+                            parent_video: parent,
+                        });
+                    }
+                }
+                Err(e) => emit_err(tx, e),
+            }
+            let _ = tx.send(ApiEvent::ActionDone("continue_vid".into()));
+        }
+        ApiCommand::SmoothVaultVideo { filename } => {
+            let p = format!("/api/generate/video/{}/smooth-fps", urlencoding::encode(&filename));
+            match post_json_val(base, tok, &p, &json!({ "target_fps": 32.0, "prefer_rife": true }), 360) {
+                Ok(v) => {
+                    let out_fn = v.get("filename").and_then(|x| x.as_str()).unwrap_or("").to_string();
+                    emit_ok(tx, "Smoothed video motion! Ready to play.");
+                    execute_command(base, tok, ApiCommand::RefreshGenStatus, tx);
+                    if !out_fn.is_empty() {
+                        let _ = tx.send(ApiEvent::VaultVideoCreated { filename: out_fn });
+                    }
+                }
+                Err(e) => emit_err(tx, e),
+            }
+            let _ = tx.send(ApiEvent::ActionDone("smooth_vid".into()));
+        }
+        ApiCommand::StitchVaultVideos { filenames } => {
+            match post_json_val(base, tok, "/api/generate/video/stitch", &json!({ "filenames": filenames }), 300) {
+                Ok(v) => {
+                    let out_fn = v.get("filename").and_then(|x| x.as_str()).unwrap_or("").to_string();
+                    let parts = v.get("parts").and_then(|x| x.as_u64()).unwrap_or(2);
+                    emit_ok(tx, format!("Combined {parts} clips into one continuous video!"));
+                    execute_command(base, tok, ApiCommand::RefreshGenStatus, tx);
+                    if !out_fn.is_empty() {
+                        let _ = tx.send(ApiEvent::VaultVideoCreated { filename: out_fn });
+                    }
+                }
+                Err(e) => emit_err(tx, e),
+            }
+            let _ = tx.send(ApiEvent::ActionDone("stitch_vid".into()));
         }
         ApiCommand::DirectorExpand(body) => {
             match post_json_val(base, tok, "/api/director/expand", &body, 120) {

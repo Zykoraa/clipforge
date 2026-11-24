@@ -36,6 +36,8 @@ pub struct NativeVideoPlayer {
     scrub_req: Arc<Mutex<Option<(ScrubKey, f64)>>>,
     decoded_frame: Arc<Mutex<Option<ColorImage>>>,
     active_stream: Option<ActiveStream>,
+    single_video_path: String,
+    pub single_video_dur: f64,
     pub is_playing: bool,
     pub playhead_sec: f64,
     last_tick: Instant,
@@ -73,10 +75,154 @@ impl NativeVideoPlayer {
             scrub_req,
             decoded_frame,
             active_stream: None,
+            single_video_path: String::new(),
+            single_video_dur: 0.0,
             is_playing: false,
             playhead_sec: 0.0,
             last_tick: Instant::now(),
         }
+    }
+
+    pub fn select_single_video(&mut self, path: &str, duration_sec: f64, autoplay: bool) {
+        if self.single_video_path != path {
+            self.stop_playback();
+            self.single_video_path = path.to_string();
+            self.single_video_dur = duration_sec.max(0.5);
+            self.playhead_sec = 0.0;
+            self.last_scrub_key = None;
+            self.current_tex = None;
+            if autoplay {
+                self.is_playing = true;
+                self.last_tick = Instant::now();
+            }
+        } else {
+            self.single_video_dur = duration_sec.max(0.5);
+        }
+    }
+
+    pub fn tick_single_video(
+        &mut self,
+        ctx: &Context,
+        path: &str,
+        width: u32,
+        height: u32,
+        duration_sec: f64,
+    ) {
+        let dur = duration_sec.max(0.5);
+        if self.single_video_path != path {
+            self.select_single_video(path, dur, true);
+        } else {
+            self.single_video_dur = dur;
+        }
+
+        let now = Instant::now();
+        let dt = now.duration_since(self.last_tick).as_secs_f64().min(0.1);
+        self.last_tick = now;
+
+        if let Ok(mut g) = self.decoded_frame.lock() {
+            if let Some(ci) = g.take() {
+                match &mut self.current_tex {
+                    Some(tex) => tex.set(ci, TextureOptions::LINEAR),
+                    None => {
+                        self.current_tex =
+                            Some(ctx.load_texture("video_viewport", ci, TextureOptions::LINEAR));
+                    }
+                }
+            }
+        }
+
+        if self.is_playing {
+            self.playhead_sec += dt;
+            if self.playhead_sec >= dur {
+                self.playhead_sec = dur;
+                self.stop_playback();
+            } else {
+                ctx.request_repaint();
+            }
+        }
+
+        let (pw, ph) = preview_dims(width.max(320), height.max(320));
+        let source_sec = self.playhead_sec.clamp(0.0, dur);
+
+        if self.is_playing {
+            let clip_key = format!("single::{path}");
+            let need_new = match &self.active_stream {
+                Some(st) => st.clip_id != clip_key || st.stop_flag.load(Ordering::Relaxed),
+                None => true,
+            };
+            if need_new {
+                if let Some(st) = self.active_stream.take() {
+                    st.stop_flag.store(true, Ordering::SeqCst);
+                }
+                let stop_flag = Arc::new(AtomicBool::new(false));
+                let media = MediaItem {
+                    id: clip_key.clone(),
+                    path: path.to_string(),
+                    has_video: true,
+                    has_audio: true,
+                    duration_sec: dur,
+                    width: pw,
+                    height: ph,
+                    ..Default::default()
+                };
+                let clip = ScheduleItem {
+                    clip_id: clip_key.clone(),
+                    in_sec: 0.0,
+                    out_sec: dur,
+                    speed: 1.0,
+                    volume: 1.0,
+                    muted: false,
+                    ..Default::default()
+                };
+                spawn_playback_stream(
+                    media,
+                    clip,
+                    source_sec,
+                    pw,
+                    ph,
+                    Arc::clone(&stop_flag),
+                    Arc::clone(&self.decoded_frame),
+                    ctx.clone(),
+                );
+                self.active_stream = Some(ActiveStream {
+                    clip_id: clip_key,
+                    stop_flag,
+                });
+            }
+        } else {
+            let bucket_ms = (source_sec * 25.0).round() as i64 * 40;
+            let key = ScrubKey {
+                media_path: path.to_string(),
+                bucket_ms,
+                width: pw,
+                height: ph,
+            };
+            if self.last_scrub_key.as_ref() != Some(&key) {
+                self.last_scrub_key = Some(key.clone());
+                if let Ok(mut g) = self.scrub_req.lock() {
+                    *g = Some((key, source_sec));
+                }
+            }
+        }
+    }
+
+    pub fn paint_single_frame(&self, painter: &egui::Painter, rect: Rect) -> bool {
+        if let Some(tex) = &self.current_tex {
+            let tsz = tex.size_vec2();
+            if tsz.x > 0.0 && tsz.y > 0.0 {
+                let sc = ((rect.width() - 24.0).max(80.0) / tsz.x)
+                    .min((rect.height() - 24.0).max(80.0) / tsz.y);
+                let draw_rect = Rect::from_center_size(rect.center(), tsz * sc);
+                painter.image(
+                    tex.id(),
+                    draw_rect,
+                    Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
+                    Color32::WHITE,
+                );
+                return true;
+            }
+        }
+        false
     }
 
     pub fn stop_playback(&mut self) {

@@ -42,6 +42,12 @@ impl SimpleIntent {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SimpleAsset {
+    Image(String),
+    Video(String),
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LeftTab {
     Studio,
@@ -159,8 +165,10 @@ pub struct ClipForgeApp {
     pub simple_auto_enhance: bool,
     pub simple_four_grid: bool,
     pub simple_auto_hd: bool,
-    pub simple_selected_image: Option<String>,
+    pub simple_selected: Option<SimpleAsset>,
     pub last_gallery_head: String,
+    pub last_video_head: String,
+    pub continue_parent_video: Option<String>,
     pub left_tab: LeftTab,
     pub selected: Option<SelectedEntity>,
     pub px_per_sec: f32,
@@ -309,8 +317,10 @@ impl ClipForgeApp {
             simple_auto_enhance: true,
             simple_four_grid: false,
             simple_auto_hd: false,
-            simple_selected_image: None,
+            simple_selected: None,
             last_gallery_head: String::new(),
+            last_video_head: String::new(),
+            continue_parent_video: None,
             left_tab: LeftTab::Studio,
             selected: None,
             px_per_sec: 78.0,
@@ -735,11 +745,51 @@ impl ClipForgeApp {
                             self.voice_cast_id = first_v.id.clone();
                         }
                     }
-                    // Auto-focus newly generated output on the Simple Result Canvas
-                    if let Some(newest) = st.gallery.first() {
-                        if newest.filename != self.last_gallery_head {
-                            self.last_gallery_head = newest.filename.clone();
-                            self.simple_selected_image = Some(newest.filename.clone());
+                    // Auto-focus newly generated output (Photo OR Video!) on the Simple Result Canvas
+                    let newest_img = st.gallery.first().cloned();
+                    let newest_vid = st.videos.first().cloned();
+                    let img_changed = newest_img
+                        .as_ref()
+                        .map(|g| g.filename != self.last_gallery_head)
+                        .unwrap_or(false);
+                    let vid_changed = newest_vid
+                        .as_ref()
+                        .map(|v| v.filename != self.last_video_head)
+                        .unwrap_or(false);
+
+                    let first_load = self.last_gallery_head.is_empty() && self.last_video_head.is_empty();
+                    if let Some(g) = &newest_img {
+                        self.last_gallery_head = g.filename.clone();
+                    }
+                    if let Some(v) = &newest_vid {
+                        self.last_video_head = v.filename.clone();
+                    }
+
+                    if first_load {
+                        // On startup, show whichever creation (photo or video) is newest
+                        match (&newest_img, &newest_vid) {
+                            (Some(g), Some(v)) => {
+                                if v.mtime > g.mtime {
+                                    self.simple_selected = Some(SimpleAsset::Video(v.filename.clone()));
+                                } else {
+                                    self.simple_selected = Some(SimpleAsset::Image(g.filename.clone()));
+                                }
+                            }
+                            (Some(g), None) => {
+                                self.simple_selected = Some(SimpleAsset::Image(g.filename.clone()));
+                            }
+                            (None, Some(v)) => {
+                                self.simple_selected = Some(SimpleAsset::Video(v.filename.clone()));
+                            }
+                            (None, None) => {}
+                        }
+                    } else if vid_changed {
+                        if let Some(v) = newest_vid {
+                            self.simple_selected = Some(SimpleAsset::Video(v.filename));
+                        }
+                    } else if img_changed {
+                        if let Some(g) = newest_img {
+                            self.simple_selected = Some(SimpleAsset::Image(g.filename));
                         }
                     }
                     self.gen_status = st;
@@ -769,6 +819,26 @@ impl ClipForgeApp {
                 ApiEvent::EndFrameExtracted { path, filename } => {
                     self.animate_image_in_video(path, filename);
                 }
+                ApiEvent::VaultEndFrameExtracted { path, filename, parent_video } => {
+                    self.player.stop_playback();
+                    if self.simple_intent != SimpleIntent::AudioVideo {
+                        self.simple_intent = SimpleIntent::Animate;
+                    }
+                    self.set_studio_mode(StudioMode::Video, true, Some("auto".into()));
+                    self.ref1 = Some(RefAttachment {
+                        path,
+                        filename: format!("Last frame of {parent_video}"),
+                    });
+                    self.continue_parent_video = Some(parent_video);
+                    self.prompt_input.clear();
+                    self.push_toast(
+                        "Loaded last frame! Describe what happens next and click Create Video.",
+                        ToastKind::Success,
+                    );
+                }
+                ApiEvent::VaultVideoCreated { filename } => {
+                    self.simple_selected = Some(SimpleAsset::Video(filename));
+                }
                 ApiEvent::DirectorExpanded(resp) => {
                     if !resp.prompt.is_empty() {
                         self.prompt_input = resp.prompt.clone();
@@ -788,7 +858,7 @@ impl ClipForgeApp {
                     self.last_stitch_report = Some(rep);
                 }
                 ApiEvent::ImagePolished { filename, .. } => {
-                    self.simple_selected_image = Some(filename.clone());
+                    self.simple_selected = Some(SimpleAsset::Image(filename.clone()));
                     if self.ui_mode == UiMode::Pro {
                         if let Some(fresh) = self.gen_status.gallery.iter().find(|g| g.filename == filename).cloned() {
                             self.open_lightbox(fresh);
@@ -849,16 +919,21 @@ impl ClipForgeApp {
             return;
         }
         ctx.input(|i| {
+            let active_dur = if self.ui_mode == UiMode::Simple {
+                self.player.single_video_dur
+            } else {
+                self.summary.total_duration_sec
+            };
             if i.key_pressed(egui::Key::Space) {
-                self.player.toggle_play(self.summary.total_duration_sec);
+                self.player.toggle_play(active_dur);
             }
             if i.key_pressed(egui::Key::ArrowLeft) {
                 let step = if i.modifiers.shift { 1.0 } else { 0.1 };
-                self.player.seek_to(self.player.playhead_sec - step, self.summary.total_duration_sec);
+                self.player.seek_to(self.player.playhead_sec - step, active_dur);
             }
             if i.key_pressed(egui::Key::ArrowRight) {
                 let step = if i.modifiers.shift { 1.0 } else { 0.1 };
-                self.player.seek_to(self.player.playhead_sec + step, self.summary.total_duration_sec);
+                self.player.seek_to(self.player.playhead_sec + step, active_dur);
             }
             if i.key_pressed(egui::Key::S) && !i.modifiers.ctrl {
                 if let Some(cid) = match &self.selected {
@@ -894,7 +969,26 @@ impl eframe::App for ClipForgeApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.drain_events(ctx);
         self.handle_shortcuts_and_drops(ctx);
-        self.player.tick(ctx, &self.summary);
+        if self.ui_mode == UiMode::Pro {
+            self.player.tick(ctx, &self.summary);
+        } else if let Some(SimpleAsset::Video(vfn)) = &self.simple_selected {
+            if let Some(v) = self.gen_status.videos.iter().find(|x| &x.filename == vfn).cloned() {
+                let m = v.meta.as_ref();
+                let w = m.and_then(|x| x.width).unwrap_or(480);
+                let h = m.and_then(|x| x.height).unwrap_or(768);
+                let dur = m
+                    .and_then(|x| x.duration_sec)
+                    .or_else(|| {
+                        let f = m.and_then(|x| x.num_frames)? as f64;
+                        let fps = m.and_then(|x| x.fps).unwrap_or(16.0).max(1.0);
+                        Some(f / fps)
+                    })
+                    .unwrap_or(4.5);
+                self.player.tick_single_video(ctx, &v.video_path, w, h, dur);
+            }
+        } else if self.player.is_playing {
+            self.player.stop_playback();
+        }
 
         // Adaptive background polling for GPU jobs & model downloads
         let active_jobs = self

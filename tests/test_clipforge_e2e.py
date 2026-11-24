@@ -1145,5 +1145,25 @@ def test_civitai_new_architectures_starter_packs_and_checkpoints(tmp_path: Path,
     assert len(r_st["starter_packs"]) == 3
     assert len(r_st["checkpoints"]) == 2
 
+    # 9. Simple Mode direct video Continue (end-frame) + Stitch Chain endpoints
+    gen_dir = ws / "generated"
+    gen_dir.mkdir(parents=True, exist_ok=True)
+    v1 = _generate_synthetic_clip(gen_dir / "part1.mp4", "crimson", total_dur=1.4, lead_silence=0.1, trail_silence=0.1)
+    v2 = _generate_synthetic_clip(gen_dir / "part2.mp4", "teal", total_dur=1.4, lead_silence=0.1, trail_silence=0.1)
+
+    r_ef = client.post(f"/api/generate/video/{v1.name}/end-frame", headers=hdrs)
+    assert r_ef.status_code == 200
+    ef_json = r_ef.json()
+    assert ef_json["parent_video"] == v1.name
+    assert Path(ef_json["image_path"]).exists()
+
+    r_stch = client.post("/api/generate/video/stitch", headers=hdrs, json={"filenames": [v1.name, v2.name]})
+    assert r_stch.status_code == 200
+    stch_json = r_stch.json()
+    assert stch_json["parts"] == 2
+    assert Path(stch_json["video_path"]).exists()
+    assert stch_json["duration_sec"] >= 2.5
+
+
 
 

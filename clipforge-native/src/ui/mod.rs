@@ -24,14 +24,13 @@ pub fn render_main_layout(app: &mut ClipForgeApp, ctx: &egui::Context) {
         .show(ctx, |ui| {
             ui.horizontal_centered(|ui| {
                 ui.label(RichText::new("⚡ CLIPFORGE").size(15.5).strong().color(Color32::WHITE));
-                badge(ui, "NATIVE WGPU", ACCENT_PURPLE);
 
                 ui.separator();
 
-                // Simple vs. Pro NLE Mode Toggle
+                // Simple vs. Pro Editor Mode Toggle
                 for (mode, label, tip) in [
-                    (UiMode::Simple, "✨ Simple", "Beginner-friendly 6-card Creator Mode"),
-                    (UiMode::Pro, "🎛 Pro NLE", "Full multi-track timeline, subtitles, LoRAs & advanced controls"),
+                    (UiMode::Simple, "✨ Simple", "Easy photo & video creator — no technical jargon"),
+                    (UiMode::Pro, "🎛 Pro Editor", "Multi-track timeline, subtitles, SFX, LoRAs & advanced controls"),
                 ] {
                     let active = app.ui_mode == mode;
                     let btn = egui::Button::new(
@@ -43,6 +42,9 @@ pub fn render_main_layout(app: &mut ClipForgeApp, ctx: &egui::Context) {
                     .fill(if active { ACCENT_BLUE } else { BG_CARD })
                     .corner_radius(CornerRadius::same(6));
                     if ui.add(btn).on_hover_text(tip).clicked() {
+                        if mode == UiMode::Pro && app.ui_mode == UiMode::Simple {
+                            app.player.stop_playback();
+                        }
                         app.ui_mode = mode;
                     }
                 }
@@ -131,13 +133,13 @@ pub fn render_main_layout(app: &mut ClipForgeApp, ctx: &egui::Context) {
                         .iter()
                         .find(|d| d.status == "downloading");
                     let civ_lbl = if let Some(d) = civ_active {
-                        format!("🌐 CivitAI ({:.0}%)", d.pct)
+                        format!("⬇ Style ({:.0}%)", d.pct)
                     } else {
-                        "🌐 CivitAI".to_string()
+                        "✨ Get Styles".to_string()
                     };
                     if ui
                         .button(civ_lbl)
-                        .on_hover_text("Search & 1-click install community checkpoints & LoRAs from CivitAI")
+                        .on_hover_text("Install new art styles & visual boosters from the community library (CivitAI)")
                         .clicked()
                     {
                         app.show_civitai_modal = true;
@@ -150,16 +152,18 @@ pub fn render_main_layout(app: &mut ClipForgeApp, ctx: &egui::Context) {
                         m.download.as_ref().filter(|d| d.status == "downloading")
                     });
                     let models_lbl = if let Some(d) = dl_active {
-                        format!("⬇ Models ({:.0}%)", d.pct)
+                        format!("⬇ Downloading ({:.0}%)", d.pct)
+                    } else if app.ui_mode == UiMode::Simple {
+                        "⬇ Setup & Packs".to_string()
                     } else {
-                        format!("🧠 Models {ready_cnt}/{total_cnt}")
+                        format!("🧠 Engines {ready_cnt}/{total_cnt}")
                     };
                     if ui.button(models_lbl).clicked() {
                         app.show_models_modal = true;
                         app.api.send(ApiCommand::RefreshGenStatus);
                     }
 
-                    let cast_lbl = format!("👥 Cast ({})", app.gen_status.cast.len());
+                    let cast_lbl = format!("👥 Friends ({})", app.gen_status.cast.len());
                     if ui.button(cast_lbl).clicked() {
                         app.show_cast_modal = true;
                     }

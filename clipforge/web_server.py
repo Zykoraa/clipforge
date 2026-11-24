@@ -407,6 +407,7 @@ class GenerateVideoRequest(BaseModel):
     image_path: str | None = None
     end_image_path: str | None = None
     audio_path: str | None = None
+    parent_video: str | None = None
     width: int | None = None
     height: int | None = None
     match_photo_aspect: bool = False
@@ -473,6 +474,10 @@ class CivitaiInstallRequest(BaseModel):
 
 class CivitaiApiKeyRequest(BaseModel):
     api_key: str = ""
+
+
+class StitchVaultRequest(BaseModel):
+    filenames: list[str]
 
 
 class PolishImageRequest(BaseModel):
@@ -1801,6 +1806,185 @@ async def api_delete_generated_video(filename: str) -> dict[str, Any]:
     return {"deleted": filename, "videos": await asyncio.to_thread(_list_video_gallery)}
 
 
+@app.post("/api/generate/video/{filename}/end-frame")
+async def api_extract_generated_video_end_frame(filename: str) -> dict[str, Any]:
+    """Extract the exact last frame of any generated video directly into workspace/ref_images for 1-click Continue Video."""
+    target = _resolve_safe_dir_file(engine.workspace_dir / "generated", filename, VIDEO_EXTENSIONS)
+    refs_dir = (engine.workspace_dir / "ref_images").resolve()
+    refs_dir.mkdir(parents=True, exist_ok=True)
+    out_name = f"cont_{target.stem[:32]}_{uuid.uuid4().hex[:6]}.png"
+    out_path = (refs_dir / out_name).resolve()
+
+    def _extract() -> None:
+        res = subprocess.run(
+            [
+                "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+                "-sseof", "-0.15", "-i", str(target),
+                "-update", "1", "-frames:v", "1",
+                str(out_path),
+            ],
+            capture_output=True, text=True, check=False,
+        )
+        if res.returncode != 0 or not out_path.exists() or out_path.stat().st_size < 128:
+            # Fallback to first frame for ultra-short videos
+            res2 = subprocess.run(
+                [
+                    "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+                    "-i", str(target), "-frames:v", "1", str(out_path),
+                ],
+                capture_output=True, text=True, check=False,
+            )
+            if res2.returncode != 0 or not out_path.exists():
+                raise RuntimeError(f"Could not extract end frame: {(res.stderr or res2.stderr or '')[-300:]}")
+
+    try:
+        await asyncio.to_thread(_extract)
+        return {
+            "image_path": str(out_path),
+            "filename": out_name,
+            "parent_video": target.name,
+            "preview_url": f"/api/generate/ref/{out_name}",
+        }
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+
+@app.post("/api/generate/video/{filename}/smooth-fps")
+async def api_smooth_generated_video(filename: str, req: SmoothFpsRequest | None = None) -> dict[str, Any]:
+    """1-click 32fps GPU RIFE v4.26 smooth motion directly on a generated video (no Pro timeline required)."""
+    target = _resolve_safe_dir_file(engine.workspace_dir / "generated", filename, VIDEO_EXTENSIONS)
+    body = req or SmoothFpsRequest()
+    orig_meta = read_asset_metadata(target) or {}
+    out_path = target.with_name(f"{target.stem[:42]}_32fps_{uuid.uuid4().hex[:4]}.mp4")
+
+    def _do_smooth() -> dict[str, Any]:
+        avail = get_model_availability()
+        src_fps = float(orig_meta.get("fps") or 16.0)
+        if body.prefer_rife and avail.get("rife_vfi", {}).get("ready"):
+            r = interpolate_video_rife_via_comfyui(
+                target, out_path, source_fps=src_fps, target_fps=body.target_fps,
+                base_url=COMFYUI_URL, comfy_dir=COMFYUI_DIR,
+            )
+            eng_used = r["engine"]
+            eff_fps = r["target_fps"]
+        else:
+            tfps = max(24.0, min(60.0, float(body.target_fps)))
+            res = subprocess.run(
+                [
+                    "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+                    "-i", str(target),
+                    "-vf", f"minterpolate=fps={tfps:.0f}:mi_mode=mci:mc_mode=aobmc:me_mode=bidir:vsbmc=1",
+                    "-c:v", "libx264", "-preset", "fast", "-crf", "18", "-pix_fmt", "yuv420p",
+                    "-c:a", "copy", "-movflags", "+faststart", str(out_path),
+                ],
+                capture_output=True, text=True, check=False,
+            )
+            if res.returncode != 0 or not out_path.exists():
+                raise RuntimeError(f"Smooth motion failed: {(res.stderr or '')[-400:]}")
+            eng_used = "ffmpeg_minterpolate"
+            eff_fps = tfps
+
+        from .generator import write_asset_metadata
+        write_asset_metadata(
+            out_path,
+            {
+                **orig_meta,
+                "fps": eff_fps,
+                "smoothed_from": target.name,
+                "smooth_engine": eng_used,
+            },
+        )
+        return {"filename": out_path.name, "video_path": str(out_path.resolve()), "engine": eng_used, "fps": eff_fps}
+
+    try:
+        res = await asyncio.to_thread(_do_smooth)
+        return {**res, "videos": await asyncio.to_thread(_list_video_gallery)}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+
+@app.post("/api/generate/video/stitch")
+async def api_stitch_generated_videos(req: StitchVaultRequest) -> dict[str, Any]:
+    """Seamlessly combine a continuation chain of generated videos into one continuous MP4 in 1 click."""
+    names = [n for n in (req.filenames or []) if isinstance(n, str) and n.strip()]
+    if len(names) < 2:
+        raise HTTPException(status_code=400, detail="Need at least 2 video clips to combine.")
+    gen_dir = engine.workspace_dir / "generated"
+    targets = [_resolve_safe_dir_file(gen_dir, n, VIDEO_EXTENSIONS) for n in names[:12]]
+    out_path = (gen_dir / f"combined_{uuid.uuid4().hex[:8]}.mp4").resolve()
+
+    def _stitch() -> dict[str, Any]:
+        from .generator import write_asset_metadata
+        from .media import probe_media_file
+
+        infos = [probe_media_file(str(t)) for t in targets]
+        ref_w = max(256, int(infos[0].width or 480))
+        ref_h = max(256, int(infos[0].height or 768))
+        ref_w -= ref_w % 2
+        ref_h -= ref_h % 2
+        ref_fps = max(16.0, float(infos[0].fps or 24.0))
+
+        inp_args: list[str] = []
+        v_filters: list[str] = []
+        concat_inputs: list[str] = []
+        for idx, (t, info) in enumerate(zip(targets, infos)):
+            inp_args.extend(["-i", str(t)])
+            dur = max(0.2, float(info.duration_sec or 3.0))
+            v_filters.append(
+                f"[{idx}:v]fps={ref_fps:.2f},scale={ref_w}:{ref_h}:force_original_aspect_ratio=decrease,"
+                f"pad={ref_w}:{ref_h}:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1,format=yuv420p[v{idx}]"
+            )
+            if info.has_audio:
+                v_filters.append(f"[{idx}:a]aresample=44100,aformat=channel_layouts=stereo[a{idx}]")
+            else:
+                v_filters.append(f"anullsrc=r=44100:cl=stereo:d={dur:.3f}[a{idx}]")
+            concat_inputs.append(f"[v{idx}][a{idx}]")
+
+        fg = ";".join(v_filters) + f";{''.join(concat_inputs)}concat=n={len(targets)}:v=1:a=1[outv][outa]"
+        res = subprocess.run(
+            [
+                "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+                *inp_args,
+                "-filter_complex", fg,
+                "-map", "[outv]", "-map", "[outa]",
+                "-c:v", "libx264", "-preset", "fast", "-crf", "18", "-pix_fmt", "yuv420p",
+                "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart",
+                str(out_path),
+            ],
+            capture_output=True, text=True, check=False,
+        )
+        if res.returncode != 0 or not out_path.exists():
+            raise RuntimeError(f"Combine failed: {(res.stderr or '')[-500:]}")
+
+        out_info = probe_media_file(str(out_path))
+        write_asset_metadata(
+            out_path,
+            {
+                "kind": "video",
+                "model": "combined_scene",
+                "raw_prompt": f"Combined {len(targets)}-part scene",
+                "prompt": f"Combined {len(targets)}-part scene",
+                "width": ref_w,
+                "height": ref_h,
+                "fps": ref_fps,
+                "duration_sec": round(float(out_info.duration_sec or sum(i.duration_sec for i in infos)), 2),
+                "stitched_from": [t.name for t in targets],
+            },
+        )
+        return {
+            "filename": out_path.name,
+            "video_path": str(out_path),
+            "duration_sec": round(float(out_info.duration_sec or 0.0), 2),
+            "parts": len(targets),
+        }
+
+    try:
+        res = await asyncio.to_thread(_stitch)
+        return {**res, "videos": await asyncio.to_thread(_list_video_gallery)}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+
 @app.post("/api/generate/start-comfyui")
 async def api_start_comfyui() -> dict[str, Any]:
     try:
@@ -2151,6 +2335,7 @@ async def api_generate_video(req: GenerateVideoRequest) -> dict[str, Any]:
                 cfg=req.cfg,
                 seed=req.seed,
                 loras=req.loras,
+                parent_video=req.parent_video,
                 base_url=COMFYUI_URL,
                 comfy_dir=COMFYUI_DIR,
                 auto_start=True,
