@@ -10,6 +10,39 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UiMode {
+    Simple,
+    Pro,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SimpleIntent {
+    Photo,
+    Friend,
+    Anime,
+    Animate,
+    AudioVideo,
+    Talk,
+}
+
+impl SimpleIntent {
+    pub fn as_api_intent(&self) -> &'static str {
+        match self {
+            SimpleIntent::Photo => "photo",
+            SimpleIntent::Friend => "friend",
+            SimpleIntent::Anime => "anime",
+            SimpleIntent::Animate => "animate",
+            SimpleIntent::AudioVideo => "audio_video",
+            SimpleIntent::Talk => "talk",
+        }
+    }
+
+    pub fn is_video(&self) -> bool {
+        matches!(self, SimpleIntent::Animate | SimpleIntent::AudioVideo | SimpleIntent::Talk)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LeftTab {
     Studio,
     Media,
@@ -121,6 +154,13 @@ pub struct ClipForgeApp {
     pub last_gen_poll: Instant,
 
     // Navigation & Selection
+    pub ui_mode: UiMode,
+    pub simple_intent: SimpleIntent,
+    pub simple_auto_enhance: bool,
+    pub simple_four_grid: bool,
+    pub simple_auto_hd: bool,
+    pub simple_selected_image: Option<String>,
+    pub last_gallery_head: String,
     pub left_tab: LeftTab,
     pub selected: Option<SelectedEntity>,
     pub px_per_sec: f32,
@@ -134,6 +174,7 @@ pub struct ClipForgeApp {
     pub studio_mode: StudioMode,
     pub user_picked_mode: bool,
     pub selected_model: String,
+    pub checkpoint_override: String,
     pub want_audio: bool,
     pub fast_draft: bool,
     pub ref1: Option<RefAttachment>,
@@ -196,9 +237,20 @@ pub struct ClipForgeApp {
     // Modals
     pub lightbox: LightboxState,
     pub show_models_modal: bool,
+    pub show_civitai_modal: bool,
     pub show_cast_modal: bool,
     pub show_storyboard_modal: bool,
     pub show_render_modal: bool,
+
+    // CivitAI Browser State
+    pub civitai_url_buf: String,
+    pub civitai_search_buf: String,
+    pub civitai_type_filter: String,
+    pub civitai_base_filter: String,
+    pub civitai_sort: String,
+    pub civitai_results: Vec<CivitaiModelItem>,
+    pub civitai_inspected: Option<CivitaiModelItem>,
+    pub civitai_api_key_buf: String,
 
     // Cast Modal Inputs
     pub cast_name_buf: String,
@@ -252,6 +304,13 @@ impl ClipForgeApp {
             sfx_catalog: Vec::new(),
             ws_connected: false,
             last_gen_poll: Instant::now(),
+            ui_mode: UiMode::Simple,
+            simple_intent: SimpleIntent::Photo,
+            simple_auto_enhance: true,
+            simple_four_grid: false,
+            simple_auto_hd: false,
+            simple_selected_image: None,
+            last_gallery_head: String::new(),
             left_tab: LeftTab::Studio,
             selected: None,
             px_per_sec: 78.0,
@@ -261,6 +320,7 @@ impl ClipForgeApp {
             studio_mode: StudioMode::Image,
             user_picked_mode: false,
             selected_model: "auto".into(),
+            checkpoint_override: String::new(),
             want_audio: false,
             fast_draft: false,
             ref1: None,
@@ -317,9 +377,18 @@ impl ClipForgeApp {
                 ..Default::default()
             },
             show_models_modal: false,
+            show_civitai_modal: false,
             show_cast_modal: false,
             show_storyboard_modal: false,
             show_render_modal: false,
+            civitai_url_buf: String::new(),
+            civitai_search_buf: String::new(),
+            civitai_type_filter: "All".into(),
+            civitai_base_filter: "All".into(),
+            civitai_sort: "Most Downloaded".into(),
+            civitai_results: Vec::new(),
+            civitai_inspected: None,
+            civitai_api_key_buf: String::new(),
             cast_name_buf: String::new(),
             cast_photo_path: None,
             cast_voice_path: None,
@@ -373,20 +442,30 @@ impl ClipForgeApp {
     }
 
     pub fn resolve_auto_model_preview(&self) -> String {
+        let intent = if self.ui_mode == UiMode::Simple {
+            Some(self.simple_intent.as_api_intent())
+        } else {
+            None
+        };
+        self.resolve_auto_model_for_intent(self.studio_mode, intent)
+    }
+
+    pub fn resolve_auto_model_for_intent(&self, mode: StudioMode, intent: Option<&str>) -> String {
         let has1 = self.ref1.is_some();
         let has2 = self.ref2.is_some();
-        let order: Vec<&str> = match self.studio_mode {
-            StudioMode::Image => {
-                if has1 && has2 {
-                    vec!["qwen_edit_2511", "qwen_edit", "flux2_klein_9b", "flux2_klein", "z_image_turbo"]
-                } else if has1 {
-                    vec!["flux2_klein_9b", "flux2_klein", "qwen_edit_2511", "qwen_edit", "z_image_turbo"]
-                } else {
-                    vec!["z_image_turbo", "flux2_klein_9b", "flux2_klein"]
-                }
-            }
+        let order: Vec<&str> = match mode {
+            StudioMode::Image => match intent {
+                Some("anime") => vec!["illustrious_xl", "chroma_hd", "z_image_turbo", "flux2_klein_9b", "flux2_klein"],
+                Some("uncensored") => vec!["chroma_hd", "z_image_turbo", "krea2_turbo", "illustrious_xl", "flux2_klein_9b", "flux2_klein"],
+                Some("photo") if !has1 => vec!["z_image_turbo", "krea2_turbo", "chroma_hd", "flux2_klein_9b", "flux2_klein"],
+                _ if has1 && has2 => vec!["qwen_edit_2511", "qwen_edit", "flux2_klein_9b", "flux2_klein", "krea2_turbo", "z_image_turbo"],
+                _ if has1 => vec!["flux2_klein_9b", "flux2_klein", "qwen_edit_2511", "qwen_edit", "krea2_turbo", "z_image_turbo"],
+                _ => vec!["z_image_turbo", "krea2_turbo", "flux2_klein_9b", "flux2_klein", "chroma_hd", "illustrious_xl"],
+            },
             StudioMode::Video => {
-                if self.want_audio {
+                if intent == Some("talk") {
+                    vec!["wan22_s2v", "wan22_i2v", "wan22_5b"]
+                } else if self.want_audio || intent == Some("audio_video") {
                     vec!["ltx23", if has1 { "wan22_i2v" } else { "wan22_t2v" }, "wan22_5b"]
                 } else if has1 && !self.fast_draft {
                     vec!["wan22_i2v", "wan22_5b", "ltx23"]
@@ -656,7 +735,13 @@ impl ClipForgeApp {
                             self.voice_cast_id = first_v.id.clone();
                         }
                     }
-                    // If lightbox is open and a polished version appeared, keep it synced
+                    // Auto-focus newly generated output on the Simple Result Canvas
+                    if let Some(newest) = st.gallery.first() {
+                        if newest.filename != self.last_gallery_head {
+                            self.last_gallery_head = newest.filename.clone();
+                            self.simple_selected_image = Some(newest.filename.clone());
+                        }
+                    }
                     self.gen_status = st;
                 }
                 ApiEvent::SfxCatalogLoaded(items) => {
@@ -703,9 +788,18 @@ impl ClipForgeApp {
                     self.last_stitch_report = Some(rep);
                 }
                 ApiEvent::ImagePolished { filename, .. } => {
-                    if let Some(fresh) = self.gen_status.gallery.iter().find(|g| g.filename == filename).cloned() {
-                        self.open_lightbox(fresh);
+                    self.simple_selected_image = Some(filename.clone());
+                    if self.ui_mode == UiMode::Pro {
+                        if let Some(fresh) = self.gen_status.gallery.iter().find(|g| g.filename == filename).cloned() {
+                            self.open_lightbox(fresh);
+                        }
                     }
+                }
+                ApiEvent::CivitaiSearchResults(items) => {
+                    self.civitai_results = items;
+                }
+                ApiEvent::CivitaiInspected(item) => {
+                    self.civitai_inspected = Some(item);
                 }
                 ApiEvent::ImageDecoded { key, image } => {
                     self.api.store_decoded_image(ctx, key, image);
@@ -812,7 +906,13 @@ impl eframe::App for ClipForgeApp {
             .gen_status
             .models
             .values()
-            .any(|m| m.download.as_ref().map(|d| d.status == "downloading").unwrap_or(false));
+            .any(|m| m.download.as_ref().map(|d| d.status == "downloading").unwrap_or(false))
+            || self
+                .gen_status
+                .civitai
+                .downloads
+                .iter()
+                .any(|d| d.status == "downloading");
         let poll_interval = if active_jobs || active_dls {
             Duration::from_millis(1200)
         } else {

@@ -201,6 +201,44 @@ pub fn render_studio_tab(app: &mut ClipForgeApp, ui: &mut egui::Ui, ctx: &egui::
             });
         }
 
+        // Community / CivitAI Checkpoint Selector (when matching checkpoints exist on disk)
+        if app.studio_mode == StudioMode::Image {
+            let matching_ckpts: Vec<_> = app
+                .gen_status
+                .checkpoints
+                .iter()
+                .filter(|c| !c.is_builtin && c.compatible_models.iter().any(|m| m == &effective_id))
+                .cloned()
+                .collect();
+            if !matching_ckpts.is_empty() {
+                ui.add_space(4.0);
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new("Checkpoint:").size(10.5).color(TEXT_MUTED));
+                    let sel_ck = if app.checkpoint_override.is_empty() {
+                        "Default Base Weights".to_string()
+                    } else {
+                        app.checkpoint_override.clone()
+                    };
+                    egui::ComboBox::from_id_salt("pro_ckpt_override")
+                        .selected_text(RichText::new(sel_ck).size(11.0))
+                        .width((ui.available_width() - 62.0).max(120.0))
+                        .show_ui(ui, |ui| {
+                            ui.selectable_value(&mut app.checkpoint_override, String::new(), "Default Base Weights");
+                            for ck in &matching_ckpts {
+                                ui.selectable_value(
+                                    &mut app.checkpoint_override,
+                                    ck.name.clone(),
+                                    format!("{} ({:.1} GB)", ck.filename, ck.size_gb),
+                                );
+                            }
+                        });
+                    if ui.small_button("🌐").on_hover_text("Install more checkpoints from CivitAI").clicked() {
+                        app.show_civitai_modal = true;
+                    }
+                });
+            }
+        }
+
         if let Some(m) = &active_model {
             if !m.description.is_empty() {
                 ui.label(RichText::new(&m.description).size(10.5).color(TEXT_MUTED));
@@ -928,6 +966,9 @@ fn submit_studio_generation(app: &mut ClipForgeApp) {
         });
         if !app.neg_prompt_input.trim().is_empty() {
             body["negative_prompt"] = json!(app.neg_prompt_input.trim());
+        }
+        if !app.checkpoint_override.trim().is_empty() {
+            body["checkpoint_override"] = json!(app.checkpoint_override.trim());
         }
         app.api.send(ApiCommand::GenerateImage(body));
     } else {

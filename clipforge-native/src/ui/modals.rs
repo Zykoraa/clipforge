@@ -13,6 +13,9 @@ pub fn render_all_modals(app: &mut ClipForgeApp, ctx: &egui::Context) {
     if app.show_models_modal {
         render_models_modal(app, ctx);
     }
+    if app.show_civitai_modal {
+        render_civitai_modal(app, ctx);
+    }
     if app.show_cast_modal {
         render_cast_modal(app, ctx);
     }
@@ -457,6 +460,10 @@ fn render_models_modal(app: &mut ClipForgeApp, ctx: &egui::Context) {
             ui.horizontal(|ui| {
                 ui.label(RichText::new(format!("Storage: {}", app.gen_status.comfyui_dir)).size(11.0).color(TEXT_MUTED));
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui.small_button("🌐 Browse CivitAI").clicked() {
+                        app.show_models_modal = false;
+                        app.show_civitai_modal = true;
+                    }
                     if app.gen_status.comfyui_running {
                         badge(ui, "ComfyUI Online", ACCENT_GREEN);
                     } else if ui.small_button("Start ComfyUI").clicked() {
@@ -466,8 +473,43 @@ fn render_models_modal(app: &mut ClipForgeApp, ctx: &egui::Context) {
             });
             ui.separator();
 
+            let starter_packs = app.gen_status.starter_packs.clone();
             let models: Vec<_> = app.gen_status.models.values().cloned().collect();
             egui::ScrollArea::vertical().show(ui, |ui| {
+                if !starter_packs.is_empty() {
+                    ui.label(RichText::new("🚀 1-Click GPU Starter Packs").size(13.0).strong());
+                    for pack in &starter_packs {
+                        card_frame().show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                ui.vertical(|ui| {
+                                    ui.horizontal(|ui| {
+                                        ui.label(RichText::new(&pack.title).strong().size(12.0));
+                                        badge(
+                                            ui,
+                                            &pack.badge,
+                                            if pack.recommended { ACCENT_BLUE } else { ACCENT_PURPLE },
+                                        );
+                                    });
+                                    ui.label(RichText::new(&pack.description).size(10.5).color(TEXT_MUTED));
+                                });
+                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                    if pack.ready {
+                                        badge(ui, "✓ Installed", ACCENT_GREEN);
+                                    } else if pack.downloading {
+                                        badge(ui, "⬇ Downloading...", ACCENT_AMBER);
+                                    } else if ui
+                                        .add(primary_button(&format!("⬇ Install ({:.1} GB)", pack.missing_gb)))
+                                        .clicked()
+                                    {
+                                        app.api.send(ApiCommand::DownloadStarterPack(pack.id.clone()));
+                                    }
+                                });
+                            });
+                        });
+                        ui.add_space(4.0);
+                    }
+                    ui.separator();
+                }
                 for (kind, heading) in [
                     ("image", "🖼 Image & Photo Editing Models"),
                     ("video", "🎬 Video & Lip-Sync Models"),
@@ -905,5 +947,341 @@ fn render_render_modal(app: &mut ClipForgeApp, ctx: &egui::Context) {
         });
     if !open {
         app.show_render_modal = false;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 6. Built-In CivitAI Model & LoRA Browser + 1-Click URL Installer
+// ---------------------------------------------------------------------------
+fn render_civitai_modal(app: &mut ClipForgeApp, ctx: &egui::Context) {
+    let mut open = app.show_civitai_modal;
+    egui::Window::new("🌐 CivitAI Model & LoRA Browser (1-Click Install)")
+        .open(&mut open)
+        .resizable(true)
+        .collapsible(false)
+        .default_size([800.0, 620.0])
+        .anchor(egui::Align2::CENTER_CENTER, Vec2::ZERO)
+        .show(ctx, |ui| {
+            // 1. Direct URL / Model ID Inspector
+            card_frame().show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new("Paste any CivitAI URL or ID:").size(11.5).strong());
+                    let inspecting = app.busy_flags.contains("civitai_inspect");
+                    let url_resp = ui.add(
+                        egui::TextEdit::singleline(&mut app.civitai_url_buf)
+                            .desired_width((ui.available_width() - 105.0).max(180.0))
+                            .hint_text("https://civitai.com/models/2237711 or 974693"),
+                    );
+                    let trigger = ui
+                        .add_enabled(!inspecting, primary_button(if inspecting { "Loading..." } else { "🔍 Inspect" }))
+                        .clicked()
+                        || (url_resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)));
+                    if trigger {
+                        let raw = app.civitai_url_buf.trim().to_string();
+                        if !raw.is_empty() {
+                            app.busy_flags.insert("civitai_inspect".into());
+                            app.api.send(ApiCommand::InspectCivitai(raw));
+                        }
+                    }
+                });
+
+                if let Some(item) = app.civitai_inspected.clone() {
+                    ui.add_space(6.0);
+                    egui::Frame::new()
+                        .fill(Color32::from_rgb(22, 34, 56))
+                        .stroke(Stroke::new(1.0_f32, ACCENT_BLUE))
+                        .corner_radius(CornerRadius::same(8))
+                        .inner_margin(egui::Margin::same(8))
+                        .show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                ui.vertical(|ui| {
+                                    ui.horizontal(|ui| {
+                                        ui.label(RichText::new(&item.name).strong().size(13.0).color(Color32::WHITE));
+                                        badge(ui, &item.model_type, ACCENT_PURPLE);
+                                        if !item.base_model.is_empty() {
+                                            badge(ui, &item.base_model, ACCENT_BLUE);
+                                        }
+                                    });
+                                    ui.label(
+                                        RichText::new(format!(
+                                            "{} · {:.1} MB → ComfyUI/models/{}/",
+                                            item.filename, item.size_mb, item.target_subdir
+                                        ))
+                                        .size(11.0)
+                                        .color(TEXT_MUTED),
+                                    );
+                                    if !item.trained_words.is_empty() {
+                                        ui.label(
+                                            RichText::new(format!(
+                                                "Auto-saved triggers: {}",
+                                                item.trained_words.join(", ")
+                                            ))
+                                            .size(10.5)
+                                            .color(ACCENT_GREEN),
+                                        );
+                                    }
+                                });
+                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                    if ui.add(primary_button("⬇ 1-Click Install")).clicked() {
+                                        app.api.send(ApiCommand::InstallCivitai(json!({
+                                            "version_id": item.version_id,
+                                            "download_url": item.download_url,
+                                            "filename": item.filename,
+                                            "name": item.name,
+                                            "model_type": item.model_type,
+                                            "base_model": item.base_model,
+                                            "target_subdir": item.target_subdir,
+                                            "trained_words": item.trained_words,
+                                            "size_mb": item.size_mb,
+                                        })));
+                                    }
+                                    if ui.small_button("✕").clicked() {
+                                        app.civitai_inspected = None;
+                                    }
+                                });
+                            });
+                        });
+                }
+            });
+
+            ui.add_space(6.0);
+
+            // 2. Live Search & Filters
+            ui.horizontal(|ui| {
+                let searching = app.busy_flags.contains("civitai_search");
+                let s_resp = ui.add(
+                    egui::TextEdit::singleline(&mut app.civitai_search_buf)
+                        .desired_width(210.0)
+                        .hint_text("Search CivitAI (e.g. realism, anime, wan)..."),
+                );
+                egui::ComboBox::from_id_salt("civ_type_cb")
+                    .selected_text(&app.civitai_type_filter)
+                    .width(96.0)
+                    .show_ui(ui, |ui| {
+                        for t in ["All", "Checkpoint", "LORA"] {
+                            ui.selectable_value(&mut app.civitai_type_filter, t.into(), t);
+                        }
+                    });
+                egui::ComboBox::from_id_salt("civ_base_cb")
+                    .selected_text(&app.civitai_base_filter)
+                    .width(128.0)
+                    .show_ui(ui, |ui| {
+                        for b in [
+                            "All",
+                            "ZImageTurbo",
+                            "Illustrious",
+                            "Krea 2",
+                            "Chroma",
+                            "Flux.2 Klein 9B",
+                            "Wan Video 2.2",
+                            "LTXV 2.3",
+                        ] {
+                            ui.selectable_value(&mut app.civitai_base_filter, b.into(), b);
+                        }
+                    });
+                egui::ComboBox::from_id_salt("civ_sort_cb")
+                    .selected_text(&app.civitai_sort)
+                    .width(125.0)
+                    .show_ui(ui, |ui| {
+                        for s in ["Most Downloaded", "Highest Rated", "Newest"] {
+                            ui.selectable_value(&mut app.civitai_sort, s.into(), s);
+                        }
+                    });
+                let do_search = ui
+                    .add_enabled(!searching, primary_button(if searching { "..." } else { "Search" }))
+                    .clicked()
+                    || (s_resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)));
+                if do_search {
+                    app.busy_flags.insert("civitai_search".into());
+                    app.api.send(ApiCommand::SearchCivitai {
+                        query: app.civitai_search_buf.trim().to_string(),
+                        model_type: app.civitai_type_filter.clone(),
+                        base_model: app.civitai_base_filter.clone(),
+                        sort: app.civitai_sort.clone(),
+                    });
+                }
+            });
+
+            // Optional CivitAI API Key (for gated / 18+ files)
+            ui.add_space(4.0);
+            let has_key = app.gen_status.civitai.has_api_key;
+            egui::CollapsingHeader::new(if has_key {
+                "🔑 CivitAI API Key (✓ Saved Locally — Gated Models Unlocked)"
+            } else {
+                "🔑 CivitAI API Key (Optional — needed only for gated/18+ CivitAI downloads)"
+            })
+            .id_salt("civ_key_hdr")
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.add(
+                        egui::TextEdit::singleline(&mut app.civitai_api_key_buf)
+                            .password(true)
+                            .desired_width(300.0)
+                            .hint_text("Paste CivitAI API key (stored locally in workspace/secrets.json)"),
+                    );
+                    if ui.button("Save Key").clicked() {
+                        let k = app.civitai_api_key_buf.trim().to_string();
+                        app.civitai_api_key_buf.clear();
+                        app.api.send(ApiCommand::SaveCivitaiKey(k));
+                    }
+                    if has_key && ui.small_button("Clear Key").clicked() {
+                        app.api.send(ApiCommand::SaveCivitaiKey(String::new()));
+                    }
+                });
+            });
+
+            ui.separator();
+
+            // 3. Active CivitAI Downloads
+            let dls = app.gen_status.civitai.downloads.clone();
+            if !dls.is_empty() {
+                for d in &dls {
+                    card_frame().show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new(format!("{} → models/{}/", d.filename, d.target_subdir)).strong().size(11.5));
+                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                if d.status == "downloading" {
+                                    if ui.small_button("Pause").clicked() {
+                                        app.api.send(ApiCommand::CancelCivitai(d.download_id.clone()));
+                                    }
+                                }
+                                let col = match d.status.as_str() {
+                                    "completed" => ACCENT_GREEN,
+                                    "failed" => ACCENT_RED,
+                                    "canceled" => ACCENT_AMBER,
+                                    _ => ACCENT_BLUE,
+                                };
+                                badge(ui, &d.status.to_uppercase(), col);
+                            });
+                        });
+                        if d.status == "downloading" {
+                            ui.add(
+                                egui::ProgressBar::new((d.pct as f32 / 100.0).clamp(0.0, 1.0)).text(format!(
+                                    "{:.1}/{:.1} MB · {:.1} MB/s",
+                                    d.downloaded_mb, d.total_mb, d.speed_mbps
+                                )),
+                            );
+                        } else if let Some(err) = &d.error {
+                            ui.label(RichText::new(err).size(10.5).color(ACCENT_RED));
+                        }
+                    });
+                    ui.add_space(4.0);
+                }
+            }
+
+            // 4. Scrollable Results OR Curated Community Picks
+            egui::ScrollArea::vertical().id_salt("civitai_list_scroll").show(ui, |ui| {
+                let results = app.civitai_results.clone();
+                if !results.is_empty() {
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new(format!("Live CivitAI Results ({})", results.len())).strong().size(12.5));
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if ui.small_button("Show Curated Picks").clicked() {
+                                app.civitai_results.clear();
+                            }
+                        });
+                    });
+                    ui.add_space(4.0);
+                    for item in &results {
+                        card_frame().show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                ui.vertical(|ui| {
+                                    ui.horizontal(|ui| {
+                                        ui.label(RichText::new(&item.name).strong().size(12.5));
+                                        badge(ui, &item.model_type, ACCENT_PURPLE);
+                                        if !item.base_model.is_empty() {
+                                            badge(ui, &item.base_model, ACCENT_BLUE);
+                                        }
+                                    });
+                                    ui.label(
+                                        RichText::new(format!(
+                                            "{} · {:.0} MB · {} downloads · → models/{}/",
+                                            item.filename, item.size_mb, item.downloads, item.target_subdir
+                                        ))
+                                        .size(10.5)
+                                        .color(TEXT_MUTED),
+                                    );
+                                    if !item.trained_words.is_empty() {
+                                        ui.label(
+                                            RichText::new(format!("Triggers: {}", item.trained_words.join(", ")))
+                                                .size(10.5)
+                                                .color(ACCENT_GREEN),
+                                        );
+                                    }
+                                });
+                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                    if ui.add(primary_button("⬇ Install")).clicked() {
+                                        app.api.send(ApiCommand::InstallCivitai(json!({
+                                            "version_id": item.version_id,
+                                            "download_url": item.download_url,
+                                            "filename": item.filename,
+                                            "name": item.name,
+                                            "model_type": item.model_type,
+                                            "base_model": item.base_model,
+                                            "target_subdir": item.target_subdir,
+                                            "trained_words": item.trained_words,
+                                            "size_mb": item.size_mb,
+                                        })));
+                                    }
+                                });
+                            });
+                        });
+                        ui.add_space(4.0);
+                    }
+                } else {
+                    ui.label(
+                        RichText::new("⭐ Curated Community Picks (Tested for ClipForge Engines)")
+                            .strong()
+                            .size(12.5),
+                    );
+                    ui.label(
+                        RichText::new("1-click install directly into ComfyUI — checkpoints appear automatically in the Look selector, LoRAs auto-save their trigger words.")
+                            .size(10.5)
+                            .color(TEXT_MUTED),
+                    );
+                    ui.add_space(6.0);
+
+                    let curated = app.gen_status.civitai.curated.clone();
+                    for pick in &curated {
+                        card_frame().show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                ui.vertical(|ui| {
+                                    ui.horizontal(|ui| {
+                                        ui.label(RichText::new(&pick.name).strong().size(12.5));
+                                        badge(ui, &pick.badge, ACCENT_BLUE);
+                                        badge(ui, &pick.base_model, ACCENT_PURPLE);
+                                    });
+                                    ui.label(RichText::new(&pick.tagline).size(11.0).color(TEXT_MUTED));
+                                    ui.label(
+                                        RichText::new(format!(
+                                            "CivitAI #{} · {} → ComfyUI/models/{}/",
+                                            pick.model_id, pick.model_type, pick.target_subdir
+                                        ))
+                                        .size(10.0)
+                                        .color(TEXT_MUTED),
+                                    );
+                                });
+                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                    if ui.add(primary_button("⬇ Install")).clicked() {
+                                        app.api.send(ApiCommand::InstallCivitai(json!({
+                                            "url_or_id": pick.model_id.to_string(),
+                                            "name": pick.name,
+                                        })));
+                                    }
+                                    if ui.small_button("Inspect").clicked() {
+                                        app.civitai_url_buf = pick.model_id.to_string();
+                                        app.busy_flags.insert("civitai_inspect".into());
+                                        app.api.send(ApiCommand::InspectCivitai(pick.model_id.to_string()));
+                                    }
+                                });
+                            });
+                        });
+                        ui.add_space(4.0);
+                    }
+                }
+            });
+        });
+    if !open {
+        app.show_civitai_modal = false;
     }
 }

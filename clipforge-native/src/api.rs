@@ -48,6 +48,17 @@ pub enum ApiCommand {
     StartComfyUi,
     DownloadModel(String),
     CancelDownload(String),
+    DownloadStarterPack(String),
+    SearchCivitai {
+        query: String,
+        model_type: String,
+        base_model: String,
+        sort: String,
+    },
+    InspectCivitai(String),
+    InstallCivitai(Value),
+    CancelCivitai(String),
+    SaveCivitaiKey(String),
     CancelJob(String),
     UploadRef { slot: RefSlot, path: PathBuf },
     GenerateImage(Value),
@@ -92,6 +103,8 @@ pub enum ApiEvent {
     RenderCompleted(RenderReport),
     StitchCompleted(StitchReport),
     ImagePolished { filename: String, engine: String, width: u32, height: u32 },
+    CivitaiSearchResults(Vec<CivitaiModelItem>),
+    CivitaiInspected(CivitaiModelItem),
     ImageDecoded { key: String, image: ColorImage },
     ActionDone(String),
 }
@@ -646,6 +659,104 @@ fn execute_command(base: &str, tok: &str, cmd: ApiCommand, tx: &Sender<ApiEvent>
                         message: format!("Paused download for {model_id} (.part saved)."),
                         kind: ToastKind::Warning,
                     });
+                    execute_command(base, tok, ApiCommand::RefreshGenStatus, tx);
+                }
+                Err(e) => emit_err(tx, e),
+            }
+        }
+        ApiCommand::DownloadStarterPack(pack_id) => {
+            let p = format!("/api/starter-pack/{}/download", urlencoding::encode(&pack_id));
+            match post_json_val(base, tok, &p, &json!({}), 30) {
+                Ok(_) => {
+                    emit_ok(tx, format!("Downloading starter pack '{pack_id}' in background..."));
+                    execute_command(base, tok, ApiCommand::RefreshGenStatus, tx);
+                }
+                Err(e) => emit_err(tx, e),
+            }
+        }
+        ApiCommand::SearchCivitai { query, model_type, base_model, sort } => {
+            let mut qs = vec![
+                format!("q={}", urlencoding::encode(&query)),
+                format!("sort={}", urlencoding::encode(&sort)),
+                "limit=18".to_string(),
+            ];
+            if !model_type.is_empty() && model_type != "All" {
+                qs.push(format!("model_type={}", urlencoding::encode(&model_type)));
+            }
+            if !base_model.is_empty() && base_model != "All" {
+                qs.push(format!("base_model={}", urlencoding::encode(&base_model)));
+            }
+            let path = format!("/api/civitai/search?{}", qs.join("&"));
+            match get_json_val(base, tok, &path, 30) {
+                Ok(v) => {
+                    let items: Vec<CivitaiModelItem> = v
+                        .get("items")
+                        .and_then(|arr| serde_json::from_value(arr.clone()).ok())
+                        .unwrap_or_default();
+                    let _ = tx.send(ApiEvent::CivitaiSearchResults(items));
+                }
+                Err(e) => emit_err(tx, e),
+            }
+            let _ = tx.send(ApiEvent::ActionDone("civitai_search".into()));
+        }
+        ApiCommand::InspectCivitai(url_or_id) => {
+            match post_json_val(base, tok, "/api/civitai/inspect", &json!({ "url_or_id": url_or_id }), 30) {
+                Ok(v) => {
+                    if let Some(it) = v.get("item") {
+                        if let Ok(parsed) = serde_json::from_value::<CivitaiModelItem>(it.clone()) {
+                            emit_ok(tx, format!("Loaded CivitAI: {} ({})", parsed.name, parsed.base_model));
+                            let _ = tx.send(ApiEvent::CivitaiInspected(parsed));
+                        }
+                    }
+                }
+                Err(e) => emit_err(tx, e),
+            }
+            let _ = tx.send(ApiEvent::ActionDone("civitai_inspect".into()));
+        }
+        ApiCommand::InstallCivitai(body) => {
+            match post_json_val(base, tok, "/api/civitai/install", &body, 30) {
+                Ok(v) => {
+                    let fname = v
+                        .get("download")
+                        .and_then(|d| d.get("filename"))
+                        .and_then(|x| x.as_str())
+                        .unwrap_or("model");
+                    let sub = v
+                        .get("download")
+                        .and_then(|d| d.get("target_subdir"))
+                        .and_then(|x| x.as_str())
+                        .unwrap_or("models");
+                    emit_ok(tx, format!("Installing {fname} → ComfyUI/models/{sub}/"));
+                    execute_command(base, tok, ApiCommand::RefreshGenStatus, tx);
+                }
+                Err(e) => emit_err(tx, e),
+            }
+        }
+        ApiCommand::CancelCivitai(dl_id) => {
+            let p = format!("/api/civitai/cancel/{}", urlencoding::encode(&dl_id));
+            match post_json_val(base, tok, &p, &json!({}), 20) {
+                Ok(_) => {
+                    let _ = tx.send(ApiEvent::Toast {
+                        message: "Paused CivitAI download (.part saved).".into(),
+                        kind: ToastKind::Warning,
+                    });
+                    execute_command(base, tok, ApiCommand::RefreshGenStatus, tx);
+                }
+                Err(e) => emit_err(tx, e),
+            }
+        }
+        ApiCommand::SaveCivitaiKey(key) => {
+            match post_json_val(base, tok, "/api/civitai/api-key", &json!({ "api_key": key }), 15) {
+                Ok(v) => {
+                    let has = v.get("has_api_key").and_then(|x| x.as_bool()).unwrap_or(false);
+                    emit_ok(
+                        tx,
+                        if has {
+                            "Saved CivitAI API key locally (workspace/secrets.json)."
+                        } else {
+                            "Cleared saved CivitAI API key."
+                        },
+                    );
                     execute_command(base, tok, ApiCommand::RefreshGenStatus, tx);
                 }
                 Err(e) => emit_err(tx, e),

@@ -1,10 +1,11 @@
 pub mod modals;
 pub mod panels;
+pub mod simple;
 pub mod studio;
 pub mod timeline;
 
 use crate::api::{ApiCommand, ToastKind};
-use crate::app::{ClipForgeApp, LeftTab, SelectedEntity};
+use crate::app::{ClipForgeApp, LeftTab, SelectedEntity, UiMode};
 use crate::player::active_clip_at;
 use crate::theme::*;
 use egui::{Align, Color32, CornerRadius, Frame, Layout, Margin, RichText, Stroke};
@@ -27,77 +28,121 @@ pub fn render_main_layout(app: &mut ClipForgeApp, ctx: &egui::Context) {
 
                 ui.separator();
 
-                let name_resp = ui.add(
-                    egui::TextEdit::singleline(&mut app.project_name_buf)
-                        .desired_width(175.0)
-                        .hint_text("Project name"),
-                );
-                if name_resp.lost_focus() && name_resp.changed() {
-                    app.api.send(ApiCommand::ConfigureProject(json!({
-                        "name": app.project_name_buf
-                    })));
-                }
-
-                let aspect_options = [
-                    ("1080x1920", "9:16 Vertical (1080×1920)"),
-                    ("1920x1080", "16:9 Landscape (1920×1080)"),
-                    ("1080x1080", "1:1 Square (1080×1080)"),
-                    ("1280x720", "16:9 Fast HD (1280×720)"),
-                ];
-                let prev_aspect = app.aspect_buf.clone();
-                egui::ComboBox::from_id_salt("aspect_select")
-                    .selected_text(
-                        aspect_options
-                            .iter()
-                            .find(|(v, _)| *v == app.aspect_buf)
-                            .map(|(_, l)| *l)
-                            .unwrap_or(&app.aspect_buf),
+                // Simple vs. Pro NLE Mode Toggle
+                for (mode, label, tip) in [
+                    (UiMode::Simple, "✨ Simple", "Beginner-friendly 6-card Creator Mode"),
+                    (UiMode::Pro, "🎛 Pro NLE", "Full multi-track timeline, subtitles, LoRAs & advanced controls"),
+                ] {
+                    let active = app.ui_mode == mode;
+                    let btn = egui::Button::new(
+                        RichText::new(label)
+                            .strong()
+                            .size(12.0)
+                            .color(if active { Color32::WHITE } else { TEXT_MUTED }),
                     )
-                    .width(170.0)
-                    .show_ui(ui, |ui| {
-                        for (val, lbl) in aspect_options {
-                            ui.selectable_value(&mut app.aspect_buf, val.to_string(), lbl);
-                        }
-                    });
-                if app.aspect_buf != prev_aspect {
-                    if let Some((w, h)) = app.aspect_buf.split_once('x') {
-                        if let (Ok(wi), Ok(hi)) = (w.parse::<u32>(), h.parse::<u32>()) {
-                            app.api.send(ApiCommand::ConfigureProject(json!({
-                                "width": wi,
-                                "height": hi
-                            })));
-                        }
+                    .fill(if active { ACCENT_BLUE } else { BG_CARD })
+                    .corner_radius(CornerRadius::same(6));
+                    if ui.add(btn).on_hover_text(tip).clicked() {
+                        app.ui_mode = mode;
                     }
                 }
 
-                ui.separator();
+                if app.ui_mode == UiMode::Pro {
+                    ui.separator();
 
-                if app.ws_connected {
-                    badge(
-                        ui,
-                        &format!("● MCP SYNC v{}", app.summary.project.version),
-                        ACCENT_GREEN,
+                    let name_resp = ui.add(
+                        egui::TextEdit::singleline(&mut app.project_name_buf)
+                            .desired_width(155.0)
+                            .hint_text("Project name"),
                     );
-                } else {
-                    badge(ui, "○ RECONNECTING", ACCENT_AMBER);
+                    if name_resp.lost_focus() && name_resp.changed() {
+                        app.api.send(ApiCommand::ConfigureProject(json!({
+                            "name": app.project_name_buf
+                        })));
+                    }
+
+                    let aspect_options = [
+                        ("1080x1920", "9:16 Vertical (1080×1920)"),
+                        ("1920x1080", "16:9 Landscape (1920×1080)"),
+                        ("1080x1080", "1:1 Square (1080×1080)"),
+                        ("1280x720", "16:9 Fast HD (1280×720)"),
+                    ];
+                    let prev_aspect = app.aspect_buf.clone();
+                    egui::ComboBox::from_id_salt("aspect_select")
+                        .selected_text(
+                            aspect_options
+                                .iter()
+                                .find(|(v, _)| *v == app.aspect_buf)
+                                .map(|(_, l)| *l)
+                                .unwrap_or(&app.aspect_buf),
+                        )
+                        .width(160.0)
+                        .show_ui(ui, |ui| {
+                            for (val, lbl) in aspect_options {
+                                ui.selectable_value(&mut app.aspect_buf, val.to_string(), lbl);
+                            }
+                        });
+                    if app.aspect_buf != prev_aspect {
+                        if let Some((w, h)) = app.aspect_buf.split_once('x') {
+                            if let (Ok(wi), Ok(hi)) = (w.parse::<u32>(), h.parse::<u32>()) {
+                                app.api.send(ApiCommand::ConfigureProject(json!({
+                                    "width": wi,
+                                    "height": hi
+                                })));
+                            }
+                        }
+                    }
+
+                    ui.separator();
+
+                    if app.ws_connected {
+                        badge(
+                            ui,
+                            &format!("● MCP v{}", app.summary.project.version),
+                            ACCENT_GREEN,
+                        );
+                    } else {
+                        badge(ui, "○ SYNC", ACCENT_AMBER);
+                    }
                 }
 
                 // Right-aligned actions
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    if ui.add(primary_button("🎬 Render MP4")).clicked() {
-                        app.show_render_modal = true;
-                    }
-                    if ui.button("Clear").on_hover_text("Clear timeline").clicked() {
-                        app.api.send(ApiCommand::ClearTimeline);
-                    }
-                    if ui.button("↪ Redo").on_hover_text("Ctrl+Y").clicked() {
-                        app.api.send(ApiCommand::Redo);
-                    }
-                    if ui.button("↩ Undo").on_hover_text("Ctrl+Z").clicked() {
-                        app.api.send(ApiCommand::Undo);
+                    if app.ui_mode == UiMode::Pro {
+                        if ui.add(primary_button("🎬 Render MP4")).clicked() {
+                            app.show_render_modal = true;
+                        }
+                        if ui.button("Clear").on_hover_text("Clear timeline").clicked() {
+                            app.api.send(ApiCommand::ClearTimeline);
+                        }
+                        if ui.button("↪").on_hover_text("Redo (Ctrl+Y)").clicked() {
+                            app.api.send(ApiCommand::Redo);
+                        }
+                        if ui.button("↩").on_hover_text("Undo (Ctrl+Z)").clicked() {
+                            app.api.send(ApiCommand::Undo);
+                        }
+                        ui.separator();
                     }
 
-                    ui.separator();
+                    let civ_active = app
+                        .gen_status
+                        .civitai
+                        .downloads
+                        .iter()
+                        .find(|d| d.status == "downloading");
+                    let civ_lbl = if let Some(d) = civ_active {
+                        format!("🌐 CivitAI ({:.0}%)", d.pct)
+                    } else {
+                        "🌐 CivitAI".to_string()
+                    };
+                    if ui
+                        .button(civ_lbl)
+                        .on_hover_text("Search & 1-click install community checkpoints & LoRAs from CivitAI")
+                        .clicked()
+                    {
+                        app.show_civitai_modal = true;
+                        app.api.send(ApiCommand::RefreshGenStatus);
+                    }
 
                     let ready_cnt = app.gen_status.models.values().filter(|m| m.ready).count();
                     let total_cnt = app.gen_status.models.len();
@@ -122,6 +167,9 @@ pub fn render_main_layout(app: &mut ClipForgeApp, ctx: &egui::Context) {
             });
         });
 
+    if app.ui_mode == UiMode::Simple {
+        simple::render_simple_workspace(app, ctx);
+    } else {
     // 2. Bottom Multi-Track Timeline Panel
     egui::TopBottomPanel::bottom("timeline_panel")
         .resizable(true)
@@ -293,6 +341,7 @@ pub fn render_main_layout(app: &mut ClipForgeApp, ctx: &egui::Context) {
                     });
                 });
         });
+    } // end Pro NLE mode
 
     // 6. Modals
     modals::render_all_modals(app, ctx);

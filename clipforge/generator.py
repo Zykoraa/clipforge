@@ -37,7 +37,16 @@ COMFYUI_PYTHON = resolve_comfyui_python(COMFYUI_DIR) or (
 )
 
 VideoModelId = Literal["wan22_5b", "wan22_i2v", "wan22_t2v", "wan22_s2v", "ltx23"]
-ImageModelId = Literal["flux2_klein", "flux2_klein_9b", "z_image_turbo", "qwen_edit", "qwen_edit_2511"]
+ImageModelId = Literal[
+    "flux2_klein",
+    "flux2_klein_9b",
+    "z_image_turbo",
+    "krea2_turbo",
+    "chroma_hd",
+    "illustrious_xl",
+    "qwen_edit",
+    "qwen_edit_2511",
+]
 GeneratorModelId = Literal[
     "wan22_5b",
     "wan22_i2v",
@@ -47,6 +56,9 @@ GeneratorModelId = Literal[
     "flux2_klein",
     "flux2_klein_9b",
     "z_image_turbo",
+    "krea2_turbo",
+    "chroma_hd",
+    "illustrious_xl",
     "qwen_edit",
     "qwen_edit_2511",
     "upscale_ultrasharp",
@@ -545,6 +557,106 @@ MODEL_SPECS: dict[str, dict[str, Any]] = {
             },
         ],
     },
+    "krea2_turbo": {
+        "kind": "image",
+        "display_name": "Krea 2 Turbo (6-Step Editorial Realism)",
+        "badge": "6-STEP FLAGSHIP",
+        "description": "CivitAI's hottest photorealistic 6-step flagship with native reference-image editing & cinematic skin lighting. Shares Qwen VAE.",
+        "requires_image": False,
+        "supports_image": True,
+        "supports_second_image": False,
+        "supports_audio": False,
+        "default_width": 1024,
+        "default_height": 1024,
+        "default_steps": 6,
+        "default_cfg": 1.0,
+        "dim_step": 16,
+        "files": [
+            {
+                "repo_id": "Comfy-Org/Krea-2",
+                "remote_path": "diffusion_models/krea2_turbo_fp8_scaled.safetensors",
+                "local_rel": "models/diffusion_models/krea2_turbo_fp8_scaled.safetensors",
+                "alt_local_rels": ["models/diffusion_models/krea2_fp8_scaled.safetensors"],
+                "size_gb": 12.24,
+            },
+            {
+                "repo_id": "Comfy-Org/Krea-2",
+                "remote_path": "text_encoders/qwen3vl_4b_fp8_scaled.safetensors",
+                "local_rel": "models/text_encoders/qwen3vl_4b_fp8_scaled.safetensors",
+                "size_gb": 4.88,
+            },
+            {
+                "repo_id": "Comfy-Org/Krea-2",
+                "remote_path": "vae/qwen_image_vae.safetensors",
+                "local_rel": "models/vae/qwen_image_vae.safetensors",
+                "size_gb": 0.24,
+            },
+        ],
+    },
+    "chroma_hd": {
+        "kind": "image",
+        "display_name": "Chroma1-HD (Uncensored Open Realism)",
+        "badge": "UNCENSORED HD",
+        "description": "Completely uncensored open Apache-2.0 Flux-architecture model with true negative prompts & strong anatomy. Shares ae.safetensors.",
+        "requires_image": False,
+        "supports_image": True,
+        "supports_second_image": False,
+        "supports_audio": False,
+        "default_width": 1024,
+        "default_height": 1024,
+        "default_steps": 24,
+        "default_cfg": 4.0,
+        "dim_step": 16,
+        "files": [
+            {
+                "repo_id": "silveroxides/Chroma1-HD-GGUF",
+                "remote_path": "Chroma1-HD-Q4_K_M.gguf",
+                "local_rel": "models/diffusion_models/Chroma1-HD-Q4_K_M.gguf",
+                "alt_local_rels": [
+                    "models/diffusion_models/Chroma1-HD-fp8.safetensors",
+                    "models/diffusion_models/Chroma1-HD.safetensors",
+                ],
+                "size_gb": 5.18,
+            },
+            {
+                "repo_id": "comfyanonymous/flux_text_encoders",
+                "remote_path": "t5xxl_fp8_e4m3fn_scaled.safetensors",
+                "local_rel": "models/text_encoders/t5xxl_fp8_e4m3fn_scaled.safetensors",
+                "alt_local_rels": ["models/text_encoders/t5xxl_fp16.safetensors"],
+                "size_gb": 4.80,
+            },
+            {
+                "repo_id": "Comfy-Org/z_image_turbo",
+                "remote_path": "split_files/vae/ae.safetensors",
+                "local_rel": "models/vae/ae.safetensors",
+                "size_gb": 0.31,
+            },
+        ],
+    },
+    "illustrious_xl": {
+        "kind": "image",
+        "display_name": "Illustrious XL v2.0 (Anime, 2.5D & CivitAI)",
+        "badge": "ANIME / 2.5D",
+        "description": "Single-file SDXL/Illustrious engine unlocking 50,000+ CivitAI anime, 2.5D & semi-real checkpoints and LoRAs.",
+        "requires_image": False,
+        "supports_image": True,
+        "supports_second_image": False,
+        "supports_audio": False,
+        "default_width": 1024,
+        "default_height": 1024,
+        "default_steps": 24,
+        "default_cfg": 5.5,
+        "dim_step": 8,
+        "files": [
+            {
+                "repo_id": "OnomaAIResearch/Illustrious-XL-v2.0",
+                "remote_path": "Illustrious-XL-v2.0.safetensors",
+                "local_rel": "models/checkpoints/Illustrious-XL-v2.0.safetensors",
+                "scan_dir": "models/checkpoints",
+                "size_gb": 6.46,
+            },
+        ],
+    },
     "qwen_edit": {
         "kind": "image",
         "display_name": "Qwen-Image-Edit 2509 (4-Step Multi-Photo)",
@@ -850,19 +962,29 @@ def resolve_auto_model(
     has_image2: bool = False,
     want_audio: bool = False,
     fast_draft: bool = False,
+    intent: str | None = None,
     comfy_dir: Path = COMFYUI_DIR,
 ) -> str:
     """Pick the highest-quality ready local model automatically based on inputs, intent, and installed weights."""
     avail = get_model_availability(comfy_dir)
+    intent_clean = (intent or "").strip().lower()
     if kind == "image":
-        if has_image1 and has_image2:
-            priority = ["qwen_edit_2511", "qwen_edit", "flux2_klein_9b", "flux2_klein", "z_image_turbo"]
+        if intent_clean == "anime":
+            priority = ["illustrious_xl", "chroma_hd", "z_image_turbo", "flux2_klein_9b", "flux2_klein"]
+        elif intent_clean == "uncensored":
+            priority = ["chroma_hd", "z_image_turbo", "krea2_turbo", "illustrious_xl", "flux2_klein_9b", "flux2_klein"]
+        elif intent_clean == "photo" and not has_image1:
+            priority = ["z_image_turbo", "krea2_turbo", "chroma_hd", "flux2_klein_9b", "flux2_klein"]
+        elif has_image1 and has_image2:
+            priority = ["qwen_edit_2511", "qwen_edit", "flux2_klein_9b", "flux2_klein", "krea2_turbo", "z_image_turbo"]
         elif has_image1:
-            priority = ["flux2_klein_9b", "flux2_klein", "qwen_edit_2511", "qwen_edit", "z_image_turbo"]
+            priority = ["flux2_klein_9b", "flux2_klein", "qwen_edit_2511", "qwen_edit", "krea2_turbo", "z_image_turbo"]
         else:
-            priority = ["z_image_turbo", "flux2_klein_9b", "flux2_klein"]
+            priority = ["z_image_turbo", "krea2_turbo", "flux2_klein_9b", "flux2_klein", "chroma_hd", "illustrious_xl"]
     else:
-        if want_audio:
+        if intent_clean == "talk":
+            priority = ["wan22_s2v", "wan22_i2v", "wan22_5b"]
+        elif want_audio or intent_clean == "audio_video":
             priority = ["ltx23", "wan22_i2v" if has_image1 else "wan22_t2v", "wan22_5b"]
         elif has_image1 and not fast_draft:
             priority = ["wan22_i2v", "wan22_5b", "ltx23"]
@@ -877,6 +999,77 @@ def resolve_auto_model(
                 continue
             return mid
     return priority[0]
+
+
+def get_starter_packs(comfy_dir: Path = COMFYUI_DIR) -> list[dict[str, Any]]:
+    """Return 1-click GPU-matched Starter Packs with deduplicated download sizes and readiness."""
+    vram_mb = int(detect_gpu_info().get("vram_mb") or 0)
+    avail = get_model_availability(comfy_dir)
+
+    pack_defs = [
+        {
+            "id": "fast_8gb",
+            "title": "Fast Everyday Creator Pack (8–12 GB GPU)",
+            "badge": "RECOMMENDED 8GB+" if vram_mb < 14000 else "FAST COMPACT",
+            "description": "Z-Image-Turbo (photorealism + crisp text) + FLUX.2 Klein 4B (friend photo edits) + 4x-UltraSharp HD + RIFE 32fps.",
+            "model_ids": ["z_image_turbo", "flux2_klein", "upscale_ultrasharp", "rife_vfi"],
+            "recommended": vram_mb < 14000,
+        },
+        {
+            "id": "hq_16gb",
+            "title": "Pro Studio Realism + Video Pack (16 GB+ GPU)",
+            "badge": "RECOMMENDED 16GB+" if vram_mb >= 14000 else "PRO QUALITY",
+            "description": "Z-Image-Turbo + FLUX.2 Klein 9B (pro friend edits) + Wan 2.2 14B I2V (photo animation) + 4x-UltraSharp + RIFE 32fps.",
+            "model_ids": ["z_image_turbo", "flux2_klein_9b", "wan22_i2v", "upscale_ultrasharp", "rife_vfi"],
+            "recommended": vram_mb >= 14000,
+        },
+        {
+            "id": "anime_civitai",
+            "title": "Anime, 2.5D & CivitAI Pack (Illustrious XL)",
+            "badge": "CIVITAI FAVORITE",
+            "description": "Single-file Illustrious XL v2.0 + 4x-UltraSharp HD — unlocks thousands of CivitAI anime & 2.5D LoRAs/checkpoints.",
+            "model_ids": ["illustrious_xl", "upscale_ultrasharp"],
+            "recommended": False,
+        },
+    ]
+
+    out: list[dict[str, Any]] = []
+    for p in pack_defs:
+        seen_rels: set[str] = set()
+        missing_gb = 0.0
+        total_gb = 0.0
+        ready_count = 0
+        downloading = False
+        for mid in p["model_ids"]:
+            spec = MODEL_SPECS.get(mid)
+            if not spec:
+                continue
+            info = avail.get(mid, {})
+            if info.get("ready"):
+                ready_count += 1
+            dl = info.get("download")
+            if isinstance(dl, dict) and dl.get("status") == "downloading":
+                downloading = True
+            for f in spec["files"]:
+                rel = f["local_rel"]
+                if rel in seen_rels or f.get("optional"):
+                    continue
+                seen_rels.add(rel)
+                total_gb += float(f["size_gb"])
+                if _resolve_existing_slot_file(f, comfy_dir) is None:
+                    missing_gb += float(f["size_gb"])
+        out.append(
+            {
+                **p,
+                "ready": ready_count == len(p["model_ids"]),
+                "ready_count": ready_count,
+                "total_models": len(p["model_ids"]),
+                "total_gb": round(total_gb, 2),
+                "missing_gb": round(missing_gb, 2),
+                "downloading": downloading,
+            }
+        )
+    return out
 
 
 def write_asset_metadata(asset_path: Path, meta: dict[str, Any]) -> Path:
@@ -917,9 +1110,77 @@ def _classify_lora_family(filename: str) -> str:
         return "flux"
     if "qwen" in low:
         return "qwen"
-    if "z_image" in low or "z-image" in low or "lumina" in low:
+    if "krea" in low:
+        return "krea2"
+    if "chroma" in low:
+        return "chroma"
+    if any(k in low for k in ("illustrious", "pony", "noobai", "sdxl", "janku")):
+        return "illustrious"
+    if any(k in low for k in ("z_image", "z-image", "zimage", "zit", "lumina", "zenith")):
         return "z_image"
     return "universal"
+
+
+def _classify_checkpoint_family(filename: str, folder: str) -> tuple[str, list[str]]:
+    low = filename.lower()
+    if any(k in low for k in ("z_image", "z-image", "zimage", "zit", "zenith", "lumina")):
+        return "z_image", ["z_image_turbo"]
+    if "krea" in low:
+        return "krea2", ["krea2_turbo"]
+    if "chroma" in low:
+        return "chroma", ["chroma_hd"]
+    if "klein" in low or "flux" in low:
+        return "flux", ["flux2_klein_9b", "flux2_klein"]
+    if "qwen" in low:
+        return "qwen", ["qwen_edit_2511", "qwen_edit"]
+    if "wan" in low:
+        return "wan", ["wan22_i2v", "wan22_t2v"]
+    if "ltx" in low:
+        return "ltx", ["ltx23"]
+    if folder == "checkpoints" or any(k in low for k in ("illustrious", "pony", "noobai", "sdxl", "janku", "wai", "biglove")):
+        return "illustrious", ["illustrious_xl"]
+    return "z_image", ["z_image_turbo", "krea2_turbo", "chroma_hd"]
+
+
+def list_custom_checkpoints(comfy_dir: Path = COMFYUI_DIR) -> list[dict[str, Any]]:
+    """Auto-discover community CivitAI checkpoints and diffusion models across checkpoints/ & diffusion_models/."""
+    builtin_names: set[str] = set()
+    for spec in MODEL_SPECS.values():
+        for f in spec["files"]:
+            builtin_names.add(Path(f["local_rel"]).name.lower())
+            for alt in f.get("alt_local_rels", ()):
+                builtin_names.add(Path(alt).name.lower())
+
+    out: list[dict[str, Any]] = []
+    for folder in ("checkpoints", "diffusion_models"):
+        root = comfy_dir / "models" / folder
+        if not root.exists():
+            continue
+        for p in sorted(root.rglob("*")):
+            if not p.is_file() or p.suffix.lower() not in (".safetensors", ".gguf", ".ckpt"):
+                continue
+            try:
+                sz = p.stat().st_size
+            except OSError:
+                continue
+            if sz < 50 * 1024 * 1024:
+                continue
+            rel_name = p.relative_to(root).as_posix()
+            family, compat = _classify_checkpoint_family(rel_name, folder)
+            out.append(
+                {
+                    "name": rel_name,
+                    "filename": p.name,
+                    "folder": folder,
+                    "family": family,
+                    "compatible_models": compat,
+                    "size_gb": round(sz / (1024**3), 2),
+                    "is_builtin": p.name.lower() in builtin_names,
+                }
+            )
+    # Community/custom checkpoints first so CivitAI installs stand out cleanly
+    out.sort(key=lambda x: (x["is_builtin"], x["name"].lower()))
+    return out
 
 
 def _load_lora_triggers(triggers_file: Path | None) -> dict[str, str]:
@@ -1174,7 +1435,7 @@ def apply_prompt_preset(
 
 
 def _resolve_existing_slot_file(file_spec: dict[str, Any], comfy_dir: Path) -> Path | None:
-    """Return an existing file on disk satisfying a MODEL_SPECS file slot (primary or alt safetensors/GGUF)."""
+    """Return an existing file on disk satisfying a MODEL_SPECS file slot (primary, alt, or scan_dir checkpoint)."""
     primary = comfy_dir / file_spec["local_rel"]
     alts = [comfy_dir / rel for rel in file_spec.get("alt_local_rels", ())]
 
@@ -1184,6 +1445,17 @@ def _resolve_existing_slot_file(file_spec: dict[str, Any], comfy_dir: Path) -> P
     for cand in ordered:
         if cand.exists() and cand.stat().st_size > 1024 * 1024:
             return cand
+    scan_dir = file_spec.get("scan_dir")
+    if scan_dir:
+        sroot = comfy_dir / scan_dir
+        if sroot.exists():
+            cands = [
+                p
+                for p in sorted(sroot.rglob("*"))
+                if p.is_file() and p.suffix.lower() in (".safetensors", ".ckpt") and p.stat().st_size > 100 * 1024 * 1024
+            ]
+            if cands:
+                return cands[0]
     return None
 
 
@@ -2193,15 +2465,21 @@ def build_z_image_turbo_workflow(
     unet_name: str = "z-image-turbo-Q4_K_M.gguf",
     clip_name: str = "qwen_3_4b_fp8_mixed.safetensors",
     loras: list[dict[str, Any]] | None = None,
+    use_checkpoint_loader: bool = False,
 ) -> dict[str, Any]:
-    """Z-Image-Turbo (GGUF or BF16 safetensors): 8-step hyper-real photography, crisp text, img2img, & mask inpaint."""
+    """Z-Image-Turbo (GGUF, BF16 safetensors, or CivitAI fine-tune): 8-step hyper-real photo, crisp text, img2img & inpaint."""
     w = snap_dim(width, 16, minimum=512, maximum=1536)
     h = snap_dim(height, 16, minimum=512, maximum=1536)
     actual_seed = random.randint(1, 2**50) if seed < 0 else int(seed)
     den = max(0.15, min(1.0, float(denoise)))
 
+    loader_node = (
+        {"class_type": "CheckpointLoaderSimple", "inputs": {"ckpt_name": unet_name}}
+        if use_checkpoint_loader
+        else _unet_loader_node(unet_name)
+    )
     graph: dict[str, Any] = {
-        "1": _unet_loader_node(unet_name),
+        "1": loader_node,
         "2": {"class_type": "ModelSamplingAuraFlow", "inputs": {"model": ["1", 0], "shift": 3.0}},
         "3": {
             "class_type": "CLIPLoader",
@@ -2266,6 +2544,322 @@ def build_z_image_turbo_workflow(
             }
             graph["10"]["inputs"]["images"] = ["9b", 0]
         graph["8"]["inputs"]["latent_image"] = latent_ref
+    return graph
+
+
+def build_krea2_workflow(
+    prompt: str,
+    image_filename: str | None = None,
+    mask_filename: str | None = None,
+    negative_prompt: str = "",
+    width: int = 1024,
+    height: int = 1024,
+    steps: int = 6,
+    cfg: float = 1.0,
+    denoise: float = 1.0,
+    seed: int = -1,
+    filename_prefix: str = "clipforge/krea2_turbo",
+    unet_name: str = "krea2_turbo_fp8_scaled.safetensors",
+    clip_name: str = "qwen3vl_4b_fp8_scaled.safetensors",
+    loras: list[dict[str, Any]] | None = None,
+    use_checkpoint_loader: bool = False,
+) -> dict[str, Any]:
+    """Krea 2 Turbo (6-step native ComfyUI): editorial realism, ReferenceLatent editing, img2img, & mask inpaint."""
+    w = snap_dim(width, 16, minimum=512, maximum=1536)
+    h = snap_dim(height, 16, minimum=512, maximum=1536)
+    actual_seed = random.randint(1, 2**50) if seed < 0 else int(seed)
+    den = max(0.15, min(1.0, float(denoise)))
+
+    loader_node = (
+        {"class_type": "CheckpointLoaderSimple", "inputs": {"ckpt_name": unet_name}}
+        if use_checkpoint_loader
+        else _unet_loader_node(unet_name)
+    )
+    graph: dict[str, Any] = {
+        "1": loader_node,
+        "2": {
+            "class_type": "CLIPLoader",
+            "inputs": {"clip_name": clip_name, "type": "krea2", "device": "default"},
+        },
+        "3": {"class_type": "VAELoader", "inputs": {"vae_name": "qwen_image_vae.safetensors"}},
+        "4": {"class_type": "CLIPTextEncode", "inputs": {"clip": ["2", 0], "text": prompt}},
+        "5": {"class_type": "CLIPTextEncode", "inputs": {"clip": ["2", 0], "text": negative_prompt}},
+        "6": {"class_type": "EmptySD3LatentImage", "inputs": {"width": w, "height": h, "batch_size": 1}},
+        "8": {
+            "class_type": "KSampler",
+            "inputs": {
+                "model": ["1", 0],
+                "seed": actual_seed,
+                "steps": max(4, min(30, int(steps))),
+                "cfg": float(cfg),
+                "sampler_name": "euler",
+                "scheduler": "simple",
+                "positive": ["4", 0],
+                "negative": ["5", 0],
+                "latent_image": ["6", 0],
+                "denoise": den,
+            },
+        },
+        "9": {"class_type": "VAEDecode", "inputs": {"samples": ["8", 0], "vae": ["3", 0]}},
+        "10": {"class_type": "SaveImage", "inputs": {"images": ["9", 0], "filename_prefix": filename_prefix}},
+    }
+
+    model_ref: list[Any] = _attach_user_loras(graph, ["1", 0], loras, prefix="ulora")
+    pos_ref: list[Any] = ["4", 0]
+    neg_ref: list[Any] = ["5", 0]
+
+    if image_filename:
+        graph["7"] = {"class_type": "LoadImage", "inputs": {"image": image_filename}}
+        graph["7s"] = {
+            "class_type": "ImageScale",
+            "inputs": {"image": ["7", 0], "upscale_method": "lanczos", "width": w, "height": h, "crop": "center"},
+        }
+        graph["7e"] = {"class_type": "VAEEncode", "inputs": {"pixels": ["7s", 0], "vae": ["3", 0]}}
+        # Krea 2 natively supports ReferenceLatent conditioning for friend/scene editing!
+        graph["7r"] = {"class_type": "ReferenceLatent", "inputs": {"conditioning": pos_ref, "latent": ["7e", 0]}}
+        graph["7rb"] = {"class_type": "ReferenceLatent", "inputs": {"conditioning": neg_ref, "latent": ["7e", 0]}}
+        pos_ref = ["7r", 0]
+        neg_ref = ["7rb", 0]
+
+        if mask_filename or den < 0.99:
+            latent_ref: list[Any] = ["7e", 0]
+            if mask_filename:
+                graph["1d"] = {"class_type": "DifferentialDiffusion", "inputs": {"model": model_ref, "strength": 1.0}}
+                model_ref = ["1d", 0]
+                graph["m1"] = {"class_type": "LoadImage", "inputs": {"image": mask_filename}}
+                graph["m2"] = {
+                    "class_type": "ImageScale",
+                    "inputs": {"image": ["m1", 0], "upscale_method": "bilinear", "width": w, "height": h, "crop": "center"},
+                }
+                graph["m3"] = {"class_type": "ImageToMask", "inputs": {"image": ["m2", 0], "channel": "red"}}
+                graph["m4"] = {"class_type": "GrowMask", "inputs": {"mask": ["m3", 0], "expand": 8, "tapered_corners": True}}
+                graph["m5"] = {"class_type": "SetLatentNoiseMask", "inputs": {"samples": ["7e", 0], "mask": ["m4", 0]}}
+                latent_ref = ["m5", 0]
+                graph["9b"] = {
+                    "class_type": "ImageCompositeMasked",
+                    "inputs": {
+                        "destination": ["7s", 0],
+                        "source": ["9", 0],
+                        "x": 0,
+                        "y": 0,
+                        "resize_source": True,
+                        "mask": ["m4", 0],
+                    },
+                }
+                graph["10"]["inputs"]["images"] = ["9b", 0]
+            graph["8"]["inputs"]["latent_image"] = latent_ref
+
+    graph["8"]["inputs"]["model"] = model_ref
+    graph["8"]["inputs"]["positive"] = pos_ref
+    graph["8"]["inputs"]["negative"] = neg_ref
+    return graph
+
+
+def build_chroma_workflow(
+    prompt: str,
+    image_filename: str | None = None,
+    mask_filename: str | None = None,
+    negative_prompt: str = DEFAULT_NEGATIVE_PROMPT,
+    width: int = 1024,
+    height: int = 1024,
+    steps: int = 24,
+    cfg: float = 4.0,
+    denoise: float = 1.0,
+    seed: int = -1,
+    filename_prefix: str = "clipforge/chroma_hd",
+    unet_name: str = "Chroma1-HD-Q4_K_M.gguf",
+    clip_name: str = "t5xxl_fp8_e4m3fn_scaled.safetensors",
+    loras: list[dict[str, Any]] | None = None,
+    use_checkpoint_loader: bool = False,
+) -> dict[str, Any]:
+    """Chroma1-HD (uncensored open Flux-family): full negative prompts, img2img variations, & mask inpaint."""
+    w = snap_dim(width, 16, minimum=512, maximum=1536)
+    h = snap_dim(height, 16, minimum=512, maximum=1536)
+    actual_seed = random.randint(1, 2**50) if seed < 0 else int(seed)
+    den = max(0.15, min(1.0, float(denoise)))
+
+    loader_node = (
+        {"class_type": "CheckpointLoaderSimple", "inputs": {"ckpt_name": unet_name}}
+        if use_checkpoint_loader
+        else _unet_loader_node(unet_name)
+    )
+    graph: dict[str, Any] = {
+        "1": loader_node,
+        "2": {"class_type": "ModelSamplingAuraFlow", "inputs": {"model": ["1", 0], "shift": 1.0}},
+        "3": {
+            "class_type": "CLIPLoader",
+            "inputs": {"clip_name": clip_name, "type": "chroma", "device": "default"},
+        },
+        "4": {"class_type": "VAELoader", "inputs": {"vae_name": "ae.safetensors"}},
+        "5": {"class_type": "CLIPTextEncode", "inputs": {"clip": ["3", 0], "text": prompt}},
+        "6": {"class_type": "CLIPTextEncode", "inputs": {"clip": ["3", 0], "text": negative_prompt}},
+        "7": {"class_type": "EmptySD3LatentImage", "inputs": {"width": w, "height": h, "batch_size": 1}},
+        "8": {
+            "class_type": "KSampler",
+            "inputs": {
+                "model": ["2", 0],
+                "seed": actual_seed,
+                "steps": max(8, min(40, int(steps))),
+                "cfg": float(cfg),
+                "sampler_name": "euler",
+                "scheduler": "simple",
+                "positive": ["5", 0],
+                "negative": ["6", 0],
+                "latent_image": ["7", 0],
+                "denoise": den,
+            },
+        },
+        "9": {"class_type": "VAEDecode", "inputs": {"samples": ["8", 0], "vae": ["4", 0]}},
+        "10": {"class_type": "SaveImage", "inputs": {"images": ["9", 0], "filename_prefix": filename_prefix}},
+    }
+
+    if loras:
+        graph["2"]["inputs"]["model"] = _attach_user_loras(graph, ["1", 0], loras, prefix="ulora")
+
+    if image_filename and (mask_filename or den < 0.99):
+        graph["7a"] = {"class_type": "LoadImage", "inputs": {"image": image_filename}}
+        graph["7s"] = {
+            "class_type": "ImageScale",
+            "inputs": {"image": ["7a", 0], "upscale_method": "lanczos", "width": w, "height": h, "crop": "center"},
+        }
+        graph["7e"] = {"class_type": "VAEEncode", "inputs": {"pixels": ["7s", 0], "vae": ["4", 0]}}
+        latent_ref: list[Any] = ["7e", 0]
+        if mask_filename:
+            graph["2d"] = {"class_type": "DifferentialDiffusion", "inputs": {"model": ["2", 0], "strength": 1.0}}
+            graph["8"]["inputs"]["model"] = ["2d", 0]
+            graph["m1"] = {"class_type": "LoadImage", "inputs": {"image": mask_filename}}
+            graph["m2"] = {
+                "class_type": "ImageScale",
+                "inputs": {"image": ["m1", 0], "upscale_method": "bilinear", "width": w, "height": h, "crop": "center"},
+            }
+            graph["m3"] = {"class_type": "ImageToMask", "inputs": {"image": ["m2", 0], "channel": "red"}}
+            graph["m4"] = {"class_type": "GrowMask", "inputs": {"mask": ["m3", 0], "expand": 8, "tapered_corners": True}}
+            graph["m5"] = {"class_type": "SetLatentNoiseMask", "inputs": {"samples": ["7e", 0], "mask": ["m4", 0]}}
+            latent_ref = ["m5", 0]
+            graph["9b"] = {
+                "class_type": "ImageCompositeMasked",
+                "inputs": {
+                    "destination": ["7s", 0],
+                    "source": ["9", 0],
+                    "x": 0,
+                    "y": 0,
+                    "resize_source": True,
+                    "mask": ["m4", 0],
+                },
+            }
+            graph["10"]["inputs"]["images"] = ["9b", 0]
+        graph["8"]["inputs"]["latent_image"] = latent_ref
+    return graph
+
+
+def build_illustrious_xl_workflow(
+    prompt: str,
+    image_filename: str | None = None,
+    mask_filename: str | None = None,
+    negative_prompt: str = (
+        "lowres, bad anatomy, bad hands, text, error, missing finger, extra digits, fewer digits, cropped, "
+        "worst quality, low quality, low score, bad score, average score, signature, watermark, username, blurry"
+    ),
+    width: int = 1024,
+    height: int = 1024,
+    steps: int = 24,
+    cfg: float = 5.5,
+    denoise: float = 1.0,
+    seed: int = -1,
+    filename_prefix: str = "clipforge/illustrious_xl",
+    ckpt_name: str = "Illustrious-XL-v2.0.safetensors",
+    loras: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Illustrious XL / SDXL single-checkpoint graph with CLIP skip -2, full model+CLIP LoRA chaining, img2img & inpaint."""
+    w = snap_dim(width, 8, minimum=512, maximum=1536)
+    h = snap_dim(height, 8, minimum=512, maximum=1536)
+    actual_seed = random.randint(1, 2**50) if seed < 0 else int(seed)
+    den = max(0.15, min(1.0, float(denoise)))
+
+    graph: dict[str, Any] = {
+        "1": {"class_type": "CheckpointLoaderSimple", "inputs": {"ckpt_name": ckpt_name}},
+        "2": {"class_type": "CLIPSetLastLayer", "inputs": {"clip": ["1", 1], "stop_at_clip_layer": -2}},
+        "3": {"class_type": "CLIPTextEncode", "inputs": {"clip": ["2", 0], "text": prompt}},
+        "4": {"class_type": "CLIPTextEncode", "inputs": {"clip": ["2", 0], "text": negative_prompt}},
+        "5": {"class_type": "EmptyLatentImage", "inputs": {"width": w, "height": h, "batch_size": 1}},
+        "6": {
+            "class_type": "KSampler",
+            "inputs": {
+                "model": ["1", 0],
+                "seed": actual_seed,
+                "steps": max(8, min(50, int(steps))),
+                "cfg": float(cfg),
+                "sampler_name": "euler_ancestral",
+                "scheduler": "normal",
+                "positive": ["3", 0],
+                "negative": ["4", 0],
+                "latent_image": ["5", 0],
+                "denoise": den,
+            },
+        },
+        "7": {"class_type": "VAEDecode", "inputs": {"samples": ["6", 0], "vae": ["1", 2]}},
+        "8": {"class_type": "SaveImage", "inputs": {"images": ["7", 0], "filename_prefix": filename_prefix}},
+    }
+
+    # For SDXL/Illustrious, chain full LoraLoader (affects both UNET & CLIP for style/character LoRAs)
+    model_ref: list[Any] = ["1", 0]
+    clip_ref: list[Any] = ["2", 0]
+    if loras:
+        for idx, item in enumerate(loras[:3]):
+            lname = str(item.get("name") or "").strip()
+            if not lname:
+                continue
+            strength = max(-2.0, min(2.0, float(item.get("strength", 0.8))))
+            nid = f"ulora_{idx}"
+            graph[nid] = {
+                "class_type": "LoraLoader",
+                "inputs": {
+                    "model": model_ref,
+                    "clip": clip_ref,
+                    "lora_name": lname,
+                    "strength_model": strength,
+                    "strength_clip": strength,
+                },
+            }
+            model_ref = [nid, 0]
+            clip_ref = [nid, 1]
+    graph["3"]["inputs"]["clip"] = clip_ref
+    graph["4"]["inputs"]["clip"] = clip_ref
+    graph["6"]["inputs"]["model"] = model_ref
+
+    if image_filename and (mask_filename or den < 0.99):
+        graph["5a"] = {"class_type": "LoadImage", "inputs": {"image": image_filename}}
+        graph["5s"] = {
+            "class_type": "ImageScale",
+            "inputs": {"image": ["5a", 0], "upscale_method": "lanczos", "width": w, "height": h, "crop": "center"},
+        }
+        graph["5e"] = {"class_type": "VAEEncode", "inputs": {"pixels": ["5s", 0], "vae": ["1", 2]}}
+        latent_ref: list[Any] = ["5e", 0]
+        if mask_filename:
+            graph["1d"] = {"class_type": "DifferentialDiffusion", "inputs": {"model": model_ref, "strength": 1.0}}
+            graph["6"]["inputs"]["model"] = ["1d", 0]
+            graph["m1"] = {"class_type": "LoadImage", "inputs": {"image": mask_filename}}
+            graph["m2"] = {
+                "class_type": "ImageScale",
+                "inputs": {"image": ["m1", 0], "upscale_method": "bilinear", "width": w, "height": h, "crop": "center"},
+            }
+            graph["m3"] = {"class_type": "ImageToMask", "inputs": {"image": ["m2", 0], "channel": "red"}}
+            graph["m4"] = {"class_type": "GrowMask", "inputs": {"mask": ["m3", 0], "expand": 8, "tapered_corners": True}}
+            graph["m5"] = {"class_type": "SetLatentNoiseMask", "inputs": {"samples": ["5e", 0], "mask": ["m4", 0]}}
+            latent_ref = ["m5", 0]
+            graph["7b"] = {
+                "class_type": "ImageCompositeMasked",
+                "inputs": {
+                    "destination": ["5s", 0],
+                    "source": ["7", 0],
+                    "x": 0,
+                    "y": 0,
+                    "resize_source": True,
+                    "mask": ["m4", 0],
+                },
+            }
+            graph["8"]["inputs"]["images"] = ["7b", 0]
+        graph["6"]["inputs"]["latent_image"] = latent_ref
     return graph
 
 
@@ -2882,6 +3476,7 @@ def generate_image_via_comfyui(
     seed: int = -1,
     batch_size: int = 1,
     loras: list[dict[str, Any]] | None = None,
+    checkpoint_override: str | None = None,
     parent_image: str | None = None,
     base_url: str = COMFYUI_URL,
     comfy_dir: Path = COMFYUI_DIR,
@@ -2894,9 +3489,19 @@ def generate_image_via_comfyui(
 ) -> dict[str, Any]:
     """Queue 1-4 image generation, iterative edit, pose-transfer, img2img variation, or mask-inpaint runs."""
     if model not in MODEL_SPECS or MODEL_SPECS[model]["kind"] != "image":
-        raise ValueError(
-            f"Unknown image model '{model}'. Valid: flux2_klein, flux2_klein_9b, z_image_turbo, qwen_edit, qwen_edit_2511"
-        )
+        valid_imgs = ", ".join(k for k, v in MODEL_SPECS.items() if v["kind"] == "image")
+        raise ValueError(f"Unknown image model '{model}'. Valid: {valid_imgs}")
+
+    # Validate optional community checkpoint override against discovered local checkpoints (no traversal)
+    resolved_ckpt: dict[str, Any] | None = None
+    if checkpoint_override and checkpoint_override.strip():
+        want_ckpt = checkpoint_override.strip()
+        for ck in list_custom_checkpoints(comfy_dir):
+            if ck["name"] == want_ckpt or ck["filename"] == want_ckpt:
+                resolved_ckpt = ck
+                break
+        if resolved_ckpt is None:
+            raise ValueError(f"Community checkpoint '{want_ckpt}' not found in ComfyUI/models/checkpoints or diffusion_models.")
 
     spec = MODEL_SPECS[model]
     if spec["requires_image"] and not image_path:
@@ -2918,7 +3523,8 @@ def generate_image_via_comfyui(
     elif not is_comfyui_reachable(base_url):
         raise RuntimeError(f"ComfyUI is not running at {base_url}")
 
-    _maybe_unload_on_model_switch(model, base_url=base_url)
+    switch_key = f"{model}:{resolved_ckpt['name']}" if resolved_ckpt else model
+    _maybe_unload_on_model_switch(switch_key, base_url=base_url)
 
     den = max(0.15, min(1.0, float(denoise)))
     up_img1: str | None = None
@@ -2979,6 +3585,7 @@ def generate_image_via_comfyui(
         run_id = uuid.uuid4().hex[:8]
 
         if model in ("flux2_klein", "flux2_klein_9b"):
+            unet_f = resolved_ckpt["name"] if (resolved_ckpt and resolved_ckpt["folder"] == "diffusion_models") else _resolve_model_slot_filename(model, 0, comfy_dir)
             workflow = build_flux2_klein_workflow(
                 prompt=full_prompt,
                 image_filename=up_img1,
@@ -2992,11 +3599,13 @@ def generate_image_via_comfyui(
                 denoise=den,
                 seed=cur_seed,
                 filename_prefix=f"clipforge/{model}_{run_id}",
-                unet_name=_resolve_model_slot_filename(model, 0, comfy_dir),
+                unet_name=unet_f,
                 clip_name=_resolve_model_slot_filename(model, 1, comfy_dir),
                 loras=loras,
             )
         elif model == "z_image_turbo":
+            use_ckpt_ldr = bool(resolved_ckpt and resolved_ckpt["folder"] == "checkpoints")
+            unet_f = resolved_ckpt["name"] if resolved_ckpt else _resolve_model_slot_filename("z_image_turbo", 0, comfy_dir)
             workflow = build_z_image_turbo_workflow(
                 prompt=full_prompt,
                 image_filename=up_img1,
@@ -3009,8 +3618,70 @@ def generate_image_via_comfyui(
                 denoise=den,
                 seed=cur_seed,
                 filename_prefix=f"clipforge/z_image_{run_id}",
-                unet_name=_resolve_model_slot_filename("z_image_turbo", 0, comfy_dir),
+                unet_name=unet_f,
                 clip_name=_resolve_model_slot_filename("z_image_turbo", 1, comfy_dir),
+                loras=loras,
+                use_checkpoint_loader=use_ckpt_ldr,
+            )
+        elif model == "krea2_turbo":
+            use_ckpt_ldr = bool(resolved_ckpt and resolved_ckpt["folder"] == "checkpoints")
+            unet_f = resolved_ckpt["name"] if resolved_ckpt else _resolve_model_slot_filename("krea2_turbo", 0, comfy_dir)
+            workflow = build_krea2_workflow(
+                prompt=full_prompt,
+                image_filename=up_img1,
+                mask_filename=up_mask,
+                negative_prompt=negative_prompt,
+                width=use_w,
+                height=use_h,
+                steps=use_steps,
+                cfg=use_cfg,
+                denoise=den,
+                seed=cur_seed,
+                filename_prefix=f"clipforge/krea2_{run_id}",
+                unet_name=unet_f,
+                clip_name=_resolve_model_slot_filename("krea2_turbo", 1, comfy_dir),
+                loras=loras,
+                use_checkpoint_loader=use_ckpt_ldr,
+            )
+        elif model == "chroma_hd":
+            use_ckpt_ldr = bool(resolved_ckpt and resolved_ckpt["folder"] == "checkpoints")
+            unet_f = resolved_ckpt["name"] if resolved_ckpt else _resolve_model_slot_filename("chroma_hd", 0, comfy_dir)
+            workflow = build_chroma_workflow(
+                prompt=full_prompt,
+                image_filename=up_img1,
+                mask_filename=up_mask,
+                negative_prompt=negative_prompt or DEFAULT_NEGATIVE_PROMPT,
+                width=use_w,
+                height=use_h,
+                steps=use_steps,
+                cfg=use_cfg,
+                denoise=den,
+                seed=cur_seed,
+                filename_prefix=f"clipforge/chroma_{run_id}",
+                unet_name=unet_f,
+                clip_name=_resolve_model_slot_filename("chroma_hd", 1, comfy_dir),
+                loras=loras,
+                use_checkpoint_loader=use_ckpt_ldr,
+            )
+        elif model == "illustrious_xl":
+            ckpt_f = resolved_ckpt["name"] if (resolved_ckpt and resolved_ckpt["folder"] == "checkpoints") else _resolve_model_slot_filename("illustrious_xl", 0, comfy_dir)
+            ill_neg = negative_prompt or (
+                "lowres, bad anatomy, bad hands, text, error, missing finger, extra digits, fewer digits, cropped, "
+                "worst quality, low quality, low score, bad score, average score, signature, watermark, username, blurry"
+            )
+            workflow = build_illustrious_xl_workflow(
+                prompt=full_prompt,
+                image_filename=up_img1,
+                mask_filename=up_mask,
+                negative_prompt=ill_neg,
+                width=use_w,
+                height=use_h,
+                steps=use_steps,
+                cfg=use_cfg,
+                denoise=den,
+                seed=cur_seed,
+                filename_prefix=f"clipforge/illustrious_{run_id}",
+                ckpt_name=ckpt_f,
                 loras=loras,
             )
         elif model == "qwen_edit_2511":
@@ -3090,6 +3761,7 @@ def generate_image_via_comfyui(
             {
                 "kind": "image",
                 "model": model,
+                "checkpoint_override": resolved_ckpt["name"] if resolved_ckpt else None,
                 "raw_prompt": prompt,
                 "prompt": full_prompt,
                 "negative_prompt": negative_prompt,
@@ -3280,7 +3952,16 @@ def detail_faces_in_image(
         chosen = model
         if chosen == "auto":
             avail = get_model_availability(comfy_dir)
-            order = ["flux2_klein_9b", "flux2_klein", "qwen_edit_2511", "qwen_edit", "z_image_turbo"]
+            order = [
+                "flux2_klein_9b",
+                "flux2_klein",
+                "qwen_edit_2511",
+                "qwen_edit",
+                "krea2_turbo",
+                "z_image_turbo",
+                "chroma_hd",
+                "illustrious_xl",
+            ]
             chosen = next((m for m in order if avail.get(m, {}).get("ready")), "flux2_klein")
 
         patches: list[dict[str, Any]] = []

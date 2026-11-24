@@ -1,21 +1,22 @@
 # ClipForge — AI-Controllable Video Editor, Offline Media Studio & MCP Server
 
-ClipForge is a cross-platform (Windows & Linux) local-first Non-Linear Video Editor (NLE) with a live WebSocket-synced **MCP Server (43 tools)** and integrated **offline ComfyUI Image & Video Generation** (zero cloud filters, zero API fees).
+ClipForge is a cross-platform (Windows & Linux) local-first **Native Rust Desktop AI Studio & Non-Linear Video Editor** with a live WebSocket-synced **MCP Server (46 tools)**, **Simple Creator Mode + Pro NLE Mode**, built-in **1-Click CivitAI Browser**, and integrated **offline ComfyUI Image & Video Generation** (zero cloud filters, zero API fees).
 
 ---
 
 ## Core Capabilities
 
-- **Live MCP + Visual NLE Sync (`clipforge/engine.py`, `clipforge/web_server.py`)**
-  - Process-safe `FileLock` persistence (`workspace/project.json`) with cross-process 40-step Undo/Redo and monotonic versioning so AI agent edits stream instantaneously to the browser UI.
-  - Hardened localhost server: per-process cryptographic session token (`X-ClipForge-Token`), strict loopback `Host`/`Origin` validation, strict CSP, and jailed upload/render paths.
-- **Zero-Flash Dual-Video Canvas Compositor (`clipforge/static/app.js`)**
-  - Hardware audio/video master-clock sync, idle-slot pre-warming for seamless cuts/crossfades, zero-black-flash frame holding, and native static meme image preview.
-  - Multi-track timeline (`VIDEO / AUDIO`, `SUBTITLES`, `SFX / BGM`) with audio waveforms, drag-to-trim handles, drag-to-reorder, razor split (`S`), and `⏭ Continue Shot` final-frame extraction.
+- **Simple Mode & Pro NLE Mode (`clipforge-native/`, `clipforge/web_server.py`)**
+  - **✨ Simple Mode (Beginner-First)**: 6 visual intent cards (`📷 Realistic Photo`, `👥 Friend in Scene`, `🎨 Anime / 2.5D Art`, `🎬 Animate Photo`, `🔊 Video + Sound`, `🗣 Talking Friend`), **1-Click GPU Starter Packs**, **Smart Prompt** auto-optimization (including Danbooru tag translation for Illustrious XL), and **1-Click "Fix / Steer This Result" Chips** (`Fix Face`, `4 Similar`, `Follow Prompt Closer`, `2× Sharper`, `Fix Spot` mask inpaint, `Bring to Life`).
+  - **🎛 Pro NLE Mode**: Full multi-track timeline (`VIDEO / AUDIO`, `SUBTITLES`, `SFX / BGM`), audio waveforms, drag-to-trim handles, razor split (`S`), `⏭ Continue Shot`, and live MCP WebSocket sync (`workspace/project.json` with 40-step Undo/Redo).
+  - Hardened localhost server: per-process cryptographic session token (`X-ClipForge-Token`), strict loopback `Host`/`Origin` validation, strict CSP, and jailed upload/render/download paths.
+- **Built-In 1-Click CivitAI Browser & Community Checkpoint Loader (`clipforge/civitai.py`)**
+  - Search live CivitAI checkpoints & LoRAs or paste any `civitai.com/models/...` URL directly inside ClipForge.
+  - Auto-routes downloads into the exact ComfyUI folder (`loras/`, `checkpoints/`, `diffusion_models/`), automatically persists LoRA `trainedWords` triggers, supports resumable HTTP `Range` downloads, and unlocks gated/18+ downloads via an optional locally stored CivitAI API key (`workspace/secrets.json`, gitignored).
 - **Offline AI Image & Video Studio (`clipforge/generator.py`, `clipforge/cast.py`, `clipforge/voice.py`)**
-  - Direct local ComfyUI client with WebSocket live step progress, **mid-render latent previews + instant GPU Cancel/Interrupt**, automatic **VRAM headroom (`--reserve-vram`) & model-switch `/free` unload**, and built-in resumable HTTP `Range` Model Manager:
+  - Direct local ComfyUI client with WebSocket live step progress, **mid-render latent previews + instant GPU Cancel/Interrupt**, automatic **VRAM headroom (`--reserve-vram`) & model-switch `/free` unload**, and built-in resumable HTTP `Range` Model Manager (**15 native models**):
     - **Video**: `Wan 2.2 TI2V 5B`, `Wan 2.2 I2V 14B` (incl. `WanFirstLastFrameToVideo` Start→End morph), `Wan 2.2 T2V 14B` (4-step Lightx2v), `Wan 2.2 S2V 14B` (audio-driven lip-sync), `LTX-2.3 22B` (synchronized native audio/SFX).
-    - **Image / Photo Editing**: `FLUX.2 [klein] 4B` & `9B` (4-step T2I + photo edit), `Z-Image-Turbo` (8-step candid realism + crisp meme text), `Qwen-Image-Edit 2509` & `2511` (4-step Lightning 1–3 photo compositor).
+    - **Image / Photo Editing**: `Z-Image-Turbo` (8-step candid realism + crisp text + CivitAI ZiT fine-tunes), `Krea 2 Turbo` (6-step editorial realism + `ReferenceLatent` editing), `Chroma1-HD` (uncensored open Apache-2.0 Flux architecture with full negative prompts), `Illustrious XL v2.0` (single-file anime/2.5D engine unlocking 50,000+ CivitAI SDXL/Illustrious checkpoints & LoRAs), `FLUX.2 [klein] 4B` & `9B` (4-step T2I + photo edit), `Qwen-Image-Edit 2509` & `2511` (4-step Lightning 1–3 photo compositor).
     - **Neural Utilities**: `4x-UltraSharp` GPU upscaler (2× / 4× HD) and `RIFE v4.26` GPU frame interpolation (`Smooth 32fps`), with automatic FFmpeg fallbacks.
   - **Zero-Refusal Studio & Iteration**:
     - **Refusal-Proof Local LLM Director** (`clipforge/director.py` — Ollama / LM Studio model picker with `🔓` uncensored flags, auto-retry on refusal, **Literal zero-sanitize toggle**, and 1-click Ollama uncensored model pull).

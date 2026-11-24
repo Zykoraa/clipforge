@@ -23,6 +23,12 @@ except ImportError:
     from mcp.server.fastmcp import FastMCP as MCPServer  # type: ignore
 
 from .cast import CastManager
+from .civitai import (
+    CURATED_CIVITAI_PICKS,
+    civitai_download_manager,
+    load_civitai_api_key,
+    search_civitai_models as _search_civitai_models,
+)
 from .director import expand_meme_prompt_local, plan_storyboard_beats_local
 from .engine import ProjectEngine
 from .generator import (
@@ -37,8 +43,10 @@ from .generator import (
     generate_image_via_comfyui,
     generate_video_via_comfyui,
     get_model_availability,
+    get_starter_packs,
     is_comfyui_reachable,
     list_available_loras as _list_available_loras,
+    list_custom_checkpoints as _list_custom_checkpoints,
     polish_image_hd as _polish_image_hd,
     resolve_auto_model,
 )
@@ -557,6 +565,8 @@ def list_generated_assets(limit: int = 25) -> dict[str, Any]:
 def generate_image(
     prompt: str,
     model: str = "auto",
+    intent: str | None = None,
+    checkpoint_override: str | None = None,
     image_path: str | None = None,
     image_path_2: str | None = None,
     pose_image_path: str | None = None,
@@ -566,6 +576,7 @@ def generate_image(
     width: int | None = None,
     height: int | None = None,
     match_photo_aspect: bool = True,
+    auto_enhance: bool = False,
     steps: int | None = None,
     cfg: float | None = None,
     denoise: float = 1.0,
@@ -576,32 +587,52 @@ def generate_image(
     transition: TransitionType = "crossfade",
     transition_duration: float = 0.35,
 ) -> dict[str, Any]:
-    """Generate 1-4 photorealistic meme images, edit/composite friend photos, transfer pose, vary slightly (`denoise`), or mask-inpaint offline via local ComfyUI.
+    """Generate 1-4 photorealistic/anime images, edit/composite friend photos, transfer pose, vary slightly (`denoise`), or mask-inpaint offline via local ComfyUI.
 
     - Supports `@FriendName` mentions from saved Cast profiles (auto-attaches their photos + extra angle!).
-    - `model='auto'` (default): automatically picks the highest-quality ready model (`z_image_turbo` for 0 photos, `flux2_klein_9b`/`flux2_klein` for 1 photo, `qwen_edit_2511`/`qwen_edit` for 2 photos).
+    - Models: `auto`, `z_image_turbo`, `krea2_turbo`, `chroma_hd`, `illustrious_xl`, `flux2_klein`, `flux2_klein_9b`, `qwen_edit`, `qwen_edit_2511`.
+    - `intent`: Optional high-level goal (`photo`, `friend`, `anime`, `uncensored`) when `model='auto'`.
+    - `checkpoint_override`: Optional community CivitAI checkpoint filename from `list_custom_checkpoints`.
+    - `auto_enhance=True`: Auto-expands/formats prompts for the target architecture (e.g. Danbooru tags for `illustrious_xl`).
     - `pose_image_path`: Optional reference image whose pose/camera framing should be copied.
     - `mask_path`: Optional B&W PNG mask (white=edit, black=lock original pixels) for pixel-locked DifferentialDiffusion inpainting.
     - `denoise`: 0.25..1.0 (use ~0.5 for "Vary Slightly" img2img tweaks while locking layout).
     - `loras`: Optional list of `[{"name": "...", "strength": 0.8, "trigger": "..."}]` from `list_available_loras`.
-    - `match_photo_aspect=True`: automatically preserves the uploaded photo's aspect ratio to prevent stretched faces.
-    - `batch_size`: 1..4 distinct seeds (4-seed meme contact sheet).
+    - `batch_size`: 1..4 distinct seeds (4-seed contact sheet).
     """
     eng = get_engine()
     cm = CastManager(eng.workspace_dir)
     out_dir = eng.workspace_dir / "generated_images"
     with contextlib.redirect_stdout(sys.stderr):
         resolved_prompt, img1, img2, _ = cm.resolve_prompt_mentions(prompt, image_path, image_path_2)
-        chosen = resolve_auto_model("image", bool(img1), bool(img2)) if model == "auto" else model
+        chosen = (
+            resolve_auto_model("image", bool(img1), bool(img2), intent=intent)
+            if model == "auto"
+            else model
+        )
+        eff_prompt = resolved_prompt
+        eff_neg = negative_prompt
+        if auto_enhance:
+            enh = expand_meme_prompt_local(
+                idea=resolved_prompt,
+                mode="image",
+                has_friend_photo=bool(img1),
+                has_second_photo=bool(img2),
+                model_id=chosen,
+                style_preset=style_preset,
+            )
+            eff_prompt = str(enh.get("prompt") or resolved_prompt)
+            if not eff_neg.strip():
+                eff_neg = str(enh.get("negative_prompt") or "")
         gen_res = generate_image_via_comfyui(
-            prompt=resolved_prompt,
+            prompt=eff_prompt,
             output_dir=out_dir,
             model=chosen,  # type: ignore[arg-type]
             image_path=img1,
             image_path_2=img2,
             pose_image_path=pose_image_path,
             mask_path=mask_path,
-            negative_prompt=negative_prompt,
+            negative_prompt=eff_neg,
             style_preset=style_preset,
             width=width,
             height=height,
@@ -612,6 +643,7 @@ def generate_image(
             seed=seed,
             batch_size=batch_size,
             loras=loras,
+            checkpoint_override=checkpoint_override,
             auto_start=True,
         )
         media_item = None
@@ -1120,6 +1152,55 @@ def expand_meme_prompt(
         has_end_frame=has_end_frame,
         literal_mode=literal_mode,
     )
+
+
+@mcp.tool()
+def list_custom_checkpoints() -> dict[str, Any]:
+    """List installed community/CivitAI checkpoints and diffusion models across ComfyUI checkpoints/ & diffusion_models/, plus recommended GPU starter packs."""
+    return {
+        "checkpoints": _list_custom_checkpoints(COMFYUI_DIR),
+        "starter_packs": get_starter_packs(COMFYUI_DIR),
+    }
+
+
+@mcp.tool()
+def search_civitai_models(
+    query: str = "",
+    model_type: str | None = None,
+    base_model: str | None = None,
+    sort: str = "Most Downloaded",
+    limit: int = 12,
+) -> dict[str, Any]:
+    """Search live CivitAI checkpoints and LoRAs (`model_type`: 'Checkpoint' | 'LORA', `base_model`: e.g. 'ZImageTurbo', 'Illustrious', 'Krea 2', 'Chroma', 'Wan Video 2.2')."""
+    eng = get_engine()
+    key = load_civitai_api_key(eng.workspace_dir)
+    items = _search_civitai_models(
+        query=query,
+        model_type=model_type,
+        base_model=base_model,
+        sort=sort,
+        limit=limit,
+        api_key=key,
+    )
+    return {"items": items, "curated_picks": CURATED_CIVITAI_PICKS}
+
+
+@mcp.tool()
+def install_civitai_model(
+    url_or_id: str,
+    version_id: int | None = None,
+) -> dict[str, Any]:
+    """Download and auto-install any CivitAI checkpoint or LoRA directly into the matching ComfyUI folder (and auto-save LoRA trigger words)."""
+    eng = get_engine()
+    key = load_civitai_api_key(eng.workspace_dir)
+    with contextlib.redirect_stdout(sys.stderr):
+        dl = civitai_download_manager.start_install(
+            url_or_id=url_or_id,
+            version_id=version_id,
+            api_key=key,
+            triggers_file=eng.workspace_dir / "lora_triggers.json",
+        )
+    return {"download": dl, "downloads": civitai_download_manager.list_downloads()}
 
 
 def main() -> None:

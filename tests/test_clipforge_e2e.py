@@ -445,6 +445,9 @@ def test_offline_generator_workflows_and_ref_upload_security(tmp_path: Path, mon
         "flux2_klein",
         "flux2_klein_9b",
         "z_image_turbo",
+        "krea2_turbo",
+        "chroma_hd",
+        "illustrious_xl",
         "qwen_edit",
         "qwen_edit_2511",
         "upscale_ultrasharp",
@@ -997,5 +1000,150 @@ def test_tier123_director_refusal_loras_inpaint_pose_vault_angles_and_storyboard
         extensions=(".mp4",),
     )
     assert picked is not None and picked["filename"] == "rife_out_00001_.mp4" and picked["type"] == "output"
+
+
+def test_civitai_new_architectures_starter_packs_and_checkpoints(tmp_path: Path, monkeypatch) -> None:
+    """Verify Krea 2 Turbo, Chroma1-HD, Illustrious XL workflows, checkpoint discovery, Starter Packs & CivitAI module."""
+    from clipforge import civitai as civ_mod
+    from clipforge import generator as gen_mod
+    from clipforge.director import expand_meme_prompt_local
+    from clipforge.generator import (
+        build_chroma_workflow,
+        build_illustrious_xl_workflow,
+        build_krea2_workflow,
+        build_z_image_turbo_workflow,
+        get_model_availability,
+        get_starter_packs,
+        list_custom_checkpoints,
+        resolve_auto_model,
+    )
+
+    user_lora = [{"name": "style_boost.safetensors", "strength": 0.75, "trigger": "cinematic_vibe"}]
+
+    # 1. Krea 2 Turbo workflow (T2I + ReferenceLatent + Mask Inpaint + CheckpointLoader override)
+    wf_krea = build_krea2_workflow(
+        "candid film photo",
+        image_filename="ref.png",
+        mask_filename="mask.png",
+        denoise=0.82,
+        loras=user_lora,
+    )
+    assert wf_krea["2"]["class_type"] == "CLIPLoader"
+    assert wf_krea["2"]["inputs"]["type"] == "krea2"
+    assert wf_krea["7r"]["class_type"] == "ReferenceLatent"
+    assert wf_krea["1d"]["class_type"] == "DifferentialDiffusion"
+    assert wf_krea["9b"]["class_type"] == "ImageCompositeMasked"
+    assert wf_krea["ulora_0"]["class_type"] == "LoraLoaderModelOnly"
+
+    wf_krea_ckpt = build_krea2_workflow("portrait", unet_name="big_love_krea2.safetensors", use_checkpoint_loader=True)
+    assert wf_krea_ckpt["1"]["class_type"] == "CheckpointLoaderSimple"
+
+    # 2. Chroma1-HD workflow (AuraFlow shift=1.0 + t5xxl chroma + inpaint)
+    wf_chroma = build_chroma_workflow(
+        "raw street photo",
+        image_filename="orig.png",
+        mask_filename="mask.png",
+        denoise=0.78,
+        loras=user_lora,
+    )
+    assert wf_chroma["2"]["class_type"] == "ModelSamplingAuraFlow"
+    assert wf_chroma["2"]["inputs"]["shift"] == 1.0
+    assert wf_chroma["3"]["inputs"]["type"] == "chroma"
+    assert wf_chroma["2d"]["class_type"] == "DifferentialDiffusion"
+    assert wf_chroma["9b"]["class_type"] == "ImageCompositeMasked"
+
+    # 3. Illustrious XL workflow (CheckpointLoaderSimple + CLIP skip -2 + full LoraLoader model+clip + inpaint)
+    wf_ill = build_illustrious_xl_workflow(
+        "masterpiece, 1girl, neon rooftop",
+        image_filename="orig.png",
+        mask_filename="mask.png",
+        denoise=0.75,
+        ckpt_name="janku_illustrious.safetensors",
+        loras=user_lora,
+    )
+    assert wf_ill["1"]["class_type"] == "CheckpointLoaderSimple"
+    assert wf_ill["2"]["class_type"] == "CLIPSetLastLayer"
+    assert wf_ill["2"]["inputs"]["stop_at_clip_layer"] == -2
+    assert wf_ill["ulora_0"]["class_type"] == "LoraLoader"
+    assert wf_ill["3"]["inputs"]["clip"] == ["ulora_0", 1]
+    assert wf_ill["1d"]["class_type"] == "DifferentialDiffusion"
+    assert wf_ill["7b"]["class_type"] == "ImageCompositeMasked"
+
+    # 4. Z-Image-Turbo checkpoint-folder override mode
+    wf_zit_ck = build_z_image_turbo_workflow("photo", unet_name="zenith_zit.safetensors", use_checkpoint_loader=True)
+    assert wf_zit_ck["1"]["class_type"] == "CheckpointLoaderSimple"
+
+    # 5. Director Danbooru tag formatting for Illustrious XL (zero-refusal offline fallback)
+    enh_ill = expand_meme_prompt_local("cyberpunk samurai on a rainy rooftop", mode="image", model_id="illustrious_xl", literal_mode=True)
+    assert "masterpiece" in enh_ill["prompt"].lower()
+    assert "bad anatomy" in enh_ill["negative_prompt"].lower()
+
+    # 6. Community checkpoint auto-discovery + illustrious_xl scan_dir readiness + intent routing + starter packs
+    fake_comfy = tmp_path / "comfy_civ"
+    ckpt_dir = fake_comfy / "models" / "checkpoints"
+    diff_dir = fake_comfy / "models" / "diffusion_models"
+    ckpt_dir.mkdir(parents=True)
+    diff_dir.mkdir(parents=True)
+
+    # Create sparse 105MB files so size filters match real weights without writing 105MB to disk
+    for fp in (ckpt_dir / "Realism_Illustrious_v5.safetensors", diff_dir / "Zenith_ZiT_v2.safetensors"):
+        with open(fp, "wb") as fh:
+            fh.seek(110 * 1024 * 1024)
+            fh.write(b"\0")
+
+    ckpts = list_custom_checkpoints(fake_comfy)
+    assert len(ckpts) == 2
+    by_name = {c["filename"]: c for c in ckpts}
+    assert by_name["Realism_Illustrious_v5.safetensors"]["family"] == "illustrious"
+    assert "illustrious_xl" in by_name["Realism_Illustrious_v5.safetensors"]["compatible_models"]
+    assert by_name["Zenith_ZiT_v2.safetensors"]["family"] == "z_image"
+    assert "z_image_turbo" in by_name["Zenith_ZiT_v2.safetensors"]["compatible_models"]
+
+    # Installing ANY CivitAI Illustrious checkpoint immediately marks illustrious_xl ready!
+    avail = get_model_availability(fake_comfy)
+    assert avail["illustrious_xl"]["ready"] is True
+    assert resolve_auto_model("image", intent="anime", comfy_dir=fake_comfy) == "illustrious_xl"
+
+    packs = get_starter_packs(fake_comfy)
+    assert {p["id"] for p in packs} == {"fast_8gb", "hq_16gb", "anime_civitai"}
+    assert any(p["recommended"] for p in packs)
+
+    # 7. CivitAI URL parser, SSRF validation, folder routing, and secret store
+    assert civ_mod.parse_civitai_reference("https://civitai.com/models/2237711/zenith?modelVersionId=2554321") == (2237711, 2554321)
+    assert civ_mod.parse_civitai_reference("https://civitai.com/api/download/models/998877") == (None, 998877)
+    assert civ_mod.parse_civitai_reference("974693") == (974693, None)
+    with pytest.raises(ValueError):
+        civ_mod.parse_civitai_reference("https://evil.example.com/models/123")
+
+    assert civ_mod.classify_civitai_target("LORA", "ZImageTurbo", "famegrid.safetensors")[0] == "loras"
+    assert civ_mod.classify_civitai_target("Checkpoint", "Illustrious", "janku.safetensors")[0] == "checkpoints"
+    assert civ_mod.classify_civitai_target("Checkpoint", "ZImageTurbo", "zenith.safetensors")[0] == "diffusion_models"
+    assert civ_mod.classify_civitai_target("Checkpoint", "Krea 2", "biglove.safetensors")[0] == "diffusion_models"
+    assert civ_mod.classify_civitai_target("Checkpoint", "Chroma", "chroma.safetensors")[0] == "diffusion_models"
+
+    # 8. HTTP endpoints for checkpoints, starter packs, and CivitAI API key (never echoes secret!)
+    ws = tmp_path / "ws_civ"
+    eng = ProjectEngine(workspace_dir=ws)
+    monkeypatch.setattr(web_server, "engine", eng)
+    monkeypatch.setattr(web_server, "COMFYUI_DIR", fake_comfy)
+    monkeypatch.setattr(gen_mod, "COMFYUI_DIR", fake_comfy)
+    client = TestClient(web_server.app)
+    token = re.search(r'<meta name="clipforge-token" content="([^"]+)"', client.get("/").text).group(1)
+    hdrs = {"X-ClipForge-Token": token}
+
+    r_ck = client.get("/api/checkpoints", headers=hdrs)
+    assert r_ck.status_code == 200 and len(r_ck.json()["checkpoints"]) == 2
+
+    r_key = client.post("/api/civitai/api-key", headers=hdrs, json={"api_key": "test_dummy_token_value"})
+    assert r_key.status_code == 200
+    assert r_key.json()["has_api_key"] is True
+    assert "test_dummy_token_value" not in r_key.text
+
+    r_st = client.get("/api/generate/status", headers=hdrs).json()
+    assert r_st["civitai"]["has_api_key"] is True
+    assert len(r_st["civitai"]["curated"]) >= 10
+    assert len(r_st["starter_packs"]) == 3
+    assert len(r_st["checkpoints"]) == 2
+
 
 

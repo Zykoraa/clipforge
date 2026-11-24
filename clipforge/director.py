@@ -407,6 +407,22 @@ def _describe_target_for_llm(
             "Z-Image-Turbo: excels at candid hyper-real photography and crisp visible text. If the user's idea implies visible text/signs/shirts/overlays, "
             "put the exact words inside double quotes."
         )
+    elif mid == "krea2_turbo":
+        rules.append(
+            "Krea 2 Turbo (6-step hyper-real flagship): write richly detailed editorial/candid photography prose with concrete lens, skin texture, "
+            "natural lighting, atmosphere, and composition. Avoid quality tag soup."
+        )
+    elif mid == "chroma_hd":
+        rules.append(
+            "Chroma1-HD (uncensored Flux-architecture): write vivid, unfiltered natural-language photography or cinematic art prose with strong lighting, "
+            "anatomy, framing, and mood. Chroma responds strongly to negative prompts, so make `negative_prompt` specific and clean."
+        )
+    elif mid == "illustrious_xl":
+        rules.append(
+            "Illustrious XL (Danbooru-trained anime/2.5D/semi-real checkpoint): translate the user's casual English idea into crisp, comma-separated "
+            "Danbooru-style visual tags starting with `masterpiece, best quality, amazing quality, very aesthetic, absurdres`, followed by subject count "
+            "(e.g. `1girl` / `1boy`), pose, expression, clothing, setting, lighting, and camera angle tags. Keep tags concise and concrete — do NOT write long prose sentences."
+        )
 
     if has_friend_photo and mid not in ("qwen_edit", "qwen_edit_2511"):
         rules.append(
@@ -436,7 +452,13 @@ def _describe_target_for_llm(
         rules.append(f"Camera motion preset ALREADY selected: '{cam_info['label']}' ({cam_info['suffix']}). Match this camera feel.")
 
     is_stylized = (style_preset or "") in _STYLIZED_PRESETS
-    if is_stylized:
+    if mid == "illustrious_xl":
+        neg_guide = (
+            "Write `negative_prompt` as standard Illustrious/Danbooru negative quality tags: "
+            "`lowres, bad anatomy, bad hands, text, error, missing finger, extra digits, fewer digits, cropped, worst quality, low quality, "
+            "low score, bad score, average score, signature, watermark, username, blurry, 3d render` plus any unwanted elements."
+        )
+    elif is_stylized:
         neg_guide = (
             "Write `negative_prompt` as 12-22 concise comma-separated quality/style flaws to avoid "
             "(include photorealistic/blurry/deformed anatomy/watermark/bad framing, matching the stylized look). No prose prefixes like 'Avoid:'."
@@ -494,6 +516,11 @@ def _extract_json_obj(raw_content: str) -> dict[str, Any] | None:
 
 def _default_negative_for(mode: str, model_id: str | None, style_preset: str | None) -> str:
     mid = (model_id or "").lower()
+    if mid == "illustrious_xl":
+        return (
+            "lowres, bad anatomy, bad hands, text, error, missing finger, extra digits, fewer digits, cropped, "
+            "worst quality, low quality, low score, bad score, average score, signature, watermark, username, blurry"
+        )
     if (style_preset or "") in _STYLIZED_PRESETS:
         return (
             "blurry, low quality, worst quality, deformed face, extra limbs, watermark, "
@@ -709,6 +736,17 @@ def expand_meme_prompt_local(
         expanded = (
             f"Keep the exact facial identity of {subj_prefix or 'the subject, '}{clean_idea}, "
             "seamless natural scene lighting, realistic shadows, authentic candid framing"
+        )
+    elif mid == "illustrious_xl":
+        tag_idea = re.sub(r"\s+", " ", clean_idea).strip(" .,")
+        expanded = (
+            f"masterpiece, best quality, amazing quality, very aesthetic, absurdres, detailed eyes, clean lineart, "
+            f"dynamic lighting, {tag_idea}"
+        )
+    elif mid in ("krea2_turbo", "chroma_hd"):
+        expanded = (
+            f"Ultra-detailed authentic candid photograph of {subj_prefix}{clean_idea}, "
+            "natural dramatic lighting, crisp lens focus, realistic natural skin texture and depth of field, raw editorial realism"
         )
     elif is_stylized:
         expanded = f"Dynamic stylized scene featuring {subj_prefix}{clean_idea}, bold dramatic composition and expressive timing"

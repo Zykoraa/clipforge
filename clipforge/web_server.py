@@ -25,6 +25,15 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from .cast import CastManager
+from .civitai import (
+    CURATED_CIVITAI_PICKS,
+    civitai_download_manager,
+    get_civitai_key_status,
+    inspect_civitai_url,
+    load_civitai_api_key,
+    save_civitai_api_key,
+    search_civitai_models,
+)
 from .director import (
     discover_local_llm,
     expand_meme_prompt_local,
@@ -46,9 +55,12 @@ from .generator import (
     generate_image_via_comfyui,
     generate_video_via_comfyui,
     get_model_availability,
+    get_starter_packs,
+    interpolate_video_rife_via_comfyui,
     is_comfyui_reachable,
     job_manager,
     list_available_loras,
+    list_custom_checkpoints,
     polish_image_hd,
     read_asset_metadata,
     resolve_auto_model,
@@ -391,6 +403,7 @@ class GenerateVideoRequest(BaseModel):
     style_preset: str | None = None
     camera_preset: str | None = None
     model: str = "auto"
+    intent: str | None = None
     image_path: str | None = None
     end_image_path: str | None = None
     audio_path: str | None = None
@@ -399,6 +412,8 @@ class GenerateVideoRequest(BaseModel):
     match_photo_aspect: bool = False
     want_audio: bool = False
     fast_draft: bool = False
+    auto_enhance: bool = False
+    auto_smooth_fps: bool = False
     num_frames: int | None = None
     fps: int | None = None
     steps: int | None = None
@@ -415,6 +430,8 @@ class GenerateImageRequest(BaseModel):
     negative_prompt: str = ""
     style_preset: str | None = None
     model: str = "auto"
+    intent: str | None = None
+    checkpoint_override: str | None = None
     image_path: str | None = None
     image_path_2: str | None = None
     pose_image_path: str | None = None
@@ -424,6 +441,8 @@ class GenerateImageRequest(BaseModel):
     width: int | None = None
     height: int | None = None
     match_photo_aspect: bool = False
+    auto_enhance: bool = False
+    auto_polish: bool = False
     steps: int | None = None
     cfg: float | None = None
     denoise: float = 1.0
@@ -433,6 +452,27 @@ class GenerateImageRequest(BaseModel):
     add_to_timeline: bool = False
     transition: TransitionType = "crossfade"
     transition_duration: float = 0.35
+
+
+class CivitaiInspectRequest(BaseModel):
+    url_or_id: str
+
+
+class CivitaiInstallRequest(BaseModel):
+    version_id: int | None = None
+    url_or_id: str | None = None
+    download_url: str | None = None
+    filename: str | None = None
+    name: str | None = None
+    model_type: str | None = None
+    base_model: str | None = None
+    target_subdir: str | None = None
+    trained_words: list[str] | None = None
+    size_mb: float = 0.0
+
+
+class CivitaiApiKeyRequest(BaseModel):
+    api_key: str = ""
 
 
 class PolishImageRequest(BaseModel):
@@ -1494,6 +1534,105 @@ async def api_list_loras() -> dict[str, Any]:
     return {"loras": await asyncio.to_thread(list_available_loras, COMFYUI_DIR, _lora_triggers_file())}
 
 
+@app.get("/api/checkpoints")
+async def api_list_checkpoints() -> dict[str, Any]:
+    return {"checkpoints": await asyncio.to_thread(list_custom_checkpoints, COMFYUI_DIR)}
+
+
+@app.post("/api/starter-pack/{pack_id}/download")
+async def api_download_starter_pack(pack_id: str) -> dict[str, Any]:
+    packs = await asyncio.to_thread(get_starter_packs, COMFYUI_DIR)
+    pack = next((p for p in packs if p["id"] == pack_id), None)
+    if not pack:
+        raise HTTPException(status_code=404, detail=f"Unknown starter pack '{pack_id}'.")
+    avail = await asyncio.to_thread(get_model_availability)
+    started: list[str] = []
+    for mid in pack["model_ids"]:
+        if mid in MODEL_SPECS and not avail.get(mid, {}).get("ready"):
+            await asyncio.to_thread(download_manager.start_download, mid)
+            started.append(mid)
+    return {
+        "pack_id": pack_id,
+        "started_models": started,
+        "starter_packs": await asyncio.to_thread(get_starter_packs, COMFYUI_DIR),
+        "models": await asyncio.to_thread(get_model_availability),
+    }
+
+
+@app.get("/api/civitai/status")
+async def api_civitai_status() -> dict[str, Any]:
+    key_st = await asyncio.to_thread(get_civitai_key_status, engine.workspace_dir)
+    return {
+        **key_st,
+        "downloads": civitai_download_manager.list_downloads(),
+        "curated": CURATED_CIVITAI_PICKS,
+    }
+
+
+@app.post("/api/civitai/api-key")
+async def api_save_civitai_key(req: CivitaiApiKeyRequest) -> dict[str, Any]:
+    return await asyncio.to_thread(save_civitai_api_key, engine.workspace_dir, req.api_key)
+
+
+@app.get("/api/civitai/search")
+async def api_civitai_search(
+    q: str = "",
+    model_type: str | None = None,
+    base_model: str | None = None,
+    sort: str = "Most Downloaded",
+    limit: int = 16,
+    nsfw: bool = True,
+) -> dict[str, Any]:
+    try:
+        key = await asyncio.to_thread(load_civitai_api_key, engine.workspace_dir)
+        items = await asyncio.to_thread(
+            search_civitai_models, q, model_type, base_model, sort, limit, nsfw, key
+        )
+        return {"items": items, "curated": CURATED_CIVITAI_PICKS}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"CivitAI search failed: {e}") from e
+
+
+@app.post("/api/civitai/inspect")
+async def api_civitai_inspect(req: CivitaiInspectRequest) -> dict[str, Any]:
+    try:
+        key = await asyncio.to_thread(load_civitai_api_key, engine.workspace_dir)
+        item = await asyncio.to_thread(inspect_civitai_url, req.url_or_id, key)
+        return {"item": item}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+
+@app.post("/api/civitai/install")
+async def api_civitai_install(req: CivitaiInstallRequest) -> dict[str, Any]:
+    try:
+        key = await asyncio.to_thread(load_civitai_api_key, engine.workspace_dir)
+        dl = await asyncio.to_thread(
+            civitai_download_manager.start_install,
+            version_id=req.version_id,
+            url_or_id=req.url_or_id,
+            download_url=req.download_url,
+            filename=req.filename,
+            name=req.name,
+            model_type=req.model_type,
+            base_model=req.base_model,
+            target_subdir=req.target_subdir,
+            trained_words=req.trained_words,
+            size_mb=req.size_mb,
+            api_key=key,
+            triggers_file=_lora_triggers_file(),
+        )
+        return {"download": dl, "downloads": civitai_download_manager.list_downloads()}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+
+@app.post("/api/civitai/cancel/{download_id}")
+async def api_civitai_cancel(download_id: str) -> dict[str, Any]:
+    ok = await asyncio.to_thread(civitai_download_manager.cancel, download_id)
+    return {"download_id": download_id, "canceled": ok, "downloads": civitai_download_manager.list_downloads()}
+
+
 @app.post("/api/loras/trigger")
 async def api_save_lora_trigger(req: LoraTriggerRequest) -> dict[str, Any]:
     await asyncio.to_thread(save_lora_trigger, _lora_triggers_file(), req.name, req.trigger)
@@ -1537,6 +1676,9 @@ async def api_generate_status() -> dict[str, Any]:
     voice_st = await asyncio.to_thread(_cached_voice_status)
     director_st = await asyncio.to_thread(_cached_director_status, False)
     loras = await asyncio.to_thread(list_available_loras, COMFYUI_DIR, _lora_triggers_file())
+    checkpoints = await asyncio.to_thread(list_custom_checkpoints, COMFYUI_DIR)
+    starter_packs = await asyncio.to_thread(get_starter_packs, COMFYUI_DIR)
+    civitai_key = await asyncio.to_thread(get_civitai_key_status, engine.workspace_dir)
     return {
         "comfyui_url": COMFYUI_URL,
         "comfyui_dir": str(COMFYUI_DIR),
@@ -1557,6 +1699,13 @@ async def api_generate_status() -> dict[str, Any]:
         "voice": voice_st,
         "director": director_st,
         "loras": loras,
+        "checkpoints": checkpoints,
+        "starter_packs": starter_packs,
+        "civitai": {
+            **civitai_key,
+            "downloads": civitai_download_manager.list_downloads(),
+            "curated": CURATED_CIVITAI_PICKS,
+        },
     }
 
 
@@ -1759,7 +1908,7 @@ async def api_generate_image(req: GenerateImageRequest) -> dict[str, Any]:
     chosen_model = req.model
     if chosen_model == "auto":
         chosen_model = await asyncio.to_thread(
-            resolve_auto_model, "image", bool(img1), bool(img2)
+            resolve_auto_model, "image", bool(img1), bool(img2), False, False, req.intent
         )
 
     spec = MODEL_SPECS.get(chosen_model)
@@ -1797,16 +1946,37 @@ async def api_generate_image(req: GenerateImageRequest) -> dict[str, Any]:
             def _on_pid(pid: str) -> None:
                 job_manager.update(job.id, prompt_id=pid)
 
+            eff_prompt = prompt_clean
+            eff_neg = req.negative_prompt
+            if req.auto_enhance:
+                _progress(f"Smart-tuning prompt for {chosen_model}...", 4)
+                try:
+                    enh = await asyncio.to_thread(
+                        expand_meme_prompt_local,
+                        idea=prompt_clean,
+                        mode="image",
+                        has_friend_photo=bool(img1),
+                        has_second_photo=bool(img2),
+                        model_id=chosen_model,
+                        style_preset=req.style_preset,
+                    )
+                    if enh.get("prompt"):
+                        eff_prompt = str(enh["prompt"])
+                    if not (eff_neg or "").strip() and enh.get("negative_prompt"):
+                        eff_neg = str(enh["negative_prompt"])
+                except Exception:
+                    pass
+
             res = await asyncio.to_thread(
                 generate_image_via_comfyui,
-                prompt=prompt_clean,
+                prompt=eff_prompt,
                 output_dir=out_dir,
                 model=chosen_model,  # type: ignore[arg-type]
                 image_path=img1,
                 image_path_2=img2,
                 pose_image_path=req.pose_image_path,
                 mask_path=resolved_mask_path,
-                negative_prompt=req.negative_prompt,
+                negative_prompt=eff_neg,
                 style_preset=req.style_preset,
                 width=req.width,
                 height=req.height,
@@ -1817,6 +1987,7 @@ async def api_generate_image(req: GenerateImageRequest) -> dict[str, Any]:
                 seed=req.seed,
                 batch_size=req.batch_size,
                 loras=req.loras,
+                checkpoint_override=req.checkpoint_override,
                 parent_image=req.parent_image,
                 base_url=COMFYUI_URL,
                 comfy_dir=COMFYUI_DIR,
@@ -1827,6 +1998,18 @@ async def api_generate_image(req: GenerateImageRequest) -> dict[str, Any]:
                 on_prompt_id=_on_pid,
                 cancel_event=job.cancel_event,
             )
+
+            if req.auto_polish and int(res.get("batch_size", 1)) == 1:
+                _progress("Running 2× AI UltraSharp HD Polish...", 95)
+                try:
+                    pol = await asyncio.to_thread(polish_image_hd, Path(res["image_path"]), out_dir, 2, True)
+                    res["image_path"] = pol["image_path"]
+                    res["filename"] = pol["filename"]
+                    res["width"] = pol["width"]
+                    res["height"] = pol["height"]
+                    res["hd_engine"] = pol["engine"]
+                except Exception:
+                    pass
 
             media_id = None
             if req.add_to_timeline:
@@ -1888,7 +2071,7 @@ async def api_generate_video(req: GenerateVideoRequest) -> dict[str, Any]:
     chosen_model = req.model
     if chosen_model == "auto":
         chosen_model = await asyncio.to_thread(
-            resolve_auto_model, "video", bool(img1), False, req.want_audio, req.fast_draft
+            resolve_auto_model, "video", bool(img1), False, req.want_audio, req.fast_draft, req.intent
         )
 
     spec = MODEL_SPECS.get(chosen_model)
@@ -1926,15 +2109,37 @@ async def api_generate_video(req: GenerateVideoRequest) -> dict[str, Any]:
             def _on_pid(pid: str) -> None:
                 job_manager.update(job.id, prompt_id=pid)
 
+            eff_prompt = prompt_clean
+            eff_neg = req.negative_prompt
+            if req.auto_enhance:
+                _progress(f"Smart-tuning motion prompt for {chosen_model}...", 4)
+                try:
+                    enh = await asyncio.to_thread(
+                        expand_meme_prompt_local,
+                        idea=prompt_clean,
+                        mode="video",
+                        has_friend_photo=bool(img1),
+                        has_end_frame=bool(req.end_image_path),
+                        model_id=chosen_model,
+                        style_preset=req.style_preset,
+                        camera_preset=req.camera_preset,
+                    )
+                    if enh.get("prompt"):
+                        eff_prompt = str(enh["prompt"])
+                    if enh.get("negative_prompt") and eff_neg == DEFAULT_NEGATIVE_PROMPT:
+                        eff_neg = str(enh["negative_prompt"])
+                except Exception:
+                    pass
+
             res = await asyncio.to_thread(
                 generate_video_via_comfyui,
-                prompt=prompt_clean,
+                prompt=eff_prompt,
                 output_dir=gen_dir,
                 model=chosen_model,  # type: ignore[arg-type]
                 image_path=img1,
                 end_image_path=req.end_image_path,
                 audio_path=req.audio_path,
-                negative_prompt=req.negative_prompt,
+                negative_prompt=eff_neg,
                 style_preset=req.style_preset,
                 camera_preset=req.camera_preset,
                 width=req.width,
@@ -1955,6 +2160,26 @@ async def api_generate_video(req: GenerateVideoRequest) -> dict[str, Any]:
                 on_prompt_id=_on_pid,
                 cancel_event=job.cancel_event,
             )
+
+            if req.auto_smooth_fps and chosen_model != "ltx23" and avail.get("rife_vfi", {}).get("ready"):
+                _progress("Smoothing video to 32fps via GPU RIFE v4.26...", 94)
+                try:
+                    src_vid = Path(res["video_path"])
+                    smooth_out = src_vid.with_name(f"{src_vid.stem}_32fps.mp4")
+                    rife_res = await asyncio.to_thread(
+                        interpolate_video_rife_via_comfyui,
+                        src_vid,
+                        smooth_out,
+                        float(req.fps or MODEL_SPECS[chosen_model].get("default_fps") or 16.0),
+                        32.0,
+                        COMFYUI_URL,
+                        COMFYUI_DIR,
+                    )
+                    res["video_path"] = rife_res["output_path"]
+                    res["filename"] = Path(rife_res["output_path"]).name
+                    res["rife_smoothed"] = True
+                except Exception:
+                    pass
             _progress("Importing clip into ClipForge...", 98)
             imported = await asyncio.to_thread(engine.import_media, [res["video_path"]])
             media_item = imported[0]

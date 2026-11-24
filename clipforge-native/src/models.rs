@@ -317,6 +317,176 @@ pub struct GeneratorStatus {
     pub director: DirectorStatus,
     #[serde(default)]
     pub loras: Vec<LoraInfo>,
+    #[serde(default)]
+    pub checkpoints: Vec<CheckpointInfo>,
+    #[serde(default)]
+    pub starter_packs: Vec<StarterPack>,
+    #[serde(default)]
+    pub civitai: CivitaiStatus,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct CheckpointInfo {
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub filename: String,
+    #[serde(default)]
+    pub folder: String,
+    #[serde(default)]
+    pub family: String,
+    #[serde(default)]
+    pub compatible_models: Vec<String>,
+    #[serde(default)]
+    pub size_gb: f64,
+    #[serde(default)]
+    pub is_builtin: bool,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct StarterPack {
+    #[serde(default)]
+    pub id: String,
+    #[serde(default)]
+    pub title: String,
+    #[serde(default)]
+    pub badge: String,
+    #[serde(default)]
+    pub description: String,
+    #[serde(default)]
+    pub model_ids: Vec<String>,
+    #[serde(default)]
+    pub recommended: bool,
+    #[serde(default)]
+    pub ready: bool,
+    #[serde(default)]
+    pub ready_count: usize,
+    #[serde(default)]
+    pub total_models: usize,
+    #[serde(default)]
+    pub total_gb: f64,
+    #[serde(default)]
+    pub missing_gb: f64,
+    #[serde(default)]
+    pub downloading: bool,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct CivitaiStatus {
+    #[serde(default)]
+    pub has_api_key: bool,
+    #[serde(default)]
+    pub source: String,
+    #[serde(default)]
+    pub downloads: Vec<CivitaiDownload>,
+    #[serde(default)]
+    pub curated: Vec<CivitaiCuratedPick>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct CivitaiCuratedPick {
+    #[serde(default)]
+    pub model_id: u64,
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub model_type: String,
+    #[serde(default)]
+    pub base_model: String,
+    #[serde(default)]
+    pub target_subdir: String,
+    #[serde(default)]
+    pub family: String,
+    #[serde(default)]
+    pub suggested_model: String,
+    #[serde(default)]
+    pub badge: String,
+    #[serde(default)]
+    pub tagline: String,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct CivitaiVersionChoice {
+    #[serde(default)]
+    pub version_id: u64,
+    #[serde(default)]
+    pub version_name: String,
+    #[serde(default)]
+    pub base_model: String,
+    #[serde(default)]
+    pub filename: String,
+    #[serde(default)]
+    pub size_mb: f64,
+    #[serde(default)]
+    pub target_subdir: String,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct CivitaiModelItem {
+    #[serde(default)]
+    pub model_id: u64,
+    #[serde(default)]
+    pub version_id: u64,
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub version_name: String,
+    #[serde(default)]
+    pub creator: String,
+    #[serde(default)]
+    pub model_type: String,
+    #[serde(default)]
+    pub base_model: String,
+    #[serde(default)]
+    pub downloads: u64,
+    #[serde(default)]
+    pub thumbs_up: u64,
+    #[serde(default)]
+    pub filename: String,
+    #[serde(default)]
+    pub size_mb: f64,
+    #[serde(default)]
+    pub download_url: String,
+    #[serde(default)]
+    pub trained_words: Vec<String>,
+    #[serde(default)]
+    pub target_subdir: String,
+    #[serde(default)]
+    pub family: String,
+    #[serde(default)]
+    pub suggested_model: String,
+    #[serde(default)]
+    pub web_url: String,
+    #[serde(default)]
+    pub versions: Vec<CivitaiVersionChoice>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct CivitaiDownload {
+    #[serde(default)]
+    pub download_id: String,
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub filename: String,
+    #[serde(default)]
+    pub target_subdir: String,
+    #[serde(default)]
+    pub model_type: String,
+    #[serde(default)]
+    pub base_model: String,
+    #[serde(default)]
+    pub status: String,
+    #[serde(default)]
+    pub downloaded_mb: f64,
+    #[serde(default)]
+    pub total_mb: f64,
+    #[serde(default)]
+    pub pct: f64,
+    #[serde(default)]
+    pub speed_mbps: f64,
+    #[serde(default)]
+    pub error: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -455,6 +625,8 @@ pub struct CameraMeta {
 pub struct AssetMeta {
     #[serde(default)]
     pub model: Option<String>,
+    #[serde(default)]
+    pub checkpoint_override: Option<String>,
     #[serde(default)]
     pub raw_prompt: Option<String>,
     #[serde(default)]
