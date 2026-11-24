@@ -1178,7 +1178,7 @@ def _resolve_existing_slot_file(file_spec: dict[str, Any], comfy_dir: Path) -> P
     primary = comfy_dir / file_spec["local_rel"]
     alts = [comfy_dir / rel for rel in file_spec.get("alt_local_rels", ())]
 
-    # On 14GB+ GPUs (e.g. RTX 4080 16GB), prefer full/FP8 safetensors when both variants exist on disk
+    # On 14GB+ GPUs, prefer full/FP8 safetensors when both variants exist on disk
     prefer_alt = int(detect_gpu_info().get("vram_mb") or 0) >= 14000
     ordered = [*alts, primary] if prefer_alt else [primary, *alts]
     for cand in ordered:
