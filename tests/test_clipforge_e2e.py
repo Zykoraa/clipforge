@@ -674,4 +674,24 @@ def test_cross_platform_helpers_fonts_and_env(tmp_path: Path, monkeypatch) -> No
     assert wf_qw2511["2"]["inputs"]["model"] == ["1b", 0]
     assert wf_qw2511["9"]["inputs"]["steps"] == 4
 
+    # 7. Concise ComfyUI error formatting extracts node/exception cleanly
+    from clipforge.generator import _format_comfyui_error
+
+    formatted = _format_comfyui_error(
+        [
+            ["execution_start", {"prompt_id": "abc"}],
+            [
+                "execution_error",
+                {
+                    "node_id": "17",
+                    "node_type": "SamplerCustomAdvanced",
+                    "exception_type": "torch.OutOfMemoryError",
+                    "exception_message": "Allocation on device 0 would exceed allowed memory.\nCurrently allocated: 11.90 GiB",
+                },
+            ],
+        ]
+    )
+    assert "SamplerCustomAdvanced (node 17)" in formatted
+    assert "torch.OutOfMemoryError" in formatted
+
 

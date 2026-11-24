@@ -986,9 +986,15 @@ def ensure_comfyui_running(
         extra_args = shlex.split(extra_args_raw)
     else:
         gpu = detect_gpu_info()
-        # Use --lowvram on <=10 GiB GPUs (e.g. 8GB RTX 4060); let 12GB+ GPUs (e.g. 16GB RTX 4080) use default VRAM policy
+        # Reserve explicit VRAM headroom for GGUF dequantization buffers + desktop compositor:
+        # ComfyUI's default Linux reserve (400MB) causes 12-14GB GGUFs (LTX-2.3 22B, Qwen-Edit) to OOM on 16GB cards.
         vram_mb = int(gpu.get("vram_mb") or 0)
-        extra_args = ["--lowvram"] if (vram_mb == 0 or vram_mb <= 10240) else []
+        if vram_mb == 0 or vram_mb <= 10240:
+            extra_args = ["--lowvram", "--reserve-vram", "1.5"]
+        elif vram_mb < 22000:
+            extra_args = ["--reserve-vram", "3.0"]
+        else:
+            extra_args = ["--reserve-vram", "2.0"]
 
     cmd = [
         str(py_exe),
@@ -1586,6 +1592,48 @@ def _upload_image_to_comfyui(image_path: str | Path, base_url: str = COMFYUI_URL
     return resp.json()["name"]
 
 
+_MODEL_SWITCH_LOCK = threading.Lock()
+_LAST_USED_MODEL: str | None = None
+
+
+def _free_comfyui_memory(base_url: str = COMFYUI_URL) -> None:
+    """Ask ComfyUI to unload cached models and release VRAM/RAM (prevents OOM & swap thrashing on model switches)."""
+    try:
+        httpx.post(
+            f"{base_url}/free",
+            json={"unload_models": True, "free_memory": True},
+            timeout=5.0,
+        )
+    except Exception:
+        pass
+
+
+def _maybe_unload_on_model_switch(model: str, base_url: str = COMFYUI_URL) -> None:
+    global _LAST_USED_MODEL
+    should_free = False
+    with _MODEL_SWITCH_LOCK:
+        if _LAST_USED_MODEL is not None and _LAST_USED_MODEL != model:
+            should_free = True
+        _LAST_USED_MODEL = model
+    if should_free:
+        _free_comfyui_memory(base_url)
+
+
+def _format_comfyui_error(messages: Any) -> str:
+    """Extract a concise, human-readable error message from ComfyUI history status.messages."""
+    if isinstance(messages, list):
+        for item in messages:
+            if isinstance(item, list) and len(item) >= 2 and item[0] == "execution_error" and isinstance(item[1], dict):
+                err = item[1]
+                node_type = err.get("node_type") or "UnknownNode"
+                node_id = err.get("node_id") or "?"
+                exc_type = err.get("exception_type") or "Error"
+                exc_msg = str(err.get("exception_message") or "").strip()
+                first_lines = " | ".join(ln.strip() for ln in exc_msg.splitlines()[:5] if ln.strip())
+                return f"ComfyUI {node_type} (node {node_id}) failed — {exc_type}: {first_lines}"
+    return f"ComfyUI execution failed: {json.dumps(messages)[:800]}"
+
+
 def _extract_saved_output_info(history_entry: dict[str, Any], extensions: tuple[str, ...]) -> dict[str, str] | None:
     outputs = history_entry.get("outputs") or {}
     for _node_id, node_out in outputs.items():
@@ -1677,7 +1725,10 @@ def _execute_comfyui_workflow(
                     status = entry.get("status", {})
                     if status.get("status_str") == "error":
                         msgs = status.get("messages", [])
-                        raise RuntimeError(f"ComfyUI execution failed: {json.dumps(msgs)[:1200]}")
+                        err_text = _format_comfyui_error(msgs)
+                        if "out of memory" in err_text.lower() or "outofmemory" in err_text.lower():
+                            _free_comfyui_memory(base_url)
+                        raise RuntimeError(err_text)
 
                     out_info = _extract_saved_output_info(entry, extensions=extensions)
                     if out_info:
@@ -1738,6 +1789,8 @@ def generate_video_via_comfyui(
         ensure_comfyui_running(comfy_dir=comfy_dir, base_url=base_url)
     elif not is_comfyui_reachable(base_url):
         raise RuntimeError(f"ComfyUI is not running at {base_url}")
+
+    _maybe_unload_on_model_switch(model, base_url=base_url)
 
     uploaded_img_name: str | None = None
     uploaded_end_name: str | None = None
@@ -1895,6 +1948,8 @@ def generate_image_via_comfyui(
         ensure_comfyui_running(comfy_dir=comfy_dir, base_url=base_url)
     elif not is_comfyui_reachable(base_url):
         raise RuntimeError(f"ComfyUI is not running at {base_url}")
+
+    _maybe_unload_on_model_switch(model, base_url=base_url)
 
     up_img1: str | None = None
     up_img2: str | None = None
