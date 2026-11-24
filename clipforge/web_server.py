@@ -406,6 +406,11 @@ class DirectorExpandRequest(BaseModel):
     idea: str
     mode: str = "image"
     has_friend_photo: bool = False
+    has_second_photo: bool = False
+    has_end_frame: bool = False
+    model_id: str | None = None
+    style_preset: str | None = None
+    camera_preset: str | None = None
     endpoint: str | None = None
     model_name: str | None = None
 
@@ -715,6 +720,11 @@ async def api_director_expand(req: DirectorExpandRequest) -> dict[str, Any]:
             req.has_friend_photo,
             req.endpoint,
             req.model_name,
+            req.model_id,
+            req.style_preset,
+            req.camera_preset,
+            req.has_second_photo,
+            req.has_end_frame,
         )
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e)) from e

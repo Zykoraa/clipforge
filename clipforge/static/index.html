@@ -200,11 +200,12 @@
             <div class="field-header-row">
               <label class="field-label" for="genPromptInput">Prompt</label>
               <div style="display:flex;align-items:center;gap:6px;">
-                <button id="btnExpandPrompt" class="btn btn-ghost btn-xs" type="button" title="Expand short idea into vivid prompt (uses local LM Studio/Ollama if online)">✨ Enhance</button>
+                <button id="btnRevertPrompt" class="btn btn-ghost btn-xs hidden" type="button" title="Restore original rough idea">↩ Raw</button>
+                <button id="btnExpandPrompt" class="btn btn-ghost btn-xs" type="button" title="Turn a rough idea into tailored positive + negative prompts for the selected model & style (uses local Ollama/LM Studio)">✨ Enhance</button>
                 <span class="shortcut-hint">Ctrl+Enter</span>
               </div>
             </div>
-            <textarea id="genPromptInput" class="input-full prompt-textarea" rows="3" placeholder="Describe the scene, action, camera angle, or meme caption..."></textarea>
+            <textarea id="genPromptInput" class="input-full prompt-textarea" rows="3" placeholder="Type a rough idea (e.g. 'him screaming at a ring doorbell') and click ✨ Enhance — fills positive & negative automatically..."></textarea>
           </div>
 
           <!-- Aspect / Batch / Length Row -->

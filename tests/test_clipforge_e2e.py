@@ -517,10 +517,19 @@ def test_sfx_auto_duck_meme_layout_continue_shot_and_director(tmp_path: Path, mo
     r_dir = client.post(
         "/api/director/expand",
         headers=hdrs,
-        json={"idea": "arguing with a raccoon at 2am", "mode": "image", "has_friend_photo": True},
+        json={
+            "idea": "arguing with a raccoon at 2am",
+            "mode": "video",
+            "model_id": "ltx23",
+            "style_preset": "ring_doorbell",
+            "has_friend_photo": True,
+        },
     )
     assert r_dir.status_code == 200
-    assert "raccoon" in r_dir.json()["prompt"].lower()
+    dir_data = r_dir.json()
+    assert dir_data.get("prompt") and len(dir_data["prompt"]) > 20
+    assert dir_data.get("negative_prompt") and len(dir_data["negative_prompt"]) > 10
+    assert dir_data.get("recommended_sfx") in {s["id"] for s in r_cat.json()["sfx"]}
 
 
 def test_cross_platform_helpers_fonts_and_env(tmp_path: Path, monkeypatch) -> None:

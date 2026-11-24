@@ -749,14 +749,24 @@ def expand_meme_prompt(
     idea: str,
     mode: str = "image",
     has_friend_photo: bool = False,
+    model_id: str | None = None,
+    style_preset: str | None = None,
+    camera_preset: str | None = None,
+    has_second_photo: bool = False,
+    has_end_frame: bool = False,
     endpoint: str | None = None,
 ) -> dict[str, Any]:
-    """Expand a 1-line meme concept into a vivid generation prompt, caption, and SFX pick using local LM Studio/Ollama (or built-in enhancer)."""
+    """Expand a rough 1-line idea into model-tailored positive & negative prompts, caption, and SFX using local Ollama/LM Studio (or smart fallback)."""
     return expand_meme_prompt_local(
         idea=idea,
         mode=mode,
         has_friend_photo=has_friend_photo,
         endpoint=endpoint,
+        model_id=model_id,
+        style_preset=style_preset,
+        camera_preset=camera_preset,
+        has_second_photo=has_second_photo,
+        has_end_frame=has_end_frame,
     )
 
 

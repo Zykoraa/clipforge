@@ -147,6 +147,7 @@ const el = {
   genCameraGroup: document.getElementById("genCameraGroup"),
   genCameraSelect: document.getElementById("genCameraSelect"),
   btnExpandPrompt: document.getElementById("btnExpandPrompt"),
+  btnRevertPrompt: document.getElementById("btnRevertPrompt"),
   genPromptInput: document.getElementById("genPromptInput"),
   genNegPromptInput: document.getElementById("genNegPromptInput"),
   genResSelect: document.getElementById("genResSelect"),
@@ -1965,6 +1966,8 @@ const genState = {
   lastRecentRefsKey: "",
   presetsBuilt: false,
   cameraPresetsBuilt: false,
+  rawIdea: "",
+  lastEnhancedPrompt: "",
   lightboxItem: null,
   pollTimer: null,
 };
@@ -2975,26 +2978,72 @@ el.genEndDropzone.addEventListener("drop", async (e) => {
 });
 el.btnClearEndFrame.addEventListener("click", () => setEndFrame(null));
 
-// AI Director Prompt Expander (LM Studio / Ollama or built-in enhancer)
+// AI Director Prompt Expander (Ollama / LM Studio — model- & style-aware positive + negative prompt writer)
+el.genPromptInput.addEventListener("input", () => {
+  const cur = el.genPromptInput.value.trim();
+  if (genState.lastEnhancedPrompt && cur !== genState.lastEnhancedPrompt) {
+    genState.rawIdea = cur;
+    genState.lastEnhancedPrompt = "";
+    if (el.btnRevertPrompt) el.btnRevertPrompt.classList.add("hidden");
+  }
+});
+
+if (el.btnRevertPrompt) {
+  el.btnRevertPrompt.addEventListener("click", () => {
+    if (genState.rawIdea) {
+      el.genPromptInput.value = genState.rawIdea;
+      genState.lastEnhancedPrompt = "";
+      el.btnRevertPrompt.classList.add("hidden");
+      el.genPromptInput.focus();
+      showToast("Restored original rough prompt.", "info");
+    }
+  });
+}
+
 el.btnExpandPrompt.addEventListener("click", async () => {
-  const idea = el.genPromptInput.value.trim();
-  if (!idea) {
-    showToast("Type a short joke or idea first, then click Enhance.", "warning");
+  const currentText = el.genPromptInput.value.trim();
+  if (!currentText) {
+    showToast("Type a rough idea first, then click ✨ Enhance.", "warning");
     el.genPromptInput.focus();
     return;
   }
+  // Never double-wrap an already enhanced prompt: re-rolling or switching models re-expands from the user's rough idea
+  const idea =
+    genState.lastEnhancedPrompt && currentText === genState.lastEnhancedPrompt && genState.rawIdea
+      ? genState.rawIdea
+      : currentText;
+  genState.rawIdea = idea;
+
+  const activeModel = genState.selectedModel || el.genModelSelect?.value || null;
   el.btnExpandPrompt.disabled = true;
-  el.btnExpandPrompt.textContent = "...";
+  el.btnExpandPrompt.textContent = "Thinking...";
   try {
     const res = await apiCall("/api/director/expand", "POST", {
       idea,
       mode: genState.mode,
+      model_id: activeModel,
+      style_preset: genState.preset,
+      camera_preset: genState.cameraPreset || el.genCameraSelect?.value || "none",
       has_friend_photo: Boolean(genState.ref1?.path || el.genRefPathInput.value.trim()),
+      has_second_photo: Boolean(genState.ref2?.path || el.genRef2PathInput.value.trim()),
+      has_end_frame: Boolean(genState.endFrame?.path),
     });
-    if (res.prompt) el.genPromptInput.value = res.prompt;
-    const tag = res.source.startsWith("local_llm") ? res.source : "Studio Enhancer";
-    showToast(`Enhanced via ${tag}! Suggested SFX: ${res.recommended_sfx || "vine_boom"}`, "success");
-    logEvent(`Director expanded prompt via ${tag}.`);
+    if (res.prompt) {
+      el.genPromptInput.value = res.prompt;
+      genState.lastEnhancedPrompt = res.prompt.trim();
+      if (el.btnRevertPrompt) el.btnRevertPrompt.classList.remove("hidden");
+    }
+    if (typeof res.negative_prompt === "string" && res.negative_prompt.trim()) {
+      el.genNegPromptInput.value = res.negative_prompt.trim();
+    }
+    const tag = res.source.startsWith("local_llm:")
+      ? res.source.slice("local_llm:".length)
+      : "Studio Enhancer";
+    showToast(
+      `Enhanced positive + negative for ${activeModel || genState.mode} via ${tag} (SFX: ${res.recommended_sfx || "vine_boom"})`,
+      "success"
+    );
+    logEvent(`Director expanded rough idea for ${activeModel || genState.mode} via ${tag}.`);
   } catch (err) {
     showToast(err.message, "error");
   } finally {
