@@ -6,6 +6,7 @@ import argparse
 import asyncio
 import base64
 import hmac
+import os
 import re
 import secrets
 import subprocess
@@ -99,8 +100,9 @@ def _cached_director_status(force: bool = False) -> dict[str, Any]:
         _director_status_cache["val"]["pull"] = pull_st
     return _director_status_cache["val"]
 
-# Cryptographic per-process CSRF/session token (injected into same-origin index.html only)
-SESSION_TOKEN = secrets.token_urlsafe(32)
+# Cryptographic per-process CSRF/session token (honors pre-shared CLIPFORGE_SESSION_TOKEN for native desktop shell)
+_env_tok = os.environ.get("CLIPFORGE_SESSION_TOKEN", "").strip()
+SESSION_TOKEN = _env_tok if len(_env_tok) >= 32 else secrets.token_urlsafe(32)
 MAX_UPLOAD_BYTES = 2 * 1024 * 1024 * 1024  # 2 GiB safety cap per uploaded file
 _SAFE_STEM_RE = re.compile(r"[^A-Za-z0-9._-]+")
 _LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "[::1]", "::1"}

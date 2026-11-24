@@ -65,6 +65,17 @@ Open **http://127.0.0.1:8765**.
 
 ## Standalone Native Builds (Windows & Linux)
 
+### 1. True Native Rust GPU Desktop App (`clipforge-native/`, zero web browser / zero WebView)
+Built with **`eframe` / `egui` + `wgpu`** (DirectX 12 on Windows, Vulkan on Linux), native `rfd` OS file pickers & drag-and-drop, native FFmpeg + `rodio` video/audio playback, live `tungstenite` WebSocket MCP sync, and automatic headless backend management (Win32 Job Object `KILL_ON_JOB_CLOSE` / clean SIGTERM teardown):
+
+```bash
+cd clipforge-native
+cargo build --release
+# Windows output: target/release/ClipForgeNative.exe
+# Linux output:   target/release/ClipForgeNative
+```
+
+### 2. Standalone Headless Backend / Web UI Executable (`build_exe.py`)
 `build_exe.py` builds a native standalone bundle for whichever OS you run it on (PyInstaller compiles native executables per platform, and `.github/workflows/build-release.yml` builds both Windows and Linux release archives automatically on `v*` tags):
 
 ```bash

@@ -15,6 +15,9 @@ wheels/
 # Local user workspace (media, friend photos, generated outputs, project state, renders)
 workspace/
 
+# Rust native GUI build outputs
+clipforge-native/target/
+
 # OS artifacts
 .DS_Store
 Thumbs.db
