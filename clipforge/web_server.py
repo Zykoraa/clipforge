@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import base64
 import hmac
 import re
 import secrets
+import subprocess
 import sys
 import time
 import uuid
@@ -22,7 +24,12 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from .cast import CastManager
-from .director import discover_local_llm, expand_meme_prompt_local
+from .director import (
+    discover_local_llm,
+    expand_meme_prompt_local,
+    ollama_pull_manager,
+    plan_storyboard_beats_local,
+)
 from .engine import ProjectEngine
 from .generator import (
     CAMERA_PRESETS,
@@ -32,6 +39,7 @@ from .generator import (
     GenerationCanceledError,
     MODEL_SPECS,
     PROMPT_PRESETS,
+    detail_faces_in_image,
     download_manager,
     ensure_comfyui_running,
     generate_image_via_comfyui,
@@ -39,11 +47,13 @@ from .generator import (
     get_model_availability,
     is_comfyui_reachable,
     job_manager,
+    list_available_loras,
     polish_image_hd,
     read_asset_metadata,
     resolve_auto_model,
+    save_lora_trigger,
 )
-from .media import IMAGE_EXTENSIONS, MEDIA_EXTENSIONS
+from .media import IMAGE_EXTENSIONS, MEDIA_EXTENSIONS, VIDEO_EXTENSIONS
 from .models import MemeTemplateType, TransitionType
 from .platform_utils import detect_gpu_info
 from .sfx import ensure_builtin_sfx_file, list_builtin_sfx
@@ -63,6 +73,7 @@ STATIC_DIR = _resolve_static_dir()
 engine = ProjectEngine()
 
 _voice_status_cache: dict[str, Any] = {"ts": 0.0, "val": None}
+_director_status_cache: dict[str, Any] = {"ts": 0.0, "val": None}
 
 
 def get_cast_manager() -> CastManager:
@@ -75,6 +86,18 @@ def _cached_voice_status() -> dict[str, Any]:
         _voice_status_cache["val"] = get_voice_cloner_status()
         _voice_status_cache["ts"] = now
     return _voice_status_cache["val"]
+
+
+def _cached_director_status(force: bool = False) -> dict[str, Any]:
+    now = time.monotonic()
+    pull_st = ollama_pull_manager.get_state()
+    ttl = 2.0 if pull_st.get("status") == "pulling" else 15.0
+    if force or _director_status_cache["val"] is None or (now - _director_status_cache["ts"]) > ttl:
+        _director_status_cache["val"] = discover_local_llm()
+        _director_status_cache["ts"] = now
+    else:
+        _director_status_cache["val"]["pull"] = pull_st
+    return _director_status_cache["val"]
 
 # Cryptographic per-process CSRF/session token (injected into same-origin index.html only)
 SESSION_TOKEN = secrets.token_urlsafe(32)
@@ -368,6 +391,7 @@ class GenerateVideoRequest(BaseModel):
     model: str = "auto"
     image_path: str | None = None
     end_image_path: str | None = None
+    audio_path: str | None = None
     width: int | None = None
     height: int | None = None
     match_photo_aspect: bool = False
@@ -378,6 +402,7 @@ class GenerateVideoRequest(BaseModel):
     steps: int | None = None
     cfg: float | None = None
     seed: int = -1
+    loras: list[dict[str, Any]] = []
     add_to_timeline: bool = True
     transition: TransitionType = "crossfade"
     transition_duration: float = 0.35
@@ -390,20 +415,83 @@ class GenerateImageRequest(BaseModel):
     model: str = "auto"
     image_path: str | None = None
     image_path_2: str | None = None
+    pose_image_path: str | None = None
+    mask_path: str | None = None
+    mask_data_url: str | None = None
+    parent_image: str | None = None
     width: int | None = None
     height: int | None = None
     match_photo_aspect: bool = False
     steps: int | None = None
     cfg: float | None = None
+    denoise: float = 1.0
     seed: int = -1
     batch_size: int = 1
+    loras: list[dict[str, Any]] = []
     add_to_timeline: bool = False
     transition: TransitionType = "crossfade"
     transition_duration: float = 0.35
 
 
+class PolishImageRequest(BaseModel):
+    scale: int = 2
+    prefer_ai: bool = True
+
+
+class FaceDetailRequest(BaseModel):
+    prompt: str = "sharp realistic natural facial features, crisp eyes, authentic natural skin texture"
+    cast_id: str | None = None
+    denoise: float = 0.38
+    model: str = "auto"
+
+
+class LoraTriggerRequest(BaseModel):
+    name: str
+    trigger: str = ""
+
+
+class TalkVideoRequest(BaseModel):
+    cast_id: str
+    text: str
+    prompt: str = ""
+    style_preset: str | None = None
+    speed: float = 1.0
+    add_to_timeline: bool = True
+
+
+class StoryboardPlanRequest(BaseModel):
+    concept: str
+    num_beats: int = 3
+    style_preset: str | None = None
+    has_friend_photo: bool = False
+    endpoint: str | None = None
+    model_name: str | None = None
+    literal_mode: bool = False
+
+
+class StoryboardRenderRequest(BaseModel):
+    beats: list[dict[str, Any]]
+    model: str = "auto"
+    image_path: str | None = None
+    style_preset: str | None = None
+    want_audio: bool = False
+    fast_draft: bool = False
+    num_frames: int = 65
+    loras: list[dict[str, Any]] = []
+    auto_captions: bool = True
+    add_sfx: bool = True
+    transition: TransitionType = "crossfade"
+    transition_duration: float = 0.3
+
+
+class DirectorPullRequest(BaseModel):
+    model_tag: str = "dolphin-llama3:8b"
+    endpoint: str | None = None
+
+
 class SmoothFpsRequest(BaseModel):
     target_fps: float = 32.0
+    prefer_rife: bool = True
 
 
 class CloneVoiceRequest(BaseModel):
@@ -452,6 +540,7 @@ class DirectorExpandRequest(BaseModel):
     camera_preset: str | None = None
     endpoint: str | None = None
     model_name: str | None = None
+    literal_mode: bool = False
 
 
 # -------------------------------------------------------------------------
@@ -679,7 +768,7 @@ async def api_clip_end_frame(clip_id: str) -> dict[str, Any]:
 @app.post("/api/timeline/clip/{clip_id}/smooth-fps")
 async def api_clip_smooth_fps(clip_id: str, req: SmoothFpsRequest) -> dict[str, Any]:
     try:
-        res = await asyncio.to_thread(engine.smooth_clip_fps, clip_id, req.target_fps)
+        res = await asyncio.to_thread(engine.smooth_clip_fps, clip_id, req.target_fps, req.prefer_rife)
         return {"smooth": res, "state": await asyncio.to_thread(engine.get_summary_dict)}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
@@ -742,6 +831,44 @@ async def api_attach_cast_voice(
             voice.filename or "voice.wav",
             voice_ref_text,
         )
+        return {"member": member, "cast": await asyncio.to_thread(get_cast_manager().list_members)}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+
+@app.post("/api/cast/{cast_id}/photo")
+async def api_add_cast_extra_photo(
+    cast_id: str,
+    photo: UploadFile = File(...),
+) -> dict[str, Any]:
+    try:
+        p_bytes = await photo.read()
+        if len(p_bytes) > 50 * 1024 * 1024:
+            raise ValueError("Photo exceeds 50 MB limit.")
+        member = await asyncio.to_thread(
+            get_cast_manager().add_extra_photo,
+            cast_id,
+            p_bytes,
+            photo.filename,
+        )
+        return {"member": member, "cast": await asyncio.to_thread(get_cast_manager().list_members)}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+
+@app.get("/api/cast/{cast_id}/photo/{index}")
+async def api_get_cast_extra_photo(cast_id: str, index: int) -> FileResponse:
+    m = await asyncio.to_thread(get_cast_manager().get_member, cast_id)
+    extras = (m or {}).get("extra_photos") or []
+    if index < 0 or index >= len(extras) or not Path(extras[index]).exists():
+        raise HTTPException(status_code=404, detail="Extra cast photo not found.")
+    return FileResponse(extras[index])
+
+
+@app.delete("/api/cast/{cast_id}/photo/{index}")
+async def api_delete_cast_extra_photo(cast_id: str, index: int) -> dict[str, Any]:
+    try:
+        member = await asyncio.to_thread(get_cast_manager().remove_extra_photo, cast_id, index)
         return {"member": member, "cast": await asyncio.to_thread(get_cast_manager().list_members)}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
@@ -843,6 +970,147 @@ async def api_clone_voice(req: CloneVoiceRequest) -> dict[str, Any]:
     return {"job_id": job.id, "status": "queued", "jobs": job_manager.list_jobs()}
 
 
+@app.post("/api/voice/talk-video")
+async def api_talking_friend_video(req: TalkVideoRequest) -> dict[str, Any]:
+    """1-click offline pipeline: clone friend's voice with F5-TTS -> animate lip-synced talking video (Wan 2.2 S2V or I2V+mux)."""
+    clean_text = (req.text or "").strip()
+    if not clean_text:
+        raise HTTPException(status_code=400, detail="Dialogue text cannot be empty.")
+    member = await asyncio.to_thread(get_cast_manager().get_member, req.cast_id)
+    if not member:
+        raise HTTPException(status_code=404, detail="Cast member not found.")
+    if not member.get("voice_path"):
+        raise HTTPException(status_code=400, detail=f"Attach a 5-12s voice sample to '{member['name']}' first.")
+
+    job = job_manager.create(kind="video", model="talk_sync", prompt=f"🎙 {member['name']}: {clean_text}")
+
+    async def _run_talk_job() -> None:
+        gpu_label = detect_gpu_info().get("short_name") or "local GPU"
+        job_manager.update(job.id, status="running", progress_pct=10, message=f"Step 1/2: Cloning {member['name']}'s voice on {gpu_label}...")
+        try:
+            voice_res = await asyncio.to_thread(
+                clone_voice_offline,
+                text=clean_text,
+                ref_audio_path=member["voice_path"],
+                output_dir=engine.workspace_dir / "cloned_voices",
+                ref_text=member.get("voice_ref_text", ""),
+                speed=req.speed,
+            )
+            wav_path = Path(voice_res["audio_path"])
+            dur_sec = max(1.5, float(voice_res.get("duration_sec") or 3.5))
+
+            avail = await asyncio.to_thread(get_model_availability)
+            s2v_ready = bool(avail.get("wan22_s2v", {}).get("ready"))
+            talk_prompt = (req.prompt or "").strip() or (
+                f"Natural expressive talking head shot of this person speaking directly to camera, "
+                f"realistic natural lip sync, subtle head nods, authentic lighting"
+            )
+
+            def _prog(msg: str, pct: int | None = None) -> None:
+                p = 35 + int(((pct or 0) / 100.0) * 60)
+                job_manager.update(job.id, progress_pct=min(96, p), message=f"Step 2/2: {msg}")
+
+            def _prev(durl: str) -> None:
+                job_manager.update(job.id, preview_data_url=durl)
+
+            def _pid(pid: str) -> None:
+                job_manager.update(job.id, prompt_id=pid)
+
+            gen_dir = engine.workspace_dir / "generated"
+            if s2v_ready:
+                frames = max(25, min(121, int(round(dur_sec * 16.0)) + 5))
+                vid_res = await asyncio.to_thread(
+                    generate_video_via_comfyui,
+                    prompt=talk_prompt,
+                    output_dir=gen_dir,
+                    model="wan22_s2v",
+                    image_path=member["photo_path"],
+                    audio_path=str(wav_path),
+                    style_preset=req.style_preset,
+                    match_photo_aspect=True,
+                    num_frames=frames,
+                    on_progress=_prog,
+                    on_preview=_prev,
+                    on_prompt_id=_pid,
+                    cancel_event=job.cancel_event,
+                )
+                final_video_path = Path(vid_res["video_path"])
+                engine_used = "wan22_s2v_lipsync"
+            else:
+                # Smart fallback: animate with Wan 2.2 I2V / 5B and mux exact cloned F5-TTS voice cleanly!
+                fallback_model = "wan22_i2v" if avail.get("wan22_i2v", {}).get("ready") else "wan22_5b"
+                fps_fb = 16 if fallback_model == "wan22_i2v" else 24
+                frames_fb = max(41, min(113, int(round(dur_sec * fps_fb)) + 5))
+                vid_res = await asyncio.to_thread(
+                    generate_video_via_comfyui,
+                    prompt=talk_prompt,
+                    output_dir=gen_dir,
+                    model=fallback_model,  # type: ignore[arg-type]
+                    image_path=member["photo_path"],
+                    style_preset=req.style_preset,
+                    match_photo_aspect=True,
+                    num_frames=frames_fb,
+                    on_progress=_prog,
+                    on_preview=_prev,
+                    on_prompt_id=_pid,
+                    cancel_event=job.cancel_event,
+                )
+                mux_out = gen_dir / f"talk_{member['name'].lower()[:12]}_{uuid.uuid4().hex[:6]}.mp4"
+                subprocess.run(
+                    [
+                        "ffmpeg", "-y", "-hide_banner",
+                        "-i", vid_res["video_path"],
+                        "-i", str(wav_path),
+                        "-map", "0:v:0", "-map", "1:a:0",
+                        "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
+                        "-shortest", "-movflags", "+faststart",
+                        str(mux_out),
+                    ],
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                )
+                final_video_path = mux_out
+                engine_used = f"{fallback_model}+f5tts_mux"
+
+            imported = await asyncio.to_thread(engine.import_media, [str(final_video_path)])
+            media_item = imported[0]
+            if req.add_to_timeline:
+                cur_tl = (await asyncio.to_thread(engine.get_state)).timeline
+                await asyncio.to_thread(
+                    engine.add_timeline_clip,
+                    media_item.id,
+                    0.0,
+                    None,
+                    None,
+                    "crossfade" if cur_tl else "cut",
+                    0.35 if cur_tl else 0.0,
+                    1.0,
+                    1.0,
+                    f"🎙 {member['name']}: {clean_text[:22]}",
+                )
+            job_manager.update(
+                job.id,
+                status="completed",
+                progress_pct=100,
+                message=f"Talking clip ready ({engine_used})",
+                result={
+                    "video_path": str(final_video_path.resolve()),
+                    "filename": final_video_path.name,
+                    "audio_path": str(wav_path),
+                    "engine": engine_used,
+                    "media_id": media_item.id,
+                },
+            )
+        except GenerationCanceledError:
+            job_manager.update(job.id, status="canceled", message="Canceled by user")
+        except Exception as exc:
+            job_manager.update(job.id, status="failed", message=str(exc), error=str(exc))
+
+    asyncio.create_task(_run_talk_job())
+    return {"job_id": job.id, "status": "queued", "jobs": job_manager.list_jobs()}
+
+
 @app.get("/api/sfx/catalog")
 async def api_sfx_catalog() -> dict[str, Any]:
     return {"sfx": list_builtin_sfx()}
@@ -913,7 +1181,45 @@ async def api_set_meme_layout(req: MemeLayoutRequest) -> dict[str, Any]:
 
 @app.get("/api/director/status")
 async def api_director_status(endpoint: str | None = None) -> dict[str, Any]:
-    return await asyncio.to_thread(discover_local_llm, endpoint)
+    if endpoint:
+        return await asyncio.to_thread(discover_local_llm, endpoint)
+    return await asyncio.to_thread(_cached_director_status, True)
+
+
+@app.post("/api/director/pull")
+async def api_director_pull(req: DirectorPullRequest) -> dict[str, Any]:
+    try:
+        st = await asyncio.to_thread(ollama_pull_manager.start_pull, req.model_tag, req.endpoint)
+        return {"pull": st}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+
+@app.post("/api/director/storyboard")
+async def api_director_storyboard(req: StoryboardPlanRequest) -> dict[str, Any]:
+    try:
+        has_p1 = req.has_friend_photo
+        if "@" in (req.concept or ""):
+            _, m_img1, _, matched = await asyncio.to_thread(
+                get_cast_manager().resolve_prompt_mentions,
+                req.concept,
+                "__attached__" if has_p1 else None,
+                None,
+            )
+            if matched:
+                has_p1 = bool(m_img1)
+        return await asyncio.to_thread(
+            plan_storyboard_beats_local,
+            req.concept,
+            req.num_beats,
+            req.style_preset,
+            has_p1,
+            req.endpoint,
+            req.model_name,
+            req.literal_mode,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
 
 
 @app.post("/api/director/expand")
@@ -949,6 +1255,7 @@ async def api_director_expand(req: DirectorExpandRequest) -> dict[str, Any]:
             req.camera_preset,
             has_p2,
             req.has_end_frame,
+            req.literal_mode,
         )
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
@@ -1156,15 +1463,78 @@ def _list_ref_images(limit: int = 16) -> list[dict[str, Any]]:
     ]
 
 
+def _list_video_gallery(limit: int = 36) -> list[dict[str, Any]]:
+    vid_dir = engine.workspace_dir / "generated"
+    if not vid_dir.exists():
+        return []
+    files = [p for p in vid_dir.iterdir() if p.is_file() and p.suffix.lower() in VIDEO_EXTENSIONS]
+    files.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+    return [
+        {
+            "kind": "video",
+            "filename": p.name,
+            "video_path": str(p.resolve()),
+            "url": f"/api/generate/video/{p.name}",
+            "size_bytes": p.stat().st_size,
+            "mtime": p.stat().st_mtime,
+            "meta": read_asset_metadata(p),
+        }
+        for p in files[:limit]
+    ]
+
+
+def _lora_triggers_file() -> Path:
+    return engine.workspace_dir / "lora_triggers.json"
+
+
+@app.get("/api/loras")
+async def api_list_loras() -> dict[str, Any]:
+    return {"loras": await asyncio.to_thread(list_available_loras, COMFYUI_DIR, _lora_triggers_file())}
+
+
+@app.post("/api/loras/trigger")
+async def api_save_lora_trigger(req: LoraTriggerRequest) -> dict[str, Any]:
+    await asyncio.to_thread(save_lora_trigger, _lora_triggers_file(), req.name, req.trigger)
+    return {"loras": await asyncio.to_thread(list_available_loras, COMFYUI_DIR, _lora_triggers_file())}
+
+
+@app.post("/api/loras/upload")
+async def api_upload_lora(file: UploadFile = File(...)) -> dict[str, Any]:
+    raw_name = (file.filename or "").strip()
+    base = PurePosixPath(PureWindowsPath(raw_name).name).name
+    ext = Path(base).suffix.lower()
+    if not base or ext not in (".safetensors", ".pt"):
+        raise HTTPException(status_code=400, detail="Only .safetensors or .pt LoRA files are supported.")
+    safe_stem = _SAFE_STEM_RE.sub("_", Path(base).stem).strip("._-") or "custom_lora"
+    loras_dir = (COMFYUI_DIR / "models" / "loras").resolve()
+    loras_dir.mkdir(parents=True, exist_ok=True)
+    dest = (loras_dir / f"{safe_stem[:80]}{ext}").resolve()
+    try:
+        dest.relative_to(loras_dir)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid LoRA path.") from exc
+    data = await file.read()
+    if len(data) > 2 * 1024 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="LoRA exceeds 2 GiB safety cap.")
+    dest.write_bytes(data)
+    return {
+        "filename": dest.name,
+        "loras": await asyncio.to_thread(list_available_loras, COMFYUI_DIR, _lora_triggers_file()),
+    }
+
+
 @app.get("/api/generate/status")
 async def api_generate_status() -> dict[str, Any]:
     running = await asyncio.to_thread(is_comfyui_reachable)
     models = await asyncio.to_thread(get_model_availability)
     gallery = await asyncio.to_thread(_list_image_gallery)
+    videos = await asyncio.to_thread(_list_video_gallery)
     ref_images = await asyncio.to_thread(_list_ref_images)
     gpu = await asyncio.to_thread(detect_gpu_info)
     cast = await asyncio.to_thread(get_cast_manager().list_members)
     voice_st = await asyncio.to_thread(_cached_voice_status)
+    director_st = await asyncio.to_thread(_cached_director_status, False)
+    loras = await asyncio.to_thread(list_available_loras, COMFYUI_DIR, _lora_triggers_file())
     return {
         "comfyui_url": COMFYUI_URL,
         "comfyui_dir": str(COMFYUI_DIR),
@@ -1179,9 +1549,12 @@ async def api_generate_status() -> dict[str, Any]:
         "presets": PROMPT_PRESETS,
         "camera_presets": CAMERA_PRESETS,
         "gallery": gallery,
+        "videos": videos,
         "ref_images": ref_images,
         "cast": cast,
         "voice": voice_st,
+        "director": director_st,
+        "loras": loras,
     }
 
 
@@ -1192,10 +1565,21 @@ async def api_cancel_generation_job(job_id: str) -> dict[str, Any]:
 
 
 @app.post("/api/generate/image/{filename}/polish")
-async def api_polish_generated_image(filename: str) -> dict[str, Any]:
+async def api_polish_generated_image(
+    filename: str,
+    req: PolishImageRequest | None = None,
+) -> dict[str, Any]:
     target = _resolve_safe_dir_file(engine.workspace_dir / "generated_images", filename, IMAGE_EXTENSIONS)
+    scale = req.scale if req else 2
+    prefer_ai = req.prefer_ai if req else True
     try:
-        res = await asyncio.to_thread(polish_image_hd, target, engine.workspace_dir / "generated_images", 2)
+        res = await asyncio.to_thread(
+            polish_image_hd,
+            target,
+            engine.workspace_dir / "generated_images",
+            scale,
+            prefer_ai,
+        )
         return {
             **res,
             "url": f"/api/generate/image/{res['filename']}",
@@ -1203,6 +1587,67 @@ async def api_polish_generated_image(filename: str) -> dict[str, Any]:
         }
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
+
+
+@app.post("/api/generate/image/{filename}/detail-faces")
+async def api_detail_faces_image(filename: str, req: FaceDetailRequest | None = None) -> dict[str, Any]:
+    target = _resolve_safe_dir_file(engine.workspace_dir / "generated_images", filename, IMAGE_EXTENSIONS)
+    body = req or FaceDetailRequest()
+    ref_face: str | None = None
+    if body.cast_id:
+        m = await asyncio.to_thread(get_cast_manager().get_member, body.cast_id)
+        if m and m.get("photo_path"):
+            ref_face = m["photo_path"]
+
+    job = job_manager.create(kind="image", model="face_detailer", prompt=f"Fix Faces: {filename}")
+
+    async def _run_face_job() -> None:
+        job_manager.update(job.id, status="running", progress_pct=5, message="Detecting faces...")
+        try:
+            def _prog(msg: str, pct: int | None = None) -> None:
+                upd: dict[str, Any] = {"message": msg}
+                if pct is not None:
+                    upd["progress_pct"] = pct
+                job_manager.update(job.id, **upd)
+
+            res = await asyncio.to_thread(
+                detail_faces_in_image,
+                target,
+                engine.workspace_dir / "generated_images",
+                body.prompt,
+                ref_face,
+                body.denoise,
+                body.model,
+                COMFYUI_URL,
+                COMFYUI_DIR,
+                _prog,
+            )
+            job_manager.update(
+                job.id,
+                status="completed",
+                progress_pct=100,
+                message=f"Refined {res['faces_refined']} face(s) ({res['filename']})",
+                result={**res, "preview_url": f"/api/generate/image/{res['filename']}"},
+            )
+        except Exception as exc:
+            job_manager.update(job.id, status="failed", message=str(exc), error=str(exc))
+
+    asyncio.create_task(_run_face_job())
+    return {"job_id": job.id, "status": "queued", "jobs": job_manager.list_jobs()}
+
+
+@app.get("/api/generate/video/{filename}")
+async def api_get_generated_video(filename: str) -> FileResponse:
+    target = _resolve_safe_dir_file(engine.workspace_dir / "generated", filename, VIDEO_EXTENSIONS)
+    return FileResponse(str(target), media_type="video/mp4", filename=target.name)
+
+
+@app.delete("/api/generate/video/{filename}")
+async def api_delete_generated_video(filename: str) -> dict[str, Any]:
+    target = _resolve_safe_dir_file(engine.workspace_dir / "generated", filename, VIDEO_EXTENSIONS)
+    target.unlink(missing_ok=True)
+    target.with_suffix(target.suffix + ".meta.json").unlink(missing_ok=True)
+    return {"deleted": filename, "videos": await asyncio.to_thread(_list_video_gallery)}
 
 
 @app.post("/api/generate/start-comfyui")
@@ -1288,6 +1733,22 @@ async def api_generate_image(req: GenerateImageRequest) -> dict[str, Any]:
     if not prompt_raw:
         raise HTTPException(status_code=400, detail="Prompt cannot be empty.")
 
+    # Decode optional canvas mask_data_url into a temporary PNG inside workspace/ref_images
+    resolved_mask_path = req.mask_path
+    if req.mask_data_url and not resolved_mask_path:
+        raw_durl = req.mask_data_url.strip()
+        if not raw_durl.startswith("data:image/png;base64,"):
+            raise HTTPException(status_code=400, detail="mask_data_url must be a PNG data URL.")
+        b64_part = raw_durl.split(",", 1)[1]
+        if len(b64_part) > 32 * 1024 * 1024:
+            raise HTTPException(status_code=400, detail="Inpaint mask exceeds size limit.")
+        mask_bytes = base64.b64decode(b64_part)
+        refs_dir = (engine.workspace_dir / "ref_images").resolve()
+        refs_dir.mkdir(parents=True, exist_ok=True)
+        mask_file = refs_dir / f"_mask_{uuid.uuid4().hex[:8]}.png"
+        mask_file.write_bytes(mask_bytes)
+        resolved_mask_path = str(mask_file)
+
     # Auto-resolve @Friend cast mentions and attach their saved reference photo(s)
     prompt_clean, img1, img2, _matched_cast = await asyncio.to_thread(
         get_cast_manager().resolve_prompt_mentions, prompt_raw, req.image_path, req.image_path_2
@@ -1341,6 +1802,8 @@ async def api_generate_image(req: GenerateImageRequest) -> dict[str, Any]:
                 model=chosen_model,  # type: ignore[arg-type]
                 image_path=img1,
                 image_path_2=img2,
+                pose_image_path=req.pose_image_path,
+                mask_path=resolved_mask_path,
                 negative_prompt=req.negative_prompt,
                 style_preset=req.style_preset,
                 width=req.width,
@@ -1348,8 +1811,11 @@ async def api_generate_image(req: GenerateImageRequest) -> dict[str, Any]:
                 match_photo_aspect=req.match_photo_aspect,
                 steps=req.steps,
                 cfg=req.cfg,
+                denoise=req.denoise,
                 seed=req.seed,
                 batch_size=req.batch_size,
+                loras=req.loras,
+                parent_image=req.parent_image,
                 base_url=COMFYUI_URL,
                 comfy_dir=COMFYUI_DIR,
                 auto_start=True,
@@ -1465,6 +1931,7 @@ async def api_generate_video(req: GenerateVideoRequest) -> dict[str, Any]:
                 model=chosen_model,  # type: ignore[arg-type]
                 image_path=img1,
                 end_image_path=req.end_image_path,
+                audio_path=req.audio_path,
                 negative_prompt=req.negative_prompt,
                 style_preset=req.style_preset,
                 camera_preset=req.camera_preset,
@@ -1476,6 +1943,7 @@ async def api_generate_video(req: GenerateVideoRequest) -> dict[str, Any]:
                 steps=req.steps,
                 cfg=req.cfg,
                 seed=req.seed,
+                loras=req.loras,
                 base_url=COMFYUI_URL,
                 comfy_dir=COMFYUI_DIR,
                 auto_start=True,
@@ -1517,6 +1985,121 @@ async def api_generate_video(req: GenerateVideoRequest) -> dict[str, Any]:
 
     asyncio.create_task(_run_job())
     return {"job_id": job.id, "model": chosen_model, "status": "queued", "jobs": job_manager.list_jobs()}
+
+
+@app.post("/api/generate/storyboard")
+async def api_generate_storyboard(req: StoryboardRenderRequest) -> dict[str, Any]:
+    """Render 2-4 sequential storyboard beats automatically chaining each beat's final frame -> next beat's start frame."""
+    beats = [b for b in (req.beats or []) if isinstance(b, dict) and str(b.get("prompt") or "").strip()]
+    if not beats:
+        raise HTTPException(status_code=400, detail="Storyboard requires at least 1 beat with a prompt.")
+    beats = beats[:4]
+
+    job = job_manager.create(kind="video", model="storyboard", prompt=f"🎞 {len(beats)}-beat scene: {str(beats[0]['prompt'])[:32]}")
+
+    async def _run_storyboard() -> None:
+        job_manager.update(job.id, status="running", progress_pct=2, message=f"Starting {len(beats)}-beat chained scene...")
+        try:
+            gen_dir = engine.workspace_dir / "generated"
+            cur_img = req.image_path
+            rendered_clips: list[dict[str, Any]] = []
+            cursor_sec = (await asyncio.to_thread(engine.get_state)).total_timeline_duration()
+
+            for idx, beat in enumerate(beats):
+                if job.cancel_event.is_set():
+                    raise GenerationCanceledError("Canceled by user.")
+                b_prompt_raw = str(beat.get("prompt") or "").strip()
+                b_cam = str(beat.get("camera_preset") or "none").strip()
+                b_caption = str(beat.get("caption") or "").strip()
+                b_sfx = str(beat.get("sfx_id") or "").strip()
+
+                b_prompt, img1, _, _ = await asyncio.to_thread(
+                    get_cast_manager().resolve_prompt_mentions, b_prompt_raw, cur_img, None
+                )
+                chosen_model = req.model
+                if chosen_model == "auto":
+                    chosen_model = await asyncio.to_thread(
+                        resolve_auto_model, "video", bool(img1), False, req.want_audio, req.fast_draft
+                    )
+
+                def _beat_prog(msg: str, pct: int | None = None, b_idx: int = idx) -> None:
+                    local_p = pct if pct is not None else 50
+                    overall = min(98, max(3, int(((b_idx + local_p / 100.0) / len(beats)) * 100)))
+                    job_manager.update(job.id, progress_pct=overall, message=f"Beat {b_idx + 1}/{len(beats)} ({chosen_model}): {msg}")
+
+                def _prev(durl: str) -> None:
+                    job_manager.update(job.id, preview_data_url=durl)
+
+                def _pid(pid: str) -> None:
+                    job_manager.update(job.id, prompt_id=pid)
+
+                res = await asyncio.to_thread(
+                    generate_video_via_comfyui,
+                    prompt=b_prompt,
+                    output_dir=gen_dir,
+                    model=chosen_model,  # type: ignore[arg-type]
+                    image_path=img1,
+                    style_preset=req.style_preset,
+                    camera_preset=b_cam,
+                    match_photo_aspect=True,
+                    num_frames=req.num_frames,
+                    loras=req.loras,
+                    on_progress=_beat_prog,
+                    on_preview=_prev,
+                    on_prompt_id=_pid,
+                    cancel_event=job.cancel_event,
+                )
+                imported = await asyncio.to_thread(engine.import_media, [res["video_path"]])
+                media_item = imported[0]
+                cur_tl = (await asyncio.to_thread(engine.get_state)).timeline
+                clip = await asyncio.to_thread(
+                    engine.add_timeline_clip,
+                    media_item.id,
+                    0.0,
+                    None,
+                    None,
+                    req.transition if cur_tl else "cut",
+                    req.transition_duration if cur_tl else 0.0,
+                    1.0,
+                    1.0,
+                    f"Beat {idx + 1}: {b_prompt_raw[:22]}",
+                )
+                clip_dur = max(0.5, clip.effective_duration)
+                if req.auto_captions and b_caption:
+                    await asyncio.to_thread(
+                        engine.upsert_subtitle,
+                        cursor_sec + 0.1,
+                        cursor_sec + max(0.8, clip_dur - 0.15),
+                        b_caption,
+                    )
+                if req.add_sfx and b_sfx:
+                    try:
+                        await asyncio.to_thread(engine.add_audio_overlay, b_sfx, None, cursor_sec, 1.0, True, None)
+                    except Exception:
+                        pass
+
+                cursor_sec = (await asyncio.to_thread(engine.get_state)).total_timeline_duration()
+                rendered_clips.append({"beat": idx + 1, "clip_id": clip.id, "video_path": res["video_path"], "model": chosen_model})
+
+                # Chain exact final frame -> next beat's start frame!
+                if idx + 1 < len(beats):
+                    ef = await asyncio.to_thread(engine.extract_clip_end_frame, clip.id)
+                    cur_img = ef["image_path"]
+
+            job_manager.update(
+                job.id,
+                status="completed",
+                progress_pct=100,
+                message=f"Chained {len(rendered_clips)}-beat scene added to timeline!",
+                result={"beats": rendered_clips},
+            )
+        except GenerationCanceledError:
+            job_manager.update(job.id, status="canceled", message="Canceled by user")
+        except Exception as exc:
+            job_manager.update(job.id, status="failed", message=str(exc), error=str(exc))
+
+    asyncio.create_task(_run_storyboard())
+    return {"job_id": job.id, "status": "queued", "jobs": job_manager.list_jobs()}
 
 
 def main() -> None:

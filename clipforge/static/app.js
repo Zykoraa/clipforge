@@ -107,6 +107,26 @@ const el = {
   btnOpenModelsInline: document.getElementById("btnOpenModelsInline"),
   btnModeImage: document.getElementById("btnModeImage"),
   btnModeVideo: document.getElementById("btnModeVideo"),
+  btnOpenStoryboard: document.getElementById("btnOpenStoryboard"),
+  genPoseSection: document.getElementById("genPoseSection"),
+  genPoseDropzone: document.getElementById("genPoseDropzone"),
+  genPoseFileInput: document.getElementById("genPoseFileInput"),
+  genPosePreviewCard: document.getElementById("genPosePreviewCard"),
+  genPosePreviewImg: document.getElementById("genPosePreviewImg"),
+  genPosePreviewName: document.getElementById("genPosePreviewName"),
+  btnClearPose: document.getElementById("btnClearPose"),
+  directorModelSelect: document.getElementById("directorModelSelect"),
+  directorLiteralCheck: document.getElementById("directorLiteralCheck"),
+  btnPullUncensoredLlm: document.getElementById("btnPullUncensoredLlm"),
+  genDenoiseWrap: document.getElementById("genDenoiseWrap"),
+  genDenoiseSlider: document.getElementById("genDenoiseSlider"),
+  genDenoiseValue: document.getElementById("genDenoiseValue"),
+  loraDrawer: document.getElementById("loraDrawer"),
+  loraActiveCount: document.getElementById("loraActiveCount"),
+  loraUploadInput: document.getElementById("loraUploadInput"),
+  loraStackList: document.getElementById("loraStackList"),
+  vaultFilterTabs: document.getElementById("vaultFilterTabs"),
+  vaultSearchInput: document.getElementById("vaultSearchInput"),
   btnAddCastInline: document.getElementById("btnAddCastInline"),
   genCastStrip: document.getElementById("genCastStrip"),
   genModelSelect: document.getElementById("genModelSelect"),
@@ -195,15 +215,51 @@ const el = {
   btnCloseModelsModal: document.getElementById("btnCloseModelsModal"),
   modelsImageList: document.getElementById("modelsImageList"),
   modelsVideoList: document.getElementById("modelsVideoList"),
+  modelsUtilityList: document.getElementById("modelsUtilityList"),
   imageLightboxModal: document.getElementById("imageLightboxModal"),
   lightboxTitle: document.getElementById("lightboxTitle"),
+  lightboxMetaLine: document.getElementById("lightboxMetaLine"),
+  lightboxHistoryBar: document.getElementById("lightboxHistoryBar"),
+  lightboxMaskToolbar: document.getElementById("lightboxMaskToolbar"),
+  maskBrushSize: document.getElementById("maskBrushSize"),
+  btnMaskEraser: document.getElementById("btnMaskEraser"),
+  btnMaskUndo: document.getElementById("btnMaskUndo"),
+  btnMaskClear: document.getElementById("btnMaskClear"),
+  lightboxCompareToolbar: document.getElementById("lightboxCompareToolbar"),
+  lightboxCompareSelect: document.getElementById("lightboxCompareSelect"),
+  lightboxCompareSlider: document.getElementById("lightboxCompareSlider"),
+  lightboxImgWrap: document.getElementById("lightboxImgWrap"),
+  lightboxStage: document.getElementById("lightboxStage"),
   lightboxImg: document.getElementById("lightboxImg"),
+  lightboxCompareImg: document.getElementById("lightboxCompareImg"),
+  lightboxCompareDivider: document.getElementById("lightboxCompareDivider"),
+  lightboxMaskCanvas: document.getElementById("lightboxMaskCanvas"),
+  lightboxFollowupInput: document.getElementById("lightboxFollowupInput"),
+  btnLightboxApplyFollowup: document.getElementById("btnLightboxApplyFollowup"),
+  btnLightboxMaskToggle: document.getElementById("btnLightboxMaskToggle"),
+  btnLightboxCompareToggle: document.getElementById("btnLightboxCompareToggle"),
   btnCloseLightbox: document.getElementById("btnCloseLightbox"),
   btnLightboxAnimate: document.getElementById("btnLightboxAnimate"),
+  btnLightboxVary: document.getElementById("btnLightboxVary"),
+  btnLightboxDetailFaces: document.getElementById("btnLightboxDetailFaces"),
   btnLightboxEdit: document.getElementById("btnLightboxEdit"),
   btnLightboxPolish: document.getElementById("btnLightboxPolish"),
+  btnLightboxPolish4x: document.getElementById("btnLightboxPolish4x"),
   btnLightboxRemix: document.getElementById("btnLightboxRemix"),
   btnLightboxTimeline: document.getElementById("btnLightboxTimeline"),
+  // Storyboard Modal
+  storyboardModal: document.getElementById("storyboardModal"),
+  btnCloseStoryboardModal: document.getElementById("btnCloseStoryboardModal"),
+  sbConceptInput: document.getElementById("sbConceptInput"),
+  sbBeatCountSelect: document.getElementById("sbBeatCountSelect"),
+  btnPlanStoryboard: document.getElementById("btnPlanStoryboard"),
+  sbAutoCaptions: document.getElementById("sbAutoCaptions"),
+  sbAddSfx: document.getElementById("sbAddSfx"),
+  sbWantAudio: document.getElementById("sbWantAudio"),
+  sbFastDraft: document.getElementById("sbFastDraft"),
+  sbBeatsContainer: document.getElementById("sbBeatsContainer"),
+  btnAddManualBeat: document.getElementById("btnAddManualBeat"),
+  btnRenderStoryboard: document.getElementById("btnRenderStoryboard"),
   // Cast Modal & Offline Voice Cloner
   castModal: document.getElementById("castModal"),
   btnCloseCastModal: document.getElementById("btnCloseCastModal"),
@@ -220,6 +276,7 @@ const el = {
   voiceSpeedInput: document.getElementById("voiceSpeedInput"),
   voiceAutoTimeline: document.getElementById("voiceAutoTimeline"),
   btnCloneVoice: document.getElementById("btnCloneVoice"),
+  btnTalkSyncVideo: document.getElementById("btnTalkSyncVideo"),
   toastContainer: document.getElementById("toastContainer"),
 };
 
@@ -1011,10 +1068,12 @@ function renderInspector() {
         try {
           const res = await apiCall(`/api/timeline/clip/${encodeURIComponent(s.clip_id)}/smooth-fps`, "POST", {
             target_fps: 32.0,
+            prefer_rife: true,
           });
           applyServerSummary(res.state);
-          showToast("Smoothed clip to 32fps with fast-seek keyframes!", "success");
-          logEvent(`Smoothed clip ${s.label} to 32fps.`);
+          const engLabel = res.smooth?.engine || "32fps";
+          showToast(`Smoothed clip to 32fps via ${engLabel}!`, "success");
+          logEvent(`Smoothed clip ${s.label} to 32fps via ${engLabel}.`);
         } catch (err) {
           showToast(err.message, "error");
         } finally {
@@ -2011,17 +2070,29 @@ const genState = {
   cameraPreset: "none",
   ref1: null, // { path, filename, url }
   ref2: null,
+  poseRef: null,
   endFrame: null,
+  denoise: 1.0,
+  selectedLoras: {}, // { [loraName]: { name, strength, trigger } }
+  vaultFilter: "all", // all | image | video
+  vaultSearch: "",
   statusData: null,
   lastSelectKey: "",
   lastGalleryKey: "",
   lastRecentRefsKey: "",
   lastCastKey: "",
+  lastLorasKey: "",
+  lastDirectorKey: "",
   presetsBuilt: false,
   cameraPresetsBuilt: false,
   rawIdea: "",
   lastEnhancedPrompt: "",
   lightboxItem: null,
+  maskMode: false,
+  maskEraser: false,
+  maskStrokes: [], // array of { size, erase, pts: [[nx, ny], ...] } normalized 0..1
+  compareMode: false,
+  storyboardBeats: [],
   pollTimer: null,
 };
 
@@ -2118,6 +2189,176 @@ function clearRefSlot(slotNum) {
   setRefSlot(slotNum, null);
 }
 
+function setPoseRef(info) {
+  genState.poseRef = info;
+  if (info && info.path) {
+    el.genPosePreviewName.textContent = info.filename || info.path.split(/[\\/]/).pop() || "pose.png";
+    if (info.url) {
+      el.genPosePreviewImg.src = withToken(info.url);
+      el.genPosePreviewImg.style.display = "block";
+    } else {
+      el.genPosePreviewImg.removeAttribute("src");
+      el.genPosePreviewImg.style.display = "none";
+    }
+    el.genPoseDropzone.classList.add("hidden");
+    el.genPosePreviewCard.classList.remove("hidden");
+  } else {
+    el.genPosePreviewImg.removeAttribute("src");
+    el.genPosePreviewCard.classList.add("hidden");
+    el.genPoseDropzone.classList.remove("hidden");
+  }
+}
+
+function updateDenoiseLabel() {
+  const v = parseFloat(el.genDenoiseSlider?.value || "1.0");
+  genState.denoise = Number.isNaN(v) ? 1.0 : v;
+  if (!el.genDenoiseValue) return;
+  const tag = genState.denoise >= 0.99 ? "Full" : genState.denoise <= 0.45 ? "Subtle" : "Vary";
+  el.genDenoiseValue.textContent = `${genState.denoise.toFixed(2)} · ${tag}`;
+}
+
+function getActiveLorasPayload() {
+  return Object.values(genState.selectedLoras || {}).slice(0, 3);
+}
+
+function renderDirectorBar(dir) {
+  if (!dir || !el.directorModelSelect) return;
+  const key = `${dir.available}|${dir.is_ollama}|${dir.has_uncensored}|${dir.pull?.status}|${Math.round(dir.pull?.pct || 0)}|${(dir.models || []).join(",")}`;
+  if (key === genState.lastDirectorKey) return;
+  genState.lastDirectorKey = key;
+
+  const prev = el.directorModelSelect.value;
+  el.directorModelSelect.innerHTML = "";
+  const autoOpt = document.createElement("option");
+  autoOpt.value = "";
+  autoOpt.textContent = dir.available
+    ? `Director: Auto (${dir.recommended_model || "Local LLM"})`
+    : "Director: Built-in Literal (no Ollama/LM Studio)";
+  el.directorModelSelect.appendChild(autoOpt);
+
+  for (const d of dir.model_details || []) {
+    const opt = document.createElement("option");
+    opt.value = d.id;
+    const lock = d.uncensored ? "🔓 " : "";
+    const sz = d.size_gb > 0 ? ` (${d.size_gb}GB)` : "";
+    opt.textContent = `${lock}${d.id}${sz}`;
+    el.directorModelSelect.appendChild(opt);
+  }
+  if ([...el.directorModelSelect.options].some((o) => o.value === prev)) {
+    el.directorModelSelect.value = prev;
+  }
+
+  if (el.btnPullUncensoredLlm) {
+    const pulling = dir.pull?.status === "pulling";
+    const showPull = dir.is_ollama && (!dir.has_uncensored || pulling);
+    el.btnPullUncensoredLlm.classList.toggle("hidden", !showPull);
+    el.btnPullUncensoredLlm.disabled = pulling;
+    el.btnPullUncensoredLlm.textContent = pulling
+      ? `⬇ Pulling ${Math.round(dir.pull?.pct || 0)}%...`
+      : "⬇ Uncensored LLM";
+  }
+}
+
+function renderLoraStacker(lorasList) {
+  if (!el.loraStackList) return;
+  const list = lorasList || [];
+  const activeNames = Object.keys(genState.selectedLoras);
+  if (el.loraActiveCount) {
+    el.loraActiveCount.textContent = `${activeNames.length} active`;
+    el.loraActiveCount.className = activeNames.length > 0 ? "badge green" : "badge";
+  }
+
+  const key = list.map((l) => `${l.name}:${l.trigger}:${l.size_mb}`).join("|") + "||" + activeNames.sort().join(",");
+  if (key === genState.lastLorasKey) return;
+  genState.lastLorasKey = key;
+
+  el.loraStackList.innerHTML = "";
+  if (!list.length) {
+    const empty = document.createElement("div");
+    empty.className = "hint";
+    empty.textContent = "No custom LoRAs found yet — click + Add .safetensors to drop style/character LoRAs here.";
+    el.loraStackList.appendChild(empty);
+    return;
+  }
+
+  for (const item of list) {
+    const sel = genState.selectedLoras[item.name];
+    const row = document.createElement("div");
+    row.className = `lora-row ${sel ? "active" : ""}`;
+
+    const top = document.createElement("div");
+    top.className = "lora-row-top";
+    const lbl = document.createElement("label");
+    lbl.className = "checkbox-micro";
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.checked = Boolean(sel);
+    cb.addEventListener("change", () => {
+      if (cb.checked) {
+        if (Object.keys(genState.selectedLoras).length >= 3) {
+          cb.checked = false;
+          showToast("Max 3 custom LoRAs stacked at once.", "warning");
+          return;
+        }
+        genState.selectedLoras[item.name] = { name: item.name, strength: 0.8, trigger: item.trigger || "" };
+      } else {
+        delete genState.selectedLoras[item.name];
+      }
+      genState.lastLorasKey = "";
+      renderLoraStacker(genState.statusData?.loras || list);
+    });
+    const nm = document.createElement("span");
+    nm.textContent = item.filename;
+    nm.title = item.name;
+    lbl.appendChild(cb);
+    lbl.appendChild(nm);
+
+    const fam = document.createElement("span");
+    fam.className = "badge";
+    fam.textContent = item.is_builtin ? `${item.family}·speed` : `${item.family}·${item.size_mb}MB`;
+    top.appendChild(lbl);
+    top.appendChild(fam);
+    row.appendChild(top);
+
+    if (sel) {
+      const ctrls = document.createElement("div");
+      ctrls.className = "lora-row-controls";
+      const strLbl = document.createElement("span");
+      strLbl.className = "hint";
+      strLbl.textContent = `${Number(sel.strength).toFixed(2)}`;
+      const slider = document.createElement("input");
+      slider.type = "range";
+      slider.min = "0.10";
+      slider.max = "1.50";
+      slider.step = "0.05";
+      slider.value = String(sel.strength);
+      slider.style.width = "74px";
+      slider.addEventListener("input", () => {
+        sel.strength = parseFloat(slider.value);
+        strLbl.textContent = sel.strength.toFixed(2);
+      });
+
+      const trigInp = document.createElement("input");
+      trigInp.type = "text";
+      trigInp.className = "lora-trigger-input";
+      trigInp.placeholder = "Trigger word (auto-saved)...";
+      trigInp.value = sel.trigger || item.trigger || "";
+      trigInp.addEventListener("change", async () => {
+        sel.trigger = trigInp.value.trim();
+        try {
+          await apiCall("/api/loras/trigger", "POST", { name: item.name, trigger: sel.trigger });
+        } catch (_) {}
+      });
+
+      ctrls.appendChild(slider);
+      ctrls.appendChild(strLbl);
+      ctrls.appendChild(trigInp);
+      row.appendChild(ctrls);
+    }
+    el.loraStackList.appendChild(row);
+  }
+}
+
 function setEndFrame(info) {
   genState.endFrame = info;
   if (info && info.path) {
@@ -2204,7 +2445,7 @@ function resolveAutoModelPreview(modelsMap) {
 
 function syncModelDropdownAndControls() {
   const modelsMap = genState.statusData?.models || {};
-  const modeModels = Object.values(modelsMap).filter((m) => m.kind === genState.mode);
+  const modeModels = Object.values(modelsMap).filter((m) => m.kind === genState.mode && !m.requires_audio);
   if (!modeModels.length) return;
 
   const isAuto = genState.selectedModel === "auto" || !genState.selectedModel;
@@ -2286,6 +2527,13 @@ function syncModelDropdownAndControls() {
   el.genRef2Section.classList.toggle("hidden", !allowImg2);
   el.genRef2PathWrap.classList.toggle("hidden", !allowImg2);
   el.genEndFrameSection.classList.toggle("hidden", !(genState.mode === "video" && activeModel.supports_end_image));
+  if (el.genPoseSection) {
+    el.genPoseSection.classList.toggle("hidden", genState.mode !== "image");
+  }
+  const hasPhoto1Now = Boolean(genState.ref1?.path || el.genRefPathInput.value.trim());
+  if (el.genDenoiseWrap) {
+    el.genDenoiseWrap.classList.toggle("hidden", !(genState.mode === "image" && hasPhoto1Now));
+  }
 
   // Inline Model Readiness / Download Banner
   const dl = activeModel.download;
@@ -2385,7 +2633,8 @@ function renderJobs(jobs) {
     const hdr = document.createElement("div");
     hdr.className = "gen-job-header";
     const left = document.createElement("span");
-    const icon = j.kind === "image" ? "🖼" : j.kind === "voice" ? "🎙" : "🎬";
+    const icon =
+      j.kind === "image" ? "🖼" : j.kind === "voice" ? "🎙" : j.kind === "storyboard" ? "🎞" : "🎬";
     left.textContent = `${icon} ${j.model} · ${j.prompt.slice(0, 24)}`;
 
     const rightBox = document.createElement("span");
@@ -2446,15 +2695,108 @@ function renderJobs(jobs) {
   }
 }
 
-async function polishGalleryImage(item) {
+async function polishGalleryImage(item, scale = 2) {
   try {
-    showToast(`Polishing "${item.filename}" to 2× HD...`, "info");
-    const res = await apiCall(`/api/generate/image/${encodeURIComponent(item.filename)}/polish`, "POST");
+    showToast(`Upscaling "${item.filename}" to ${scale}× Neural HD...`, "info");
+    const res = await apiCall(`/api/generate/image/${encodeURIComponent(item.filename)}/polish`, "POST", {
+      scale,
+      prefer_ai: true,
+    });
     genState.lastGalleryKey = "";
     await refreshGeneratorStatus();
+    const fresh = (genState.statusData?.gallery || []).find((g) => g.filename === res.filename);
+    if (fresh) {
+      openImageLightbox(fresh);
+    } else {
+      el.imageLightboxModal.classList.add("hidden");
+    }
+    showToast(`Saved ${scale}× HD (${res.engine || "HD"}): ${res.filename} (${res.width}×${res.height})`, "success");
+    logEvent(`${scale}× HD polished ${item.filename} via ${res.engine} -> ${res.filename}`);
+  } catch (err) {
+    showToast(err.message, "error");
+  }
+}
+
+async function detailFacesGalleryImage(item) {
+  try {
+    showToast(`Running automatic Face Detailer on "${item.filename}"...`, "info");
+    const res = await apiCall(`/api/generate/image/${encodeURIComponent(item.filename)}/detail-faces`, "POST", {
+      denoise: 0.38,
+      model: "auto",
+    });
     el.imageLightboxModal.classList.add("hidden");
-    showToast(`Saved 2× HD image: ${res.filename} (${res.width}×${res.height})`, "success");
-    logEvent(`2× HD polished ${item.filename} -> ${res.filename}`);
+    logEvent(`Queued Face Detailer job ${res.job_id} for ${item.filename}`);
+    await refreshGeneratorStatus();
+  } catch (err) {
+    showToast(err.message, "error");
+  }
+}
+
+function varyGalleryImage(item) {
+  switchLeftTab("tab-generate");
+  const meta = item.meta || {};
+  const models = genState.statusData?.models || {};
+  const best = models.flux2_klein_9b?.ready
+    ? "flux2_klein_9b"
+    : models.flux2_klein?.ready
+      ? "flux2_klein"
+      : models.qwen_edit_2511?.ready
+        ? "qwen_edit_2511"
+        : "qwen_edit";
+  setStudioMode("image", { userInitiated: true, preferredModel: best });
+  setRefSlot(1, { path: item.image_path, filename: item.filename, url: item.url });
+  if (meta.raw_prompt || meta.prompt) el.genPromptInput.value = meta.raw_prompt || meta.prompt;
+  if (el.genDenoiseSlider) {
+    el.genDenoiseSlider.value = "0.55";
+    updateDenoiseLabel();
+  }
+  el.genSeedInput.value = "-1";
+  el.imageLightboxModal.classList.add("hidden");
+  el.genPromptInput.focus();
+  showToast(`Loaded "${item.filename}" in Vary Slightly mode (denoise 0.55).`, "success");
+}
+
+function remixVaultVideo(item) {
+  const meta = item.meta;
+  switchLeftTab("tab-generate");
+  setStudioMode("video", { userInitiated: true, preferredModel: meta?.model || "auto" });
+  if (meta) {
+    el.genPromptInput.value = meta.raw_prompt || meta.prompt || "";
+    genState.rawIdea = el.genPromptInput.value.trim();
+    genState.lastEnhancedPrompt = "";
+    if (el.btnRevertPrompt) el.btnRevertPrompt.classList.add("hidden");
+    if (meta.negative_prompt) el.genNegPromptInput.value = meta.negative_prompt;
+    if (meta.style_preset) {
+      genState.preset = meta.style_preset;
+      renderPresetPills(genState.statusData?.presets);
+    }
+    if (meta.camera_preset && el.genCameraSelect) {
+      genState.cameraPreset = meta.camera_preset;
+      el.genCameraSelect.value = meta.camera_preset;
+    }
+    if (meta.seed) el.genSeedInput.value = String(meta.seed);
+    if (meta.image_path) {
+      setRefSlot(1, { path: meta.image_path, filename: meta.image_path.split(/[\\/]/).pop(), url: null });
+    }
+    showToast(`Loaded video Remix settings (${meta.model}, seed ${meta.seed || "random"}).`, "success");
+  }
+  el.genPromptInput.focus();
+}
+
+async function addVideoToTimeline(item) {
+  try {
+    const importedSum = await apiCall("/api/media/import", "POST", { paths: [item.video_path] });
+    const bin = importedSum.project?.media_bin || [];
+    const media = bin.find((m) => m.path === item.video_path) || bin[bin.length - 1];
+    if (!media) throw new Error("Imported video not found in Media Bin.");
+    const sum = await apiCall("/api/timeline/clip", "POST", {
+      media_id: media.id,
+      transition: (importedSum.project?.timeline || []).length > 0 ? "crossfade" : "cut",
+      transition_duration: 0.35,
+      label: item.filename.slice(0, 28),
+    });
+    applyServerSummary(sum);
+    showToast(`Added "${item.filename}" to timeline.`, "success");
   } catch (err) {
     showToast(err.message, "error");
   }
@@ -2495,7 +2837,7 @@ function renderCastUI(castList) {
   const list = castList || [];
   if (el.castBadgeCount) el.castBadgeCount.textContent = String(list.length);
 
-  const key = list.map((c) => `${c.id}:${c.name}:${c.has_voice}`).join("|") + "|" + (genState.ref1?.path || "") + "|" + (genState.ref2?.path || "");
+  const key = list.map((c) => `${c.id}:${c.name}:${c.has_voice}:${c.photo_count || 1}`).join("|") + "|" + (genState.ref1?.path || "") + "|" + (genState.ref2?.path || "");
   if (key === genState.lastCastKey) return;
   genState.lastCastKey = key;
 
@@ -2584,9 +2926,74 @@ function renderCastUI(castList) {
         nm.textContent = `${m.name} (${m.handle})`;
         const sub = document.createElement("div");
         sub.className = "hint";
-        sub.textContent = m.has_voice ? "Photo + 🎙 Voice Ready" : "Photo Ready (no voice yet)";
+        const pCount = m.photo_count || 1;
+        sub.textContent = `${pCount} angle${pCount > 1 ? "s" : ""} · ${m.has_voice ? "🎙 Voice Ready" : "No voice yet"}`;
         body.appendChild(nm);
         body.appendChild(sub);
+
+        // Multi-angle extra photos strip + "+ Angle" button (up to 4 photos per friend)
+        const angRow = document.createElement("div");
+        angRow.className = "cast-angles-row";
+        (m.extra_photo_urls || []).forEach((u, idx) => {
+          const wrap = document.createElement("div");
+          wrap.className = "cast-angle-mini";
+          const aimg = document.createElement("img");
+          aimg.src = withToken(u);
+          aimg.alt = `${m.name} angle ${idx + 2}`;
+          const rbtn = document.createElement("button");
+          rbtn.type = "button";
+          rbtn.className = "cast-angle-del";
+          rbtn.textContent = "×";
+          rbtn.title = "Remove extra angle";
+          rbtn.addEventListener("click", async () => {
+            try {
+              await apiCall(`/api/cast/${encodeURIComponent(m.id)}/photo/${idx}`, "DELETE");
+              genState.lastCastKey = "";
+              await refreshGeneratorStatus();
+            } catch (err) {
+              showToast(err.message, "error");
+            }
+          });
+          wrap.appendChild(aimg);
+          wrap.appendChild(rbtn);
+          angRow.appendChild(wrap);
+        });
+        if ((m.extra_photo_urls || []).length < 3) {
+          const addAngLbl = document.createElement("label");
+          addAngLbl.className = "btn btn-ghost btn-xs";
+          addAngLbl.style.cursor = "pointer";
+          addAngLbl.textContent = "+ Angle";
+          addAngLbl.title = "Add another angle/expression photo for tighter identity lock";
+          const fInp = document.createElement("input");
+          fInp.type = "file";
+          fInp.accept = "image/*";
+          fInp.hidden = true;
+          fInp.addEventListener("change", async (ev) => {
+            const f = ev.target.files?.[0];
+            if (!f) return;
+            const fd = new FormData();
+            fd.append("photo", f);
+            try {
+              const r = await fetch(`/api/cast/${encodeURIComponent(m.id)}/photo`, {
+                method: "POST",
+                headers: { "X-ClipForge-Token": SESSION_TOKEN },
+                body: fd,
+              });
+              if (!r.ok) {
+                const err = await r.json().catch(() => ({ detail: r.statusText }));
+                throw new Error(err.detail || "Upload failed");
+              }
+              genState.lastCastKey = "";
+              showToast(`Added extra angle for ${m.name}!`, "success");
+              await refreshGeneratorStatus();
+            } catch (err) {
+              showToast(err.message, "error");
+            }
+          });
+          addAngLbl.appendChild(fInp);
+          angRow.appendChild(addAngLbl);
+        }
+        body.appendChild(angRow);
 
         const delBtn = document.createElement("button");
         delBtn.type = "button";
@@ -2613,11 +3020,250 @@ function renderCastUI(castList) {
   }
 }
 
+// --- Lightbox Mask Brush, Version Chain, Follow-Up Edit & A/B Compare ---
+function syncMaskCanvasSize() {
+  const c = el.lightboxMaskCanvas;
+  const img = el.lightboxImg;
+  if (!c || !img) return;
+  const rect = img.getBoundingClientRect();
+  if (rect.width > 10 && rect.height > 10) {
+    c.width = Math.round(rect.width);
+    c.height = Math.round(rect.height);
+    redrawMaskCanvas();
+  }
+}
+
+function redrawMaskCanvas() {
+  const c = el.lightboxMaskCanvas;
+  if (!c) return;
+  const mctx = c.getContext("2d");
+  mctx.clearRect(0, 0, c.width, c.height);
+  for (const stroke of genState.maskStrokes) {
+    if (!stroke.pts.length) continue;
+    mctx.save();
+    mctx.lineCap = "round";
+    mctx.lineJoin = "round";
+    mctx.lineWidth = stroke.size;
+    if (stroke.erase) {
+      mctx.globalCompositeOperation = "destination-out";
+      mctx.strokeStyle = "rgba(0,0,0,1)";
+    } else {
+      mctx.globalCompositeOperation = "source-over";
+      mctx.strokeStyle = "rgba(239, 68, 68, 0.58)";
+    }
+    mctx.beginPath();
+    stroke.pts.forEach(([nx, ny], i) => {
+      const px = nx * c.width;
+      const py = ny * c.height;
+      if (i === 0) mctx.moveTo(px, py);
+      else mctx.lineTo(px, py);
+    });
+    mctx.stroke();
+    mctx.restore();
+  }
+  updateFollowupButtonLabel();
+}
+
+function exportBinaryMaskDataUrl() {
+  if (!genState.maskStrokes.length) return null;
+  const img = el.lightboxImg;
+  const nw = img.naturalWidth || 1024;
+  const nh = img.naturalHeight || 1024;
+  const dispW = el.lightboxMaskCanvas.width || nw;
+  const scale = nw / Math.max(1, dispW);
+
+  const off = document.createElement("canvas");
+  off.width = nw;
+  off.height = nh;
+  const octx = off.getContext("2d");
+  octx.fillStyle = "#000000";
+  octx.fillRect(0, 0, nw, nh);
+  for (const stroke of genState.maskStrokes) {
+    if (!stroke.pts.length) continue;
+    octx.save();
+    octx.lineCap = "round";
+    octx.lineJoin = "round";
+    octx.lineWidth = Math.max(6, stroke.size * scale);
+    octx.strokeStyle = stroke.erase ? "#000000" : "#ffffff";
+    octx.beginPath();
+    stroke.pts.forEach(([nx, ny], i) => {
+      const px = nx * nw;
+      const py = ny * nh;
+      if (i === 0) octx.moveTo(px, py);
+      else octx.lineTo(px, py);
+    });
+    octx.stroke();
+    octx.restore();
+  }
+  return off.toDataURL("image/png");
+}
+
+function updateFollowupButtonLabel() {
+  if (!el.btnLightboxApplyFollowup) return;
+  el.btnLightboxApplyFollowup.textContent =
+    genState.maskStrokes.length > 0 ? "🖌 Inpaint Masked Area" : "✨ Apply Edit";
+}
+
+function setLightboxMaskMode(enabled) {
+  genState.maskMode = Boolean(enabled);
+  if (enabled) setLightboxCompareMode(false);
+  el.lightboxMaskToolbar?.classList.toggle("hidden", !genState.maskMode);
+  el.lightboxMaskCanvas?.classList.toggle("hidden", !genState.maskMode);
+  el.btnLightboxMaskToggle?.classList.toggle("active", genState.maskMode);
+  if (genState.maskMode) {
+    setTimeout(syncMaskCanvasSize, 40);
+  }
+}
+
+function setLightboxCompareMode(enabled) {
+  genState.compareMode = Boolean(enabled);
+  if (enabled) setLightboxMaskMode(false);
+  el.lightboxCompareToolbar?.classList.toggle("hidden", !genState.compareMode);
+  el.lightboxCompareImg?.classList.toggle("hidden", !genState.compareMode);
+  el.lightboxCompareDivider?.classList.toggle("hidden", !genState.compareMode);
+  el.btnLightboxCompareToggle?.classList.toggle("active", genState.compareMode);
+
+  if (genState.compareMode && el.lightboxCompareSelect) {
+    const gal = genState.statusData?.gallery || [];
+    const cur = genState.lightboxItem;
+    const others = gal.filter((g) => g.filename !== cur?.filename);
+    el.lightboxCompareSelect.innerHTML = "";
+    for (const g of others) {
+      const opt = document.createElement("option");
+      opt.value = g.filename;
+      opt.textContent = g.filename;
+      el.lightboxCompareSelect.appendChild(opt);
+    }
+    const parentFn = cur?.meta?.parent_image;
+    if (parentFn && others.some((g) => g.filename === parentFn)) {
+      el.lightboxCompareSelect.value = parentFn;
+    }
+    syncLightboxCompareImage();
+  }
+}
+
+function syncLightboxCompareImage() {
+  const gal = genState.statusData?.gallery || [];
+  const picked = gal.find((g) => g.filename === el.lightboxCompareSelect?.value);
+  if (picked && el.lightboxCompareImg) {
+    el.lightboxCompareImg.src = withToken(picked.url);
+  }
+  const pct = Number(el.lightboxCompareSlider?.value ?? 50);
+  if (el.lightboxCompareImg) {
+    el.lightboxCompareImg.style.clipPath = `inset(0 ${100 - pct}% 0 0)`;
+  }
+  if (el.lightboxCompareDivider) {
+    el.lightboxCompareDivider.style.left = `${pct}%`;
+  }
+}
+
+function renderLightboxHistoryChain(item) {
+  if (!el.lightboxHistoryBar) return;
+  const gal = genState.statusData?.gallery || [];
+  const byName = Object.fromEntries(gal.map((g) => [g.filename, g]));
+  const chain = [];
+  let cur = item;
+  const seen = new Set();
+  while (cur && !seen.has(cur.filename)) {
+    seen.add(cur.filename);
+    chain.unshift(cur);
+    const parentName = cur.meta?.parent_image;
+    cur = parentName ? byName[parentName] : null;
+  }
+  // Also find immediate children of this image
+  const children = gal.filter((g) => g.meta?.parent_image === item.filename && !seen.has(g.filename));
+  const fullChain = [...chain, ...children.slice(0, 3)];
+  if (fullChain.length <= 1) {
+    el.lightboxHistoryBar.classList.add("hidden");
+    return;
+  }
+  el.lightboxHistoryBar.classList.remove("hidden");
+  el.lightboxHistoryBar.innerHTML = "";
+  const lbl = document.createElement("span");
+  lbl.className = "hint";
+  lbl.textContent = "History:";
+  el.lightboxHistoryBar.appendChild(lbl);
+  fullChain.forEach((node, idx) => {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = `history-crumb ${node.filename === item.filename ? "active" : ""}`;
+    btn.textContent = idx === 0 ? "Original" : `v${idx + 1} (${node.meta?.inpainted ? "Inpaint" : node.meta?.face_detailed ? "Faces" : node.meta?.hd_scale ? `${node.meta.hd_scale}×HD` : "Edit"})`;
+    btn.addEventListener("click", () => openImageLightbox(node));
+    el.lightboxHistoryBar.appendChild(btn);
+  });
+}
+
 function openImageLightbox(item) {
   genState.lightboxItem = item;
+  genState.maskStrokes = [];
+  genState.maskEraser = false;
+  if (el.btnMaskEraser) el.btnMaskEraser.classList.remove("active");
+  setLightboxMaskMode(false);
+  setLightboxCompareMode(false);
+
   el.lightboxTitle.textContent = item.filename;
+  if (el.lightboxMetaLine) {
+    const m = item.meta;
+    el.lightboxMetaLine.textContent = m
+      ? `${m.model || "image"} · seed ${m.seed ?? "?"} · ${m.width || "?"}×${m.height || "?"}${m.denoise && m.denoise < 0.99 ? ` · denoise ${m.denoise}` : ""}`
+      : "";
+  }
+  if (el.lightboxFollowupInput) el.lightboxFollowupInput.value = "";
   el.lightboxImg.src = withToken(item.url);
+  renderLightboxHistoryChain(item);
+  updateFollowupButtonLabel();
   el.imageLightboxModal.classList.remove("hidden");
+}
+
+async function submitLightboxFollowup() {
+  const item = genState.lightboxItem;
+  if (!item) return;
+  const instr = (el.lightboxFollowupInput?.value || "").trim();
+  if (!instr) {
+    showToast("Type what to change or fix in this image first.", "warning");
+    el.lightboxFollowupInput?.focus();
+    return;
+  }
+  const maskUrl = exportBinaryMaskDataUrl();
+  const models = genState.statusData?.models || {};
+  const bestModel = models.qwen_edit_2511?.ready
+    ? "qwen_edit_2511"
+    : models.qwen_edit?.ready
+      ? "qwen_edit"
+      : models.flux2_klein_9b?.ready
+        ? "flux2_klein_9b"
+        : "flux2_klein";
+
+  el.btnLightboxApplyFollowup.disabled = true;
+  try {
+    const payload = {
+      prompt: instr,
+      model: bestModel,
+      image_path: item.image_path,
+      parent_image: item.filename,
+      match_photo_aspect: true,
+      denoise: maskUrl ? 0.88 : 1.0,
+      mask_data_url: maskUrl,
+      loras: getActiveLorasPayload(),
+      batch_size: 1,
+      add_to_timeline: false,
+    };
+    const res = await apiCall("/api/generate/image", "POST", payload);
+    el.imageLightboxModal.classList.add("hidden");
+    switchLeftTab("tab-generate");
+    showToast(
+      maskUrl
+        ? `Inpainting masked area with ${res.model} (job ${res.job_id})...`
+        : `Applying follow-up edit with ${res.model} (job ${res.job_id})...`,
+      "info"
+    );
+    logEvent(`Queued ${maskUrl ? "inpaint" : "follow-up edit"} on ${item.filename} (${res.model}).`);
+    await refreshGeneratorStatus();
+  } catch (err) {
+    showToast(err.message, "error");
+  } finally {
+    el.btnLightboxApplyFollowup.disabled = false;
+  }
 }
 
 function animateImageInVideoMode(item) {
@@ -2673,69 +3319,142 @@ async function addImageToTimeline(item) {
   }
 }
 
-function renderGallery(gallery) {
-  const list = gallery || [];
-  el.genGalleryCount.textContent = String(list.length);
-  el.genGallerySection.classList.toggle("hidden", list.length === 0);
+function renderGallery(gallery, videos = []) {
+  const imgs = (gallery || []).map((g) => ({ ...g, kind: "image" }));
+  const vids = (videos || []).map((v) => ({ ...v, kind: "video" }));
+  const combined = [...imgs, ...vids].sort((a, b) => (b.mtime || 0) - (a.mtime || 0));
 
-  const key = list.map((g) => `${g.filename}:${g.mtime}`).join("|");
+  el.genGalleryCount.textContent = String(combined.length);
+  el.genGallerySection.classList.toggle("hidden", combined.length === 0);
+
+  const q = (genState.vaultSearch || "").trim().toLowerCase();
+  const filtered = combined.filter((item) => {
+    if (genState.vaultFilter !== "all" && item.kind !== genState.vaultFilter) return false;
+    if (!q) return true;
+    const hay = `${item.filename} ${item.meta?.raw_prompt || ""} ${item.meta?.prompt || ""} ${item.meta?.model || ""}`.toLowerCase();
+    return hay.includes(q);
+  });
+
+  const key = `${genState.vaultFilter}|${q}|` + filtered.map((g) => `${g.kind}:${g.filename}:${g.mtime}`).join("|");
   if (key === genState.lastGalleryKey) return;
   genState.lastGalleryKey = key;
 
   el.genGalleryGrid.innerHTML = "";
-  for (const item of list) {
+  for (const item of filtered) {
     const card = document.createElement("div");
     card.className = "gallery-item";
+    card.style.position = "relative";
 
-    const thumbBtn = document.createElement("button");
-    thumbBtn.type = "button";
-    thumbBtn.className = "gallery-thumb-btn";
-    thumbBtn.title = `Preview ${item.filename}`;
-    const img = document.createElement("img");
-    img.className = "gallery-thumb";
-    img.src = withToken(item.url);
-    img.alt = item.filename;
-    thumbBtn.appendChild(img);
-    thumbBtn.addEventListener("click", () => openImageLightbox(item));
+    if (item.kind === "video") {
+      const vidEl = document.createElement("video");
+      vidEl.className = "vault-video-thumb";
+      vidEl.src = withToken(item.url);
+      vidEl.muted = true;
+      vidEl.loop = true;
+      vidEl.preload = "metadata";
+      vidEl.addEventListener("mouseenter", () => vidEl.play().catch(() => {}));
+      vidEl.addEventListener("mouseleave", () => {
+        vidEl.pause();
+        vidEl.currentTime = 0;
+      });
+      card.appendChild(vidEl);
 
-    const actions = document.createElement("div");
-    actions.className = "gallery-actions";
+      const badge = document.createElement("span");
+      badge.className = "vault-meta-badge";
+      badge.textContent = `🎬 ${item.meta?.model || "video"}`;
+      card.appendChild(badge);
 
-    const btnAnim = document.createElement("button");
-    btnAnim.type = "button";
-    btnAnim.className = "gallery-act-btn primary";
-    btnAnim.textContent = "🎬 Video";
-    btnAnim.title = "Animate this image into a video clip";
-    btnAnim.addEventListener("click", () => animateImageInVideoMode(item));
+      const actions = document.createElement("div");
+      actions.className = "gallery-actions";
 
-    const btnTl = document.createElement("button");
-    btnTl.type = "button";
-    btnTl.className = "gallery-act-btn";
-    btnTl.textContent = "+ Clip";
-    btnTl.title = "Add as 3s still on timeline";
-    btnTl.addEventListener("click", () => addImageToTimeline(item));
+      const btnRemix = document.createElement("button");
+      btnRemix.type = "button";
+      btnRemix.className = "gallery-act-btn primary";
+      btnRemix.textContent = "♻ Remix";
+      btnRemix.addEventListener("click", () => remixVaultVideo(item));
 
-    const btnDel = document.createElement("button");
-    btnDel.type = "button";
-    btnDel.className = "gallery-act-btn danger";
-    btnDel.textContent = "✕";
-    btnDel.title = "Delete generated image";
-    btnDel.addEventListener("click", async () => {
-      try {
-        await apiCall(`/api/generate/image/${encodeURIComponent(item.filename)}`, "DELETE");
-        genState.lastGalleryKey = "";
-        await refreshGeneratorStatus();
-      } catch (err) {
-        showToast(err.message, "error");
+      const btnTl = document.createElement("button");
+      btnTl.type = "button";
+      btnTl.className = "gallery-act-btn";
+      btnTl.textContent = "+ Clip";
+      btnTl.addEventListener("click", () => addVideoToTimeline(item));
+
+      const btnDel = document.createElement("button");
+      btnDel.type = "button";
+      btnDel.className = "gallery-act-btn danger";
+      btnDel.textContent = "✕";
+      btnDel.addEventListener("click", async () => {
+        try {
+          await apiCall(`/api/generate/video/${encodeURIComponent(item.filename)}`, "DELETE");
+          genState.lastGalleryKey = "";
+          await refreshGeneratorStatus();
+        } catch (err) {
+          showToast(err.message, "error");
+        }
+      });
+
+      actions.appendChild(btnRemix);
+      actions.appendChild(btnTl);
+      actions.appendChild(btnDel);
+      card.appendChild(actions);
+    } else {
+      const thumbBtn = document.createElement("button");
+      thumbBtn.type = "button";
+      thumbBtn.className = "gallery-thumb-btn";
+      thumbBtn.title = `${item.filename}${item.meta?.raw_prompt ? ` — ${item.meta.raw_prompt}` : ""}`;
+      const img = document.createElement("img");
+      img.className = "gallery-thumb";
+      img.src = withToken(item.url);
+      img.alt = item.filename;
+      thumbBtn.appendChild(img);
+      thumbBtn.addEventListener("click", () => openImageLightbox(item));
+
+      if (item.meta?.model) {
+        const badge = document.createElement("span");
+        badge.className = "vault-meta-badge";
+        badge.textContent = item.meta.inpainted ? "🖌 inpaint" : item.meta.face_detailed ? "👤 faces" : item.meta.model;
+        card.appendChild(badge);
       }
-    });
 
-    actions.appendChild(btnAnim);
-    actions.appendChild(btnTl);
-    actions.appendChild(btnDel);
+      const actions = document.createElement("div");
+      actions.className = "gallery-actions";
 
-    card.appendChild(thumbBtn);
-    card.appendChild(actions);
+      const btnAnim = document.createElement("button");
+      btnAnim.type = "button";
+      btnAnim.className = "gallery-act-btn primary";
+      btnAnim.textContent = "🎬 Video";
+      btnAnim.title = "Animate this image into a video clip";
+      btnAnim.addEventListener("click", () => animateImageInVideoMode(item));
+
+      const btnTl = document.createElement("button");
+      btnTl.type = "button";
+      btnTl.className = "gallery-act-btn";
+      btnTl.textContent = "+ Clip";
+      btnTl.title = "Add as 3s still on timeline";
+      btnTl.addEventListener("click", () => addImageToTimeline(item));
+
+      const btnDel = document.createElement("button");
+      btnDel.type = "button";
+      btnDel.className = "gallery-act-btn danger";
+      btnDel.textContent = "✕";
+      btnDel.title = "Delete generated image";
+      btnDel.addEventListener("click", async () => {
+        try {
+          await apiCall(`/api/generate/image/${encodeURIComponent(item.filename)}`, "DELETE");
+          genState.lastGalleryKey = "";
+          await refreshGeneratorStatus();
+        } catch (err) {
+          showToast(err.message, "error");
+        }
+      });
+
+      actions.appendChild(btnAnim);
+      actions.appendChild(btnTl);
+      actions.appendChild(btnDel);
+
+      card.appendChild(thumbBtn);
+      card.appendChild(actions);
+    }
     el.genGalleryGrid.appendChild(card);
   }
 }
@@ -2769,7 +3488,8 @@ function buildModelManagerCard(m) {
   descEl.textContent = m.description;
 
   const comfyDir = genState.statusData?.comfyui_dir || "ComfyUI";
-  const variantTag = m.variant === "safetensors" ? "Safetensors" : "GGUF";
+  const variantTag =
+    m.kind === "utility" ? "PyTorch" : m.variant === "safetensors" ? "Safetensors" : "GGUF";
   const metaEl = document.createElement("div");
   metaEl.className = "model-card-meta";
   metaEl.textContent = m.ready
@@ -2786,19 +3506,28 @@ function buildModelManagerCard(m) {
   if (m.ready) {
     const pill = document.createElement("span");
     pill.className = "status-pill-ready";
-    pill.textContent = "✓ Ready";
-    const useBtn = document.createElement("button");
-    useBtn.type = "button";
-    useBtn.className = "btn btn-secondary btn-sm";
-    useBtn.textContent = "Use";
-    useBtn.addEventListener("click", () => {
-      genState.userPickedModel = true;
-      setStudioMode(m.kind, { userInitiated: true, preferredModel: m.id });
-      switchLeftTab("tab-generate");
-      el.modelsModal.classList.add("hidden");
-    });
+    pill.textContent = m.kind === "utility" ? "✓ Auto-Active" : "✓ Ready";
     cta.appendChild(pill);
-    cta.appendChild(useBtn);
+    if (m.kind !== "utility") {
+      const useBtn = document.createElement("button");
+      useBtn.type = "button";
+      useBtn.className = "btn btn-secondary btn-sm";
+      useBtn.textContent = m.requires_audio ? "Talk-Sync" : "Use";
+      useBtn.addEventListener("click", () => {
+        if (m.requires_audio) {
+          switchLeftTab("tab-subs");
+          el.modelsModal.classList.add("hidden");
+          el.voiceTextInput?.focus();
+          showToast("Pick a saved friend + dialogue and click 🗣 Talk-Sync Video!", "info");
+          return;
+        }
+        genState.userPickedModel = true;
+        setStudioMode(m.kind, { userInitiated: true, preferredModel: m.id });
+        switchLeftTab("tab-generate");
+        el.modelsModal.classList.add("hidden");
+      });
+      cta.appendChild(useBtn);
+    }
   } else if (isDownloading) {
     const cancelBtn = document.createElement("button");
     cancelBtn.type = "button";
@@ -2868,10 +3597,12 @@ function renderModelsModal() {
   const models = Object.values(data.models || {});
   el.modelsImageList.innerHTML = "";
   el.modelsVideoList.innerHTML = "";
+  if (el.modelsUtilityList) el.modelsUtilityList.innerHTML = "";
 
   for (const m of models) {
     const card = buildModelManagerCard(m);
     if (m.kind === "image") el.modelsImageList.appendChild(card);
+    else if (m.kind === "utility" && el.modelsUtilityList) el.modelsUtilityList.appendChild(card);
     else el.modelsVideoList.appendChild(card);
   }
 }
@@ -2965,8 +3696,10 @@ async function refreshGeneratorStatus() {
     syncModelDropdownAndControls();
     renderCastUI(data.cast);
     renderRecentRefs(data.ref_images);
+    renderDirectorBar(data.director);
+    renderLoraStacker(data.loras);
     renderJobs(data.jobs);
-    renderGallery(data.gallery);
+    renderGallery(data.gallery, data.videos);
 
     if (el.voiceStatusBadge && data.voice) {
       el.voiceStatusBadge.textContent = data.voice.ready ? "F5-TTS Ready" : "F5-TTS Offline";
@@ -3006,6 +3739,10 @@ async function uploadRefImageFile(file, slotNum = 1) {
     setEndFrame(payload);
     logEvent(`Loaded end-frame morph target: ${data.filename}`);
     showToast(`Loaded end-frame target: ${data.filename}`, "success");
+  } else if (slotNum === "pose") {
+    setPoseRef(payload);
+    logEvent(`Loaded pose/framing reference: ${data.filename}`);
+    showToast(`Loaded pose & framing guide: ${data.filename}`, "success");
   } else {
     setRefSlot(slotNum, payload);
     logEvent(`Loaded friend photo #${slotNum}: ${data.filename}`);
@@ -3049,17 +3786,346 @@ el.btnCloseLightbox.addEventListener("click", () => el.imageLightboxModal.classL
 el.btnLightboxAnimate.addEventListener("click", () => {
   if (genState.lightboxItem) animateImageInVideoMode(genState.lightboxItem);
 });
+el.btnLightboxVary?.addEventListener("click", () => {
+  if (genState.lightboxItem) varyGalleryImage(genState.lightboxItem);
+});
+el.btnLightboxDetailFaces?.addEventListener("click", () => {
+  if (genState.lightboxItem) detailFacesGalleryImage(genState.lightboxItem);
+});
 el.btnLightboxEdit.addEventListener("click", () => {
   if (genState.lightboxItem) editImageInStudio(genState.lightboxItem);
 });
 el.btnLightboxPolish.addEventListener("click", () => {
-  if (genState.lightboxItem) polishGalleryImage(genState.lightboxItem);
+  if (genState.lightboxItem) polishGalleryImage(genState.lightboxItem, 2);
+});
+el.btnLightboxPolish4x?.addEventListener("click", () => {
+  if (genState.lightboxItem) polishGalleryImage(genState.lightboxItem, 4);
 });
 el.btnLightboxRemix.addEventListener("click", () => {
   if (genState.lightboxItem) remixGalleryImage(genState.lightboxItem);
 });
 el.btnLightboxTimeline.addEventListener("click", () => {
   if (genState.lightboxItem) addImageToTimeline(genState.lightboxItem);
+});
+
+// Lightbox Mask Brush, Follow-Up Edit & A/B Compare Bindings
+el.btnLightboxMaskToggle?.addEventListener("click", () => setLightboxMaskMode(!genState.maskMode));
+el.btnLightboxCompareToggle?.addEventListener("click", () => setLightboxCompareMode(!genState.compareMode));
+el.lightboxCompareSelect?.addEventListener("change", syncLightboxCompareImage);
+el.lightboxCompareSlider?.addEventListener("input", syncLightboxCompareImage);
+el.btnMaskEraser?.addEventListener("click", () => {
+  genState.maskEraser = !genState.maskEraser;
+  el.btnMaskEraser.classList.toggle("active", genState.maskEraser);
+});
+el.btnMaskUndo?.addEventListener("click", () => {
+  genState.maskStrokes.pop();
+  redrawMaskCanvas();
+});
+el.btnMaskClear?.addEventListener("click", () => {
+  genState.maskStrokes = [];
+  redrawMaskCanvas();
+});
+el.btnLightboxApplyFollowup?.addEventListener("click", submitLightboxFollowup);
+el.lightboxFollowupInput?.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") {
+    e.preventDefault();
+    submitLightboxFollowup();
+  }
+});
+el.lightboxImg?.addEventListener("load", () => {
+  if (genState.maskMode) syncMaskCanvasSize();
+});
+{
+  let painting = false;
+  let activeStroke = null;
+  const _ptFromEvent = (e) => {
+    const r = el.lightboxMaskCanvas.getBoundingClientRect();
+    return [
+      Math.max(0, Math.min(1, (e.clientX - r.left) / Math.max(1, r.width))),
+      Math.max(0, Math.min(1, (e.clientY - r.top) / Math.max(1, r.height))),
+    ];
+  };
+  el.lightboxMaskCanvas?.addEventListener("pointerdown", (e) => {
+    if (!genState.maskMode) return;
+    painting = true;
+    el.lightboxMaskCanvas.setPointerCapture(e.pointerId);
+    activeStroke = {
+      size: parseInt(el.maskBrushSize?.value || "34", 10),
+      erase: genState.maskEraser,
+      pts: [_ptFromEvent(e)],
+    };
+    genState.maskStrokes.push(activeStroke);
+    redrawMaskCanvas();
+  });
+  el.lightboxMaskCanvas?.addEventListener("pointermove", (e) => {
+    if (!painting || !activeStroke) return;
+    activeStroke.pts.push(_ptFromEvent(e));
+    redrawMaskCanvas();
+  });
+  const _endStroke = () => {
+    painting = false;
+    activeStroke = null;
+  };
+  el.lightboxMaskCanvas?.addEventListener("pointerup", _endStroke);
+  el.lightboxMaskCanvas?.addEventListener("pointercancel", _endStroke);
+}
+
+// Pose Reference, Denoise Slider, LoRA Upload, Director Uncensored Pull, Vault Filters
+el.genDenoiseSlider?.addEventListener("input", updateDenoiseLabel);
+el.genPoseFileInput?.addEventListener("change", async (e) => {
+  try {
+    await uploadRefImageFile(e.target.files?.[0], "pose");
+  } catch (err) {
+    showToast(err.message, "error");
+  } finally {
+    e.target.value = "";
+  }
+});
+el.genPoseDropzone?.addEventListener("dragover", (e) => e.preventDefault());
+el.genPoseDropzone?.addEventListener("drop", async (e) => {
+  e.preventDefault();
+  try {
+    await uploadRefImageFile(e.dataTransfer.files?.[0], "pose");
+  } catch (err) {
+    showToast(err.message, "error");
+  }
+});
+el.btnClearPose?.addEventListener("click", () => setPoseRef(null));
+
+el.loraUploadInput?.addEventListener("change", async (e) => {
+  const f = e.target.files?.[0];
+  if (!f) return;
+  const fd = new FormData();
+  fd.append("file", f);
+  try {
+    showToast(`Uploading LoRA "${f.name}" into ComfyUI/models/loras/...`, "info");
+    const r = await fetch("/api/loras/upload", {
+      method: "POST",
+      headers: { "X-ClipForge-Token": SESSION_TOKEN },
+      body: fd,
+    });
+    if (!r.ok) {
+      const err = await r.json().catch(() => ({ detail: r.statusText }));
+      throw new Error(err.detail || "LoRA upload failed");
+    }
+    genState.lastLorasKey = "";
+    showToast(`Installed LoRA "${f.name}" cleanly!`, "success");
+    await refreshGeneratorStatus();
+  } catch (err) {
+    showToast(err.message, "error");
+  } finally {
+    e.target.value = "";
+  }
+});
+
+el.btnPullUncensoredLlm?.addEventListener("click", async () => {
+  const tag = genState.statusData?.director?.recommended_uncensored_pull || "dolphin-llama3:8b";
+  try {
+    await apiCall("/api/director/pull", "POST", { model_tag: tag });
+    showToast(`Pulling uncensored Ollama director "${tag}" in background...`, "info");
+    genState.lastDirectorKey = "";
+    await refreshGeneratorStatus();
+  } catch (err) {
+    showToast(err.message, "error");
+  }
+});
+
+el.vaultFilterTabs?.querySelectorAll(".cat-tab").forEach((tab) => {
+  tab.addEventListener("click", () => {
+    genState.vaultFilter = tab.dataset.vault || "all";
+    el.vaultFilterTabs.querySelectorAll(".cat-tab").forEach((t) => {
+      t.classList.toggle("active", t.dataset.vault === genState.vaultFilter);
+    });
+    genState.lastGalleryKey = "";
+    renderGallery(genState.statusData?.gallery, genState.statusData?.videos);
+  });
+});
+el.vaultSearchInput?.addEventListener("input", () => {
+  genState.vaultSearch = el.vaultSearchInput.value;
+  genState.lastGalleryKey = "";
+  renderGallery(genState.statusData?.gallery, genState.statusData?.videos);
+});
+
+// 1-Click Talk-Sync Friend Video (F5-TTS -> Wan 2.2 S2V / I2V + Mux)
+el.btnTalkSyncVideo?.addEventListener("click", async () => {
+  const castId = el.voiceCastSelect.value;
+  const text = el.voiceTextInput.value.trim();
+  if (!castId) {
+    showToast("Select a saved friend with an attached voice clip first.", "warning");
+    return;
+  }
+  if (!text) {
+    showToast("Type what you want your friend to say.", "warning");
+    el.voiceTextInput.focus();
+    return;
+  }
+  el.btnTalkSyncVideo.disabled = true;
+  try {
+    const res = await apiCall("/api/voice/talk-video", "POST", {
+      cast_id: castId,
+      text,
+      style_preset: genState.preset,
+      speed: parseFloat(el.voiceSpeedInput.value) || 1.0,
+      add_to_timeline: el.voiceAutoTimeline.checked,
+    });
+    switchLeftTab("tab-generate");
+    showToast(`Queued Talk-Sync talking friend video (job ${res.job_id})!`, "success");
+    logEvent(`Queued Talk-Sync friend video job ${res.job_id}.`);
+    await refreshGeneratorStatus();
+  } catch (err) {
+    showToast(err.message, "error");
+  } finally {
+    el.btnTalkSyncVideo.disabled = false;
+  }
+});
+
+// Multi-Beat Storyboard Scene Chainer Modal
+function renderStoryboardBeatsUI() {
+  if (!el.sbBeatsContainer) return;
+  el.sbBeatsContainer.innerHTML = "";
+  if (!genState.storyboardBeats.length) {
+    const p = document.createElement("p");
+    p.className = "empty-hint";
+    p.textContent = "Type a 1-line idea above and click ✨ Auto-Plan to generate chained shots.";
+    el.sbBeatsContainer.appendChild(p);
+    return;
+  }
+  const cams = Object.entries(genState.statusData?.camera_presets || { none: { label: "Auto Camera" } });
+  genState.storyboardBeats.forEach((b, idx) => {
+    const card = document.createElement("div");
+    card.className = "sb-beat-card";
+
+    const hdr = document.createElement("div");
+    hdr.className = "sb-beat-header";
+    const title = document.createElement("span");
+    title.textContent = idx === 0 ? `Beat 1 (Opening Shot)` : `Beat ${idx + 1} (Chains from Beat ${idx} Final Frame)`;
+    const del = document.createElement("button");
+    del.type = "button";
+    del.className = "btn btn-ghost btn-xs";
+    del.textContent = "✕";
+    del.addEventListener("click", () => {
+      genState.storyboardBeats.splice(idx, 1);
+      renderStoryboardBeatsUI();
+    });
+    hdr.appendChild(title);
+    hdr.appendChild(del);
+
+    const ta = document.createElement("textarea");
+    ta.className = "input-full";
+    ta.rows = 2;
+    ta.value = b.prompt || "";
+    ta.addEventListener("input", () => { b.prompt = ta.value; });
+
+    const row = document.createElement("div");
+    row.className = "field-row";
+    const camSel = document.createElement("select");
+    camSel.className = "input-full";
+    for (const [cid, meta] of cams) {
+      const opt = document.createElement("option");
+      opt.value = cid;
+      opt.textContent = meta.label;
+      camSel.appendChild(opt);
+    }
+    camSel.value = b.camera_preset || "none";
+    camSel.addEventListener("change", () => { b.camera_preset = camSel.value; });
+
+    const capInp = document.createElement("input");
+    capInp.type = "text";
+    capInp.className = "input-full";
+    capInp.placeholder = "Caption (optional)";
+    capInp.value = b.caption || "";
+    capInp.addEventListener("input", () => { b.caption = capInp.value; });
+
+    const sfxInp = document.createElement("input");
+    sfxInp.type = "text";
+    sfxInp.className = "input-full";
+    sfxInp.placeholder = "SFX id (e.g. vine_boom)";
+    sfxInp.value = b.sfx_id || "";
+    sfxInp.addEventListener("input", () => { b.sfx_id = sfxInp.value.trim(); });
+
+    row.appendChild(camSel);
+    row.appendChild(capInp);
+    row.appendChild(sfxInp);
+
+    card.appendChild(hdr);
+    card.appendChild(ta);
+    card.appendChild(row);
+    el.sbBeatsContainer.appendChild(card);
+  });
+}
+
+el.btnOpenStoryboard?.addEventListener("click", () => {
+  if (!el.sbConceptInput.value.trim() && el.genPromptInput.value.trim()) {
+    el.sbConceptInput.value = el.genPromptInput.value.trim();
+  }
+  renderStoryboardBeatsUI();
+  el.storyboardModal.classList.remove("hidden");
+});
+el.btnCloseStoryboardModal?.addEventListener("click", () => el.storyboardModal.classList.add("hidden"));
+el.btnAddManualBeat?.addEventListener("click", () => {
+  if (genState.storyboardBeats.length >= 4) {
+    showToast("Max 4 beats per chained scene.", "warning");
+    return;
+  }
+  genState.storyboardBeats.push({ prompt: "", camera_preset: "none", caption: "", sfx_id: "" });
+  renderStoryboardBeatsUI();
+});
+el.btnPlanStoryboard?.addEventListener("click", async () => {
+  const concept = el.sbConceptInput.value.trim();
+  if (!concept) {
+    showToast("Enter a 1-line scene concept first.", "warning");
+    return;
+  }
+  el.btnPlanStoryboard.disabled = true;
+  el.btnPlanStoryboard.textContent = "Planning...";
+  try {
+    const res = await apiCall("/api/director/storyboard", "POST", {
+      concept,
+      num_beats: parseInt(el.sbBeatCountSelect.value, 10) || 3,
+      style_preset: genState.preset,
+      has_friend_photo: Boolean(genState.ref1?.path || el.genRefPathInput.value.trim()),
+      model_name: el.directorModelSelect?.value || null,
+      literal_mode: Boolean(el.directorLiteralCheck?.checked),
+    });
+    genState.storyboardBeats = res.beats || [];
+    renderStoryboardBeatsUI();
+    showToast(`Planned ${genState.storyboardBeats.length} chained beats via ${res.source}!`, "success");
+  } catch (err) {
+    showToast(err.message, "error");
+  } finally {
+    el.btnPlanStoryboard.disabled = false;
+    el.btnPlanStoryboard.textContent = "✨ Auto-Plan";
+  }
+});
+el.btnRenderStoryboard?.addEventListener("click", async () => {
+  const valid = genState.storyboardBeats.filter((b) => (b.prompt || "").trim());
+  if (!valid.length) {
+    showToast("Plan or add at least 1 beat first.", "warning");
+    return;
+  }
+  el.btnRenderStoryboard.disabled = true;
+  try {
+    const res = await apiCall("/api/generate/storyboard", "POST", {
+      beats: valid,
+      model: "auto",
+      image_path: (genState.ref1?.path || el.genRefPathInput.value.trim()) || null,
+      style_preset: genState.preset,
+      want_audio: Boolean(el.sbWantAudio?.checked),
+      fast_draft: Boolean(el.sbFastDraft?.checked),
+      num_frames: parseInt(el.genFramesSelect?.value || "65", 10) || 65,
+      loras: getActiveLorasPayload(),
+      auto_captions: Boolean(el.sbAutoCaptions?.checked),
+      add_sfx: Boolean(el.sbAddSfx?.checked),
+    });
+    el.storyboardModal.classList.add("hidden");
+    showToast(`Rendering ${valid.length}-beat chained scene (job ${res.job_id})...`, "success");
+    logEvent(`Queued ${valid.length}-beat chained storyboard job ${res.job_id}.`);
+    await refreshGeneratorStatus();
+  } catch (err) {
+    showToast(err.message, "error");
+  } finally {
+    el.btnRenderStoryboard.disabled = false;
+  }
 });
 
 function openCastModal() {
@@ -3150,7 +4216,7 @@ el.genWantAudio.addEventListener("change", syncModelDropdownAndControls);
 el.genFastDraft.addEventListener("change", syncModelDropdownAndControls);
 
 // Close modals on backdrop click
-for (const backdrop of [el.modelsModal, el.imageLightboxModal, el.renderModal, el.castModal]) {
+for (const backdrop of [el.modelsModal, el.imageLightboxModal, el.renderModal, el.castModal, el.storyboardModal].filter(Boolean)) {
   backdrop.addEventListener("click", (e) => {
     if (e.target === backdrop) backdrop.classList.add("hidden");
   });
@@ -3284,14 +4350,17 @@ async function submitGeneration() {
         model: modelId,
         image_path: imgPath1,
         image_path_2: imgPath2,
+        pose_image_path: genState.poseRef?.path || null,
         style_preset: genState.preset,
         width: w,
         height: h,
         match_photo_aspect: matchPhoto,
         steps: stepsRaw ? parseInt(stepsRaw, 10) : null,
         cfg: cfgRaw ? parseFloat(cfgRaw) : null,
+        denoise: genState.denoise,
         seed: Number.isNaN(seedRaw) ? -1 : seedRaw,
         batch_size: batchSize,
+        loras: getActiveLorasPayload(),
         add_to_timeline: el.genAutoTimeline.checked,
       };
       if (negPrompt) payload.negative_prompt = negPrompt;
@@ -3322,6 +4391,7 @@ async function submitGeneration() {
         steps: stepsRaw ? parseInt(stepsRaw, 10) : null,
         cfg: cfgRaw ? parseFloat(cfgRaw) : null,
         seed: Number.isNaN(seedRaw) ? -1 : seedRaw,
+        loras: getActiveLorasPayload(),
         add_to_timeline: el.genAutoTimeline.checked,
       };
       if (negPrompt) payload.negative_prompt = negPrompt;
@@ -3427,6 +4497,8 @@ el.btnExpandPrompt.addEventListener("click", async () => {
       idea,
       mode: genState.mode,
       model_id: activeModel,
+      model_name: el.directorModelSelect?.value || null,
+      literal_mode: Boolean(el.directorLiteralCheck?.checked),
       style_preset: genState.preset,
       camera_preset: genState.cameraPreset || el.genCameraSelect?.value || "none",
       has_friend_photo: Boolean(genState.ref1?.path || el.genRefPathInput.value.trim()),
@@ -3443,9 +4515,12 @@ el.btnExpandPrompt.addEventListener("click", async () => {
     }
     const tag = res.source.startsWith("local_llm:")
       ? res.source.slice("local_llm:".length)
-      : "Studio Enhancer";
+      : res.source === "literal_enhancer"
+        ? "Literal Zero-Sanitize"
+        : "Studio Enhancer";
+    const bypassNote = res.refusal_bypassed ? " (LLM refusal bypassed!)" : "";
     showToast(
-      `Enhanced positive + negative for ${activeModel || genState.mode} via ${tag} (SFX: ${res.recommended_sfx || "vine_boom"})`,
+      `Enhanced positive + negative for ${activeModel || genState.mode} via ${tag}${bypassNote}`,
       "success"
     );
     logEvent(`Director expanded rough idea for ${activeModel || genState.mode} via ${tag}.`);

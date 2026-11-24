@@ -1,6 +1,6 @@
 # ClipForge — AI-Controllable Video Editor, Offline Media Studio & MCP Server
 
-ClipForge is a cross-platform (Windows & Linux) local-first Non-Linear Video Editor (NLE) with a live WebSocket-synced **MCP Server (38 tools)** and integrated **offline ComfyUI Image & Video Generation** (zero cloud filters, zero API fees).
+ClipForge is a cross-platform (Windows & Linux) local-first Non-Linear Video Editor (NLE) with a live WebSocket-synced **MCP Server (43 tools)** and integrated **offline ComfyUI Image & Video Generation** (zero cloud filters, zero API fees).
 
 ---
 
@@ -14,10 +14,15 @@ ClipForge is a cross-platform (Windows & Linux) local-first Non-Linear Video Edi
   - Multi-track timeline (`VIDEO / AUDIO`, `SUBTITLES`, `SFX / BGM`) with audio waveforms, drag-to-trim handles, drag-to-reorder, razor split (`S`), and `⏭ Continue Shot` final-frame extraction.
 - **Offline AI Image & Video Studio (`clipforge/generator.py`, `clipforge/cast.py`, `clipforge/voice.py`)**
   - Direct local ComfyUI client with WebSocket live step progress, **mid-render latent previews + instant GPU Cancel/Interrupt**, automatic **VRAM headroom (`--reserve-vram`) & model-switch `/free` unload**, and built-in resumable HTTP `Range` Model Manager:
-    - **Video**: `Wan 2.2 TI2V 5B`, `Wan 2.2 I2V 14B` (incl. `WanFirstLastFrameToVideo` Start→End morph), `Wan 2.2 T2V 14B` (4-step Lightx2v), `LTX-2.3 22B` (synchronized native audio/SFX).
-    - **Image / Photo Editing**: `FLUX.2 [klein] 4B` & `9B` (4-step T2I + photo edit), `Z-Image-Turbo` (8-step candid realism + crisp meme text), `Qwen-Image-Edit 2509` & `2511` (4-step Lightning 1–2 photo compositor).
-  - **✨ Auto Best Model Router**, **Aspect-Ratio Photo Matching**, **Saved Cast / Friends Book (`@Name` auto-attach + optional voice clip)**, **1-click Remix sidecars**, **2× HD Polish**, **Smooth 32fps interpolation**, and **Offline F5-TTS Friend Voice Cloning**.
-  - **4-Seed Contact Sheet** batching, **24 categorized AI style presets**, **8 video camera motion presets**, and a **model- & style-aware local LLM positive/negative prompt director** (`clipforge/director.py` — Ollama / LM Studio).
+    - **Video**: `Wan 2.2 TI2V 5B`, `Wan 2.2 I2V 14B` (incl. `WanFirstLastFrameToVideo` Start→End morph), `Wan 2.2 T2V 14B` (4-step Lightx2v), `Wan 2.2 S2V 14B` (audio-driven lip-sync), `LTX-2.3 22B` (synchronized native audio/SFX).
+    - **Image / Photo Editing**: `FLUX.2 [klein] 4B` & `9B` (4-step T2I + photo edit), `Z-Image-Turbo` (8-step candid realism + crisp meme text), `Qwen-Image-Edit 2509` & `2511` (4-step Lightning 1–3 photo compositor).
+    - **Neural Utilities**: `4x-UltraSharp` GPU upscaler (2× / 4× HD) and `RIFE v4.26` GPU frame interpolation (`Smooth 32fps`), with automatic FFmpeg fallbacks.
+  - **Zero-Refusal Studio & Iteration**:
+    - **Refusal-Proof Local LLM Director** (`clipforge/director.py` — Ollama / LM Studio model picker with `🔓` uncensored flags, auto-retry on refusal, **Literal zero-sanitize toggle**, and 1-click Ollama uncensored model pull).
+    - **Lightbox Follow-Up Edit & Canvas Mask-Brush Inpainting** (pixel-locked `DifferentialDiffusion` + `SetLatentNoiseMask` + `ImageCompositeMasked`, clickable version history chain, **A/B Split-Curtain Compare**, **Vary Slightly** denoise slider, and automatic **Face Detailer** via `clipforge/face_worker.py`).
+    - **Copy Pose / Framing Reference Slot**, auto-discovered **LoRA Stacker** (up to 3 stacked `.safetensors` with strength sliders, persisted trigger words, and drag-and-drop upload), and searchable **Unified Media Vault** (images + hover-play videos + 1-click Remix).
+    - **Multi-Angle Cast Book** (up to 4 photos per friend + voice clip + `@Name` auto-attach), **1-Click `🗣 Talk-Sync Video`** (`F5-TTS` voice clone → `Wan 2.2 S2V` / `I2V` + audio mux), and **Auto Multi-Beat Storyboard / Scene Chainer** (plans 2–4 beats and automatically chains final frames onto the timeline with captions + SFX).
+  - **✨ Auto Best Model Router**, **Aspect-Ratio Photo Matching**, **4-Seed Contact Sheet** batching, **24 categorized AI style presets**, and **8 video camera motion presets**.
 - **FFmpeg Filtergraph Compiler (`clipforge/renderer.py`, `clipforge/subtitles.py`, `clipforge/sfx.py`)**
   - `xfade` + `acrossfade` transitions, `apad`/`tpad` A/V sync lock, static image `-loop 1` support, NVIDIA NVENC (`h264_nvenc`) with `libx264` fallback.
   - `faster-whisper` word-level karaoke subtitles (**10 presets**: `hormozi`, `mrbeast`, `tiktok_clean`, `meme_impact`, `gaming_rgb`, `news_ticker`, `whisper_red`, `cinema`, `minimal`, `neon_box`).

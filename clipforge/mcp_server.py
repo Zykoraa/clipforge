@@ -10,6 +10,7 @@ import subprocess
 import sys
 import urllib.request
 import webbrowser
+from pathlib import Path
 from typing import Any
 
 # Suppress noisy download/progress stdout from HuggingFace/tqdm so MCP stdio framing stays clean
@@ -22,7 +23,7 @@ except ImportError:
     from mcp.server.fastmcp import FastMCP as MCPServer  # type: ignore
 
 from .cast import CastManager
-from .director import expand_meme_prompt_local
+from .director import expand_meme_prompt_local, plan_storyboard_beats_local
 from .engine import ProjectEngine
 from .generator import (
     CAMERA_PRESETS,
@@ -30,12 +31,14 @@ from .generator import (
     COMFYUI_URL,
     DEFAULT_NEGATIVE_PROMPT,
     PROMPT_PRESETS,
+    detail_faces_in_image as _detail_faces_in_image,
     download_manager,
     ensure_comfyui_running,
     generate_image_via_comfyui,
     generate_video_via_comfyui,
     get_model_availability,
     is_comfyui_reachable,
+    list_available_loras as _list_available_loras,
     polish_image_hd as _polish_image_hd,
     resolve_auto_model,
 )
@@ -556,6 +559,8 @@ def generate_image(
     model: str = "auto",
     image_path: str | None = None,
     image_path_2: str | None = None,
+    pose_image_path: str | None = None,
+    mask_path: str | None = None,
     negative_prompt: str = "",
     style_preset: str | None = None,
     width: int | None = None,
@@ -563,24 +568,24 @@ def generate_image(
     match_photo_aspect: bool = True,
     steps: int | None = None,
     cfg: float | None = None,
+    denoise: float = 1.0,
     seed: int = -1,
     batch_size: int = 1,
+    loras: list[dict[str, Any]] | None = None,
     add_to_timeline: bool = False,
     transition: TransitionType = "crossfade",
     transition_duration: float = 0.35,
 ) -> dict[str, Any]:
-    """Generate 1-4 photorealistic meme images or edit/composite friend photos offline via local ComfyUI.
+    """Generate 1-4 photorealistic meme images, edit/composite friend photos, transfer pose, vary slightly (`denoise`), or mask-inpaint offline via local ComfyUI.
 
-    - Supports `@FriendName` mentions from saved Cast profiles (auto-attaches their photos!).
+    - Supports `@FriendName` mentions from saved Cast profiles (auto-attaches their photos + extra angle!).
     - `model='auto'` (default): automatically picks the highest-quality ready model (`z_image_turbo` for 0 photos, `flux2_klein_9b`/`flux2_klein` for 1 photo, `qwen_edit_2511`/`qwen_edit` for 2 photos).
-    - `model='flux2_klein'`: Ultra-fast 4-step T2I + friend-photo editing (`image_path` optional).
-    - `model='flux2_klein_9b'`: 16GB VRAM 4-step HQ upgrade over 4B (`image_path` optional).
-    - `model='z_image_turbo'`: 8-step hyper-real candid photography & crisp embedded meme text (T2I).
-    - `model='qwen_edit'`: Instruction-based 1-2 friend photo compositor (`image_path` required, `image_path_2` optional; auto-uses 4-step Lightning LoRA if installed).
-    - `model='qwen_edit_2511'`: Upgraded 4-step Lightning 1-2 friend photo compositor with tighter multi-person identity lock.
+    - `pose_image_path`: Optional reference image whose pose/camera framing should be copied.
+    - `mask_path`: Optional B&W PNG mask (white=edit, black=lock original pixels) for pixel-locked DifferentialDiffusion inpainting.
+    - `denoise`: 0.25..1.0 (use ~0.5 for "Vary Slightly" img2img tweaks while locking layout).
+    - `loras`: Optional list of `[{"name": "...", "strength": 0.8, "trigger": "..."}]` from `list_available_loras`.
     - `match_photo_aspect=True`: automatically preserves the uploaded photo's aspect ratio to prevent stretched faces.
     - `batch_size`: 1..4 distinct seeds (4-seed meme contact sheet).
-    - `style_preset`: Optional preset ('none', 'raw_iphone', 'cctv', 'breaking_news', 'podcast', 'movie_poster', 'meme_reaction', etc.).
     """
     eng = get_engine()
     cm = CastManager(eng.workspace_dir)
@@ -594,6 +599,8 @@ def generate_image(
             model=chosen,  # type: ignore[arg-type]
             image_path=img1,
             image_path_2=img2,
+            pose_image_path=pose_image_path,
+            mask_path=mask_path,
             negative_prompt=negative_prompt,
             style_preset=style_preset,
             width=width,
@@ -601,8 +608,10 @@ def generate_image(
             match_photo_aspect=match_photo_aspect,
             steps=steps,
             cfg=cfg,
+            denoise=denoise,
             seed=seed,
             batch_size=batch_size,
+            loras=loras,
             auto_start=True,
         )
         media_item = None
@@ -632,6 +641,7 @@ def generate_video_clip(
     model: str = "auto",
     image_path: str | None = None,
     end_image_path: str | None = None,
+    audio_path: str | None = None,
     negative_prompt: str = DEFAULT_NEGATIVE_PROMPT,
     style_preset: str | None = None,
     camera_preset: str | None = None,
@@ -645,19 +655,17 @@ def generate_video_clip(
     steps: int | None = None,
     cfg: float | None = None,
     seed: int = -1,
+    loras: list[dict[str, Any]] | None = None,
     add_to_timeline: bool = True,
     transition: TransitionType = "crossfade",
     transition_duration: float = 0.35,
 ) -> dict[str, Any]:
-    """Generate a video clip completely offline via local ComfyUI (`auto`, `wan22_5b`, `wan22_i2v`, `wan22_t2v`, or `ltx23`).
+    """Generate a video clip completely offline via local ComfyUI (`auto`, `wan22_5b`, `wan22_i2v`, `wan22_t2v`, `wan22_s2v`, or `ltx23`).
 
     - Supports `@FriendName` mentions from saved Cast profiles (auto-attaches their photo!).
     - `model='auto'` (default): picks `ltx23` (when `want_audio=True`), `wan22_i2v` (photo + best likeness), `wan22_t2v` (14B T2V if installed), or `wan22_5b` (fast/T2V).
-    - `model='wan22_5b'`: Fast Text-to-Video or Image-to-Video on 8GB VRAM.
-    - `model='wan22_i2v'`: Best face likeness & motion for Image-to-Video (requires `image_path`, supports optional `end_image_path` for first->last frame morph!).
-    - `model='wan22_t2v'`: HQ dual-expert 14B Text-to-Video + 4-step Lightx2v LoRAs.
-    - `model='ltx23'`: Fast 8-step distilled Text-to-Video or Image-to-Video with synchronized native audio/SFX.
-    - `style_preset`: Optional preset ('none', 'raw_iphone', 'cctv', 'breaking_news', 'podcast', 'movie_poster', 'meme_reaction', etc.).
+    - `model='wan22_s2v'`: Audio-driven lip-sync talking video (requires `image_path` + `audio_path`).
+    - `loras`: Optional list of `[{"name": "...", "strength": 0.8, "trigger": "..."}]`.
     """
     eng = get_engine()
     cm = CastManager(eng.workspace_dir)
@@ -675,6 +683,7 @@ def generate_video_clip(
             model=chosen,  # type: ignore[arg-type]
             image_path=img1,
             end_image_path=end_image_path,
+            audio_path=audio_path,
             negative_prompt=negative_prompt,
             style_preset=style_preset,
             camera_preset=camera_preset,
@@ -686,6 +695,7 @@ def generate_video_clip(
             steps=steps,
             cfg=cfg,
             seed=seed,
+            loras=loras,
             auto_start=True,
         )
         imported = eng.import_media([gen_res["video_path"]])
@@ -867,6 +877,219 @@ def set_meme_layout(
 
 
 @mcp.tool()
+def list_available_loras() -> list[dict[str, Any]]:
+    """List custom and built-in LoRA files discovered in ComfyUI/models/loras/ with family tags & saved trigger words."""
+    return _list_available_loras(COMFYUI_DIR, get_engine().workspace_dir / "lora_triggers.json")
+
+
+@mcp.tool()
+def detail_image_faces(
+    image_path: str,
+    prompt: str = "sharp realistic natural facial features, clear detailed eyes, authentic natural skin texture",
+    cast_id: str | None = None,
+    denoise: float = 0.38,
+    model: str = "auto",
+) -> dict[str, Any]:
+    """Automatically detect faces in a generated image, refine each 512x512 face crop at low denoise via ComfyUI, and feather-blend back."""
+    eng = get_engine()
+    raw_p = Path(image_path).expanduser()
+    src = raw_p if raw_p.is_absolute() else (eng.workspace_dir / raw_p)
+    ref_face = None
+    if cast_id:
+        m = CastManager(eng.workspace_dir).get_member(cast_id)
+        if m:
+            ref_face = m.get("photo_path")
+    with contextlib.redirect_stdout(sys.stderr):
+        return _detail_faces_in_image(
+            image_path=src,
+            output_dir=eng.workspace_dir / "generated_images",
+            prompt=prompt,
+            ref_face_path=ref_face,
+            denoise=denoise,
+            model=model,
+        )
+
+
+@mcp.tool()
+def inpaint_image(
+    image_path: str,
+    mask_path: str,
+    prompt: str,
+    model: str = "auto",
+    denoise: float = 0.85,
+) -> dict[str, Any]:
+    """Pixel-locked DifferentialDiffusion inpainting: edit only the white-masked region of `image_path` while keeping unmasked pixels identical."""
+    eng = get_engine()
+    raw_img = Path(image_path).expanduser()
+    src_img = raw_img if raw_img.is_absolute() else (eng.workspace_dir / raw_img)
+    raw_msk = Path(mask_path).expanduser()
+    src_msk = raw_msk if raw_msk.is_absolute() else (eng.workspace_dir / raw_msk)
+    with contextlib.redirect_stdout(sys.stderr):
+        chosen = resolve_auto_model("image", True, False) if model == "auto" else model
+        return generate_image_via_comfyui(
+            prompt=prompt,
+            output_dir=eng.workspace_dir / "generated_images",
+            model=chosen,  # type: ignore[arg-type]
+            image_path=str(src_img),
+            mask_path=str(src_msk),
+            denoise=denoise,
+            match_photo_aspect=True,
+            parent_image=src_img.name,
+            auto_start=True,
+        )
+
+
+@mcp.tool()
+def generate_talking_friend_video(
+    cast_id: str,
+    text: str,
+    prompt: str = "",
+    style_preset: str | None = None,
+    speed: float = 1.0,
+    add_to_timeline: bool = True,
+) -> dict[str, Any]:
+    """End-to-end offline talking friend: clone friend's voice with F5-TTS, then animate their saved face speaking it (Wan 2.2 S2V lip-sync or I2V+mux)."""
+    eng = get_engine()
+    m = CastManager(eng.workspace_dir).get_member(cast_id)
+    if not m or not m.get("voice_path"):
+        raise ValueError(f"Cast member '{cast_id}' not found or missing voice sample.")
+    with contextlib.redirect_stdout(sys.stderr):
+        v_res = clone_voice_offline(
+            text=text,
+            ref_audio_path=m["voice_path"],
+            output_dir=eng.workspace_dir / "cloned_voices",
+            ref_text=m.get("voice_ref_text", ""),
+            speed=speed,
+        )
+        dur_sec = max(1.5, float(v_res.get("duration_sec") or 3.5))
+        avail = get_model_availability()
+        talk_prompt = prompt.strip() or "Natural expressive talking head shot speaking directly to camera, realistic lip movement and lighting"
+        gen_dir = eng.workspace_dir / "generated"
+        if avail.get("wan22_s2v", {}).get("ready"):
+            frames = max(25, min(121, int(round(dur_sec * 16.0)) + 5))
+            vid_res = generate_video_via_comfyui(
+                prompt=talk_prompt,
+                output_dir=gen_dir,
+                model="wan22_s2v",
+                image_path=m["photo_path"],
+                audio_path=v_res["audio_path"],
+                style_preset=style_preset,
+                match_photo_aspect=True,
+                num_frames=frames,
+                auto_start=True,
+            )
+            out_path = vid_res["video_path"]
+            mode_used = "wan22_s2v_lipsync"
+        else:
+            fb_model = "wan22_i2v" if avail.get("wan22_i2v", {}).get("ready") else "wan22_5b"
+            fps_fb = 16 if fb_model == "wan22_i2v" else 24
+            frames_fb = max(41, min(113, int(round(dur_sec * fps_fb)) + 5))
+            vid_res = generate_video_via_comfyui(
+                prompt=talk_prompt,
+                output_dir=gen_dir,
+                model=fb_model,  # type: ignore[arg-type]
+                image_path=m["photo_path"],
+                style_preset=style_preset,
+                match_photo_aspect=True,
+                num_frames=frames_fb,
+                auto_start=True,
+            )
+            mux_out = gen_dir / f"talk_{m['name'].lower()[:12]}_{os.urandom(3).hex()}.mp4"
+            subprocess.run(
+                [
+                    "ffmpeg", "-y", "-hide_banner",
+                    "-i", vid_res["video_path"], "-i", v_res["audio_path"],
+                    "-map", "0:v:0", "-map", "1:a:0",
+                    "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", "-shortest", "-movflags", "+faststart",
+                    str(mux_out),
+                ],
+                capture_output=True, text=True, check=True,
+            )
+            out_path = str(mux_out.resolve())
+            mode_used = f"{fb_model}+f5tts_mux"
+        media = eng.import_media([out_path])[0]
+        clip = None
+        if add_to_timeline:
+            cur_tl = eng.get_state().timeline
+            clip = eng.add_timeline_clip(
+                media_id=media.id,
+                transition="crossfade" if cur_tl else "cut",
+                transition_duration=0.35 if cur_tl else 0.0,
+                label=f"🎙 {m['name']}: {text[:22]}",
+            )
+    return {
+        "video_path": out_path,
+        "voice": v_res,
+        "engine": mode_used,
+        "media": media.model_dump(),
+        "clip": clip.model_dump() if clip else None,
+        "summary": eng.get_summary_dict() if add_to_timeline else None,
+    }
+
+
+@mcp.tool()
+def generate_storyboard_scene(
+    concept: str,
+    num_beats: int = 3,
+    image_path: str | None = None,
+    style_preset: str | None = None,
+    want_audio: bool = False,
+    fast_draft: bool = False,
+    num_frames: int = 65,
+    auto_captions: bool = True,
+    add_sfx: bool = True,
+) -> dict[str, Any]:
+    """Plan a 2-4 beat storyboard from a 1-line concept and render chained Continue-Shot video clips onto the timeline automatically."""
+    eng = get_engine()
+    cm = CastManager(eng.workspace_dir)
+    with contextlib.redirect_stdout(sys.stderr):
+        plan = plan_storyboard_beats_local(
+            concept=concept,
+            num_beats=num_beats,
+            style_preset=style_preset,
+            has_friend_photo=bool(image_path or "@" in concept),
+        )
+        cur_img = image_path
+        gen_dir = eng.workspace_dir / "generated"
+        cursor = eng.get_state().total_timeline_duration()
+        rendered = []
+        for idx, b in enumerate(plan["beats"]):
+            b_prompt, img1, _, _ = cm.resolve_prompt_mentions(b["prompt"], cur_img, None)
+            chosen = resolve_auto_model("video", bool(img1), False, want_audio=want_audio, fast_draft=fast_draft)
+            res = generate_video_via_comfyui(
+                prompt=b_prompt,
+                output_dir=gen_dir,
+                model=chosen,  # type: ignore[arg-type]
+                image_path=img1,
+                style_preset=style_preset,
+                camera_preset=b.get("camera_preset") or "none",
+                match_photo_aspect=True,
+                num_frames=num_frames,
+                auto_start=True,
+            )
+            media = eng.import_media([res["video_path"]])[0]
+            cur_tl = eng.get_state().timeline
+            clip = eng.add_timeline_clip(
+                media_id=media.id,
+                transition="crossfade" if cur_tl else "cut",
+                transition_duration=0.3 if cur_tl else 0.0,
+                label=f"Beat {idx + 1}: {b['prompt'][:22]}",
+            )
+            if auto_captions and b.get("caption"):
+                eng.upsert_subtitle(cursor + 0.1, cursor + max(0.8, clip.effective_duration - 0.15), b["caption"])
+            if add_sfx and b.get("sfx_id"):
+                try:
+                    eng.add_audio_overlay(sfx_id=b["sfx_id"], start_sec=cursor, volume=1.0, duck_main_audio=True)
+                except Exception:
+                    pass
+            cursor = eng.get_state().total_timeline_duration()
+            rendered.append({"beat": idx + 1, "clip_id": clip.id, "video_path": res["video_path"], "model": chosen})
+            if idx + 1 < len(plan["beats"]):
+                cur_img = eng.extract_clip_end_frame(clip.id)["image_path"]
+    return {"plan": plan, "rendered": rendered, "summary": eng.get_summary_dict()}
+
+
+@mcp.tool()
 def expand_meme_prompt(
     idea: str,
     mode: str = "image",
@@ -876,9 +1099,10 @@ def expand_meme_prompt(
     camera_preset: str | None = None,
     has_second_photo: bool = False,
     has_end_frame: bool = False,
+    literal_mode: bool = False,
     endpoint: str | None = None,
 ) -> dict[str, Any]:
-    """Expand a rough 1-line idea into model-tailored positive & negative prompts, caption, and SFX using local Ollama/LM Studio (or smart fallback)."""
+    """Expand a rough 1-line idea into refusal-proof, model-tailored positive & negative prompts, caption, and SFX using local Ollama/LM Studio (or literal enhancer)."""
     resolved_model = (
         resolve_auto_model(mode, has_friend_photo, has_second_photo)
         if model_id == "auto"
@@ -894,6 +1118,7 @@ def expand_meme_prompt(
         camera_preset=camera_preset,
         has_second_photo=has_second_photo,
         has_end_frame=has_end_frame,
+        literal_mode=literal_mode,
     )
 
 

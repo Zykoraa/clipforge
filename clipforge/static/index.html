@@ -92,8 +92,9 @@
 
         <!-- Mode Segmented Control -->
         <div class="mode-switcher" role="tablist">
-          <button id="btnModeImage" class="mode-btn" type="button" data-mode="image">🖼 Image / Meme</button>
+          <button id="btnModeImage" class="mode-btn" type="button" data-mode="image">🖼 Image</button>
           <button id="btnModeVideo" class="mode-btn active" type="button" data-mode="video">🎬 Video</button>
+          <button id="btnOpenStoryboard" class="mode-btn" type="button" title="Plan & render a 2–4 beat chained Continue-Shot scene">🎞 Scene</button>
         </div>
 
         <div class="form-card studio-card">
@@ -171,6 +172,23 @@
             </div>
           </div>
 
+          <!-- Copy Pose / Framing Reference (Image Mode Optional) -->
+          <div id="genPoseSection" class="field-group hidden">
+            <label class="field-label">Copy Pose / Camera Framing (Optional)</label>
+            <label class="dropzone compact-dropzone" id="genPoseDropzone">
+              <input id="genPoseFileInput" type="file" accept="image/*" hidden />
+              <span>+ Drop meme / screenshot to copy pose & framing</span>
+            </label>
+            <div id="genPosePreviewCard" class="ref-preview-card hidden">
+              <img id="genPosePreviewImg" class="ref-preview-thumb" alt="Pose Reference" />
+              <div class="ref-preview-info">
+                <div id="genPosePreviewName" class="ref-preview-name">pose.png</div>
+                <div class="ref-preview-sub">Pose & framing guide</div>
+              </div>
+              <button id="btnClearPose" class="btn btn-ghost btn-xs" type="button" title="Remove pose reference">✕</button>
+            </div>
+          </div>
+
           <!-- End Frame (Wan 2.2 First->Last Frame Morph) -->
           <div id="genEndFrameSection" class="field-group hidden">
             <label class="field-label">End Frame (Optional — First → Last Frame Morph)</label>
@@ -218,11 +236,30 @@
               <label class="field-label" for="genPromptInput">Prompt</label>
               <div style="display:flex;align-items:center;gap:6px;">
                 <button id="btnRevertPrompt" class="btn btn-ghost btn-xs hidden" type="button" title="Restore original rough idea">↩ Raw</button>
-                <button id="btnExpandPrompt" class="btn btn-ghost btn-xs" type="button" title="Turn a rough idea into tailored positive + negative prompts for the selected model & style (uses local Ollama/LM Studio)">✨ Enhance</button>
+                <button id="btnExpandPrompt" class="btn btn-ghost btn-xs" type="button" title="Turn a rough idea into tailored positive + negative prompts for the selected model & style (refusal-proof local LLM)">✨ Enhance</button>
                 <span class="shortcut-hint">Ctrl+Enter</span>
               </div>
             </div>
-            <textarea id="genPromptInput" class="input-full prompt-textarea" rows="3" placeholder="Type a rough idea (e.g. 'him screaming at a ring doorbell') and click ✨ Enhance — fills positive & negative automatically..."></textarea>
+            <textarea id="genPromptInput" class="input-full prompt-textarea" rows="3" placeholder="Type a rough idea (e.g. '@Jake screaming at a ring doorbell') and click ✨ Enhance — fills positive & negative automatically..."></textarea>
+            <div class="director-micro-bar">
+              <select id="directorModelSelect" class="select-micro" title="Local LLM Prompt Director (Ollama / LM Studio)">
+                <option value="">Director: Auto Uncensored</option>
+              </select>
+              <label class="checkbox-micro" title="Zero-Sanitize Literal Mode: keep your exact wording untouched, only add camera/lighting descriptors">
+                <input id="directorLiteralCheck" type="checkbox" />
+                <span>Literal</span>
+              </label>
+              <button id="btnPullUncensoredLlm" class="btn btn-ghost btn-xs hidden" type="button" title="Pull fast uncensored Ollama prompt writer (dolphin-llama3:8b)">⬇ Uncensored LLM</button>
+            </div>
+          </div>
+
+          <!-- Vary Slightly / Img2Img Denoise Slider (Image Mode) -->
+          <div id="genDenoiseWrap" class="field-group hidden">
+            <div class="field-header-row">
+              <label class="field-label" for="genDenoiseSlider">Edit Strength / Vary Slightly (Denoise)</label>
+              <span id="genDenoiseValue" class="badge">1.00 · Full</span>
+            </div>
+            <input id="genDenoiseSlider" type="range" class="input-full" min="0.25" max="1.00" step="0.05" value="1.00" />
           </div>
 
           <!-- Aspect / Batch / Length Row -->
@@ -249,6 +286,21 @@
               </select>
             </div>
           </div>
+
+          <!-- Collapsible LoRA Stacker -->
+          <details class="advanced-drawer" id="loraDrawer">
+            <summary>LoRAs & Style Weights <span id="loraActiveCount" class="badge" style="margin-left:6px;">0 active</span></summary>
+            <div class="advanced-body">
+              <div class="field-header-row">
+                <span class="hint">Auto-scanned from <code>ComfyUI/models/loras/</code></span>
+                <label class="btn btn-ghost btn-xs" style="cursor:pointer;">
+                  <input id="loraUploadInput" type="file" accept=".safetensors,.pt" hidden />
+                  + Add .safetensors
+                </label>
+              </div>
+              <div id="loraStackList" class="lora-stack-list"></div>
+            </div>
+          </details>
 
           <!-- Collapsible Advanced Settings -->
           <details class="advanced-drawer">
@@ -291,11 +343,19 @@
           <div id="genJobsList" class="gen-jobs-list"></div>
         </div>
 
-        <!-- Generated Image Gallery -->
+        <!-- Unified Media Vault (Images + Videos + Search) -->
         <div id="genGallerySection" class="form-card gallery-card hidden">
           <div class="field-header-row">
-            <h3>Generated Images</h3>
+            <h3>Media Vault</h3>
             <span id="genGalleryCount" class="badge">0</span>
+          </div>
+          <div class="vault-toolbar">
+            <div class="vault-filter-tabs" id="vaultFilterTabs">
+              <button type="button" class="cat-tab active" data-vault="all">All</button>
+              <button type="button" class="cat-tab" data-vault="image">Images</button>
+              <button type="button" class="cat-tab" data-vault="video">Videos</button>
+            </div>
+            <input id="vaultSearchInput" type="text" class="vault-search-input" placeholder="Search prompt, @friend, model..." />
           </div>
           <div id="genGalleryGrid" class="gallery-grid"></div>
         </div>
@@ -533,7 +593,10 @@
               </label>
             </div>
           </div>
-          <button id="btnCloneVoice" class="btn btn-primary btn-block" type="button">🎙 Generate Cloned Voice</button>
+          <div class="field-row">
+            <button id="btnCloneVoice" class="btn btn-secondary btn-block" type="button">🎙 Voice Clip Only</button>
+            <button id="btnTalkSyncVideo" class="btn btn-primary btn-block" type="button" title="Clone friend's voice with F5-TTS + animate their face speaking it (Wan 2.2 S2V / I2V)">🗣 Talk-Sync Video</button>
+          </div>
         </div>
       </section>
     </aside>
@@ -689,25 +752,108 @@
 
       <div class="models-section-title">🎬 Video Generation Models</div>
       <div id="modelsVideoList" class="models-list"></div>
+
+      <div class="models-section-title">⚡ Neural Quality Utilities (GPU AI Upscale & RIFE FPS)</div>
+      <div id="modelsUtilityList" class="models-list"></div>
     </div>
   </div>
 
-  <!-- Generated Image Preview Lightbox -->
+  <!-- Generated Image Preview Lightbox (with Mask-Brush Inpaint, Follow-Up Edit & A/B Compare) -->
   <div id="imageLightboxModal" class="modal-backdrop hidden">
     <div class="modal-card modal-lightbox">
       <div class="modal-header-bar">
-        <h3 id="lightboxTitle">Generated Image</h3>
-        <button id="btnCloseLightbox" class="btn btn-ghost btn-sm" type="button">✕</button>
+        <div>
+          <h3 id="lightboxTitle">Generated Image</h3>
+          <div id="lightboxMetaLine" class="hint"></div>
+        </div>
+        <div class="modal-header-right">
+          <button id="btnLightboxMaskToggle" class="btn btn-ghost btn-sm" type="button" title="Paint over any region to inpaint/fix only that area">🖌 Paint Mask</button>
+          <button id="btnLightboxCompareToggle" class="btn btn-ghost btn-sm" type="button" title="Compare side-by-side with another image / parent">⚖ A/B</button>
+          <button id="btnCloseLightbox" class="btn btn-ghost btn-sm" type="button">✕</button>
+        </div>
       </div>
-      <div class="lightbox-img-wrap">
-        <img id="lightboxImg" alt="Generated preview" />
+
+      <!-- Version History Chain Breadcrumbs -->
+      <div id="lightboxHistoryBar" class="lightbox-history-bar hidden"></div>
+
+      <!-- Mask Brush Toolbar -->
+      <div id="lightboxMaskToolbar" class="lightbox-subbar hidden">
+        <span class="hint">Paint area to fix/replace (unmasked pixels stay 100% locked)</span>
+        <div class="lightbox-subbar-controls">
+          <label class="checkbox-micro">Size <input id="maskBrushSize" type="range" min="10" max="90" value="34" style="width:76px;" /></label>
+          <button id="btnMaskEraser" class="btn btn-ghost btn-xs" type="button">Eraser</button>
+          <button id="btnMaskUndo" class="btn btn-ghost btn-xs" type="button">↶ Undo</button>
+          <button id="btnMaskClear" class="btn btn-ghost btn-xs" type="button">Clear</button>
+        </div>
       </div>
+
+      <!-- A/B Compare Toolbar -->
+      <div id="lightboxCompareToolbar" class="lightbox-subbar hidden">
+        <label class="checkbox-micro">Compare vs: <select id="lightboxCompareSelect" class="select-micro"></select></label>
+        <label class="checkbox-micro">Split <input id="lightboxCompareSlider" type="range" min="0" max="100" value="50" style="width:120px;" /></label>
+      </div>
+
+      <div class="lightbox-img-wrap" id="lightboxImgWrap">
+        <div class="lightbox-stage" id="lightboxStage">
+          <img id="lightboxImg" alt="Generated preview" />
+          <img id="lightboxCompareImg" class="lightbox-compare-img hidden" alt="Comparison image" />
+          <div id="lightboxCompareDivider" class="lightbox-compare-divider hidden"></div>
+          <canvas id="lightboxMaskCanvas" class="lightbox-mask-canvas hidden"></canvas>
+        </div>
+      </div>
+
+      <!-- 1-Line Iterative Follow-Up Edit / Inpaint Bar -->
+      <div class="lightbox-followup-row">
+        <input id="lightboxFollowupInput" type="text" class="input-full" placeholder="Tweak this exact image (e.g. 'make him angrier, remove the hat') or paint a mask above..." />
+        <button id="btnLightboxApplyFollowup" class="btn btn-primary btn-sm" type="button">✨ Apply Edit</button>
+      </div>
+
       <div class="modal-actions">
         <button id="btnLightboxAnimate" class="btn btn-primary" type="button">🎬 Animate</button>
-        <button id="btnLightboxEdit" class="btn btn-secondary" type="button">✏ Edit</button>
-        <button id="btnLightboxPolish" class="btn btn-secondary" type="button">✨ 2× HD</button>
+        <button id="btnLightboxVary" class="btn btn-secondary" type="button" title="Generate slight variation keeping layout (denoise 0.55)">🎲 Vary</button>
+        <button id="btnLightboxDetailFaces" class="btn btn-secondary" type="button" title="Auto-detect and refine small/distant faces at 512px">👤 Fix Faces</button>
+        <button id="btnLightboxEdit" class="btn btn-secondary" type="button">✏ Studio</button>
+        <button id="btnLightboxPolish" class="btn btn-secondary" type="button" title="2x Neural 4x-UltraSharp HD upscale">✨ 2× HD</button>
+        <button id="btnLightboxPolish4x" class="btn btn-ghost" type="button" title="4x Neural 4x-UltraSharp Ultra HD">4×</button>
         <button id="btnLightboxRemix" class="btn btn-secondary" type="button">♻ Remix</button>
         <button id="btnLightboxTimeline" class="btn btn-secondary" type="button">+ Timeline</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Auto Multi-Beat Storyboard / Scene Chainer Modal -->
+  <div id="storyboardModal" class="modal-backdrop hidden">
+    <div class="modal-card modal-wide">
+      <div class="modal-header-bar">
+        <div>
+          <h3>🎞 Auto Multi-Beat Scene Chainer</h3>
+          <p class="hint">Split one gag into 2–4 beats — ClipForge automatically chains each shot's final frame into the next shot + adds SFX & captions.</p>
+        </div>
+        <button id="btnCloseStoryboardModal" class="btn btn-ghost btn-sm" type="button">✕</button>
+      </div>
+      <div class="form-card">
+        <div class="input-row">
+          <input id="sbConceptInput" type="text" class="input-full" placeholder="e.g. @Jake tries to pet a raccoon at 2am outside a gas station and immediately regrets it..." />
+          <select id="sbBeatCountSelect" class="select-compact">
+            <option value="2">2 Beats</option>
+            <option value="3" selected>3 Beats</option>
+            <option value="4">4 Beats</option>
+          </select>
+          <button id="btnPlanStoryboard" class="btn btn-secondary" type="button">✨ Auto-Plan</button>
+        </div>
+        <div class="auto-opts-row" style="margin-top:8px;">
+          <label class="checkbox-row"><input id="sbAutoCaptions" type="checkbox" checked /><span>Auto-add captions</span></label>
+          <label class="checkbox-row"><input id="sbAddSfx" type="checkbox" checked /><span>Auto-drop SFX</span></label>
+          <label class="checkbox-row"><input id="sbWantAudio" type="checkbox" /><span>🔊 Native Audio (LTX-2.3)</span></label>
+          <label class="checkbox-row"><input id="sbFastDraft" type="checkbox" /><span>⚡ Fast 5B</span></label>
+        </div>
+      </div>
+      <div id="sbBeatsContainer" class="sb-beats-list">
+        <p class="empty-hint">Type a 1-line idea above and click ✨ Auto-Plan to generate chained shots.</p>
+      </div>
+      <div class="modal-actions">
+        <button id="btnAddManualBeat" class="btn btn-ghost" type="button">+ Add Beat</button>
+        <button id="btnRenderStoryboard" class="btn btn-primary" type="button">🎬 Render Full Chained Scene</button>
       </div>
     </div>
   </div>

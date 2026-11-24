@@ -36,18 +36,21 @@ COMFYUI_PYTHON = resolve_comfyui_python(COMFYUI_DIR) or (
     COMFYUI_DIR / ".venv" / ("Scripts" if sys.platform == "win32" else "bin") / ("python.exe" if sys.platform == "win32" else "python")
 )
 
-VideoModelId = Literal["wan22_5b", "wan22_i2v", "wan22_t2v", "ltx23"]
+VideoModelId = Literal["wan22_5b", "wan22_i2v", "wan22_t2v", "wan22_s2v", "ltx23"]
 ImageModelId = Literal["flux2_klein", "flux2_klein_9b", "z_image_turbo", "qwen_edit", "qwen_edit_2511"]
 GeneratorModelId = Literal[
     "wan22_5b",
     "wan22_i2v",
     "wan22_t2v",
+    "wan22_s2v",
     "ltx23",
     "flux2_klein",
     "flux2_klein_9b",
     "z_image_turbo",
     "qwen_edit",
     "qwen_edit_2511",
+    "upscale_ultrasharp",
+    "rife_vfi",
 ]
 
 PROMPT_PRESETS: dict[str, dict[str, str]] = {
@@ -629,6 +632,118 @@ MODEL_SPECS: dict[str, dict[str, Any]] = {
             },
         ],
     },
+    # -------------------------------------------------------------------------
+    # AUDIO-DRIVEN LIP-SYNC VIDEO (F5-TTS -> TALKING FRIEND)
+    # -------------------------------------------------------------------------
+    "wan22_s2v": {
+        "kind": "video",
+        "display_name": "Wan 2.2 S2V 14B (Audio Lip-Sync Talking)",
+        "badge": "TALKING / LIP-SYNC",
+        "description": "Audio-driven speech-to-video lip-sync: animate any friend photo speaking your cloned F5-TTS voice track.",
+        "requires_image": True,
+        "supports_image": True,
+        "supports_end_image": False,
+        "supports_second_image": False,
+        "supports_audio": True,
+        "requires_audio": True,
+        "default_width": 480,
+        "default_height": 768,
+        "default_fps": 16,
+        "default_steps": 16,
+        "default_cfg": 3.5,
+        "default_frames": 77,
+        "frame_step": 4,
+        "dim_step": 16,
+        "files": [
+            {
+                "repo_id": "QuantStack/Wan2.2-S2V-14B-GGUF",
+                "remote_path": "Wan2.2-S2V-14B-Q4_K_M.gguf",
+                "local_rel": "models/diffusion_models/Wan2.2-S2V-14B-Q4_K_M.gguf",
+                "alt_local_rels": ["models/diffusion_models/wan2.2_s2v_14B_fp8_scaled.safetensors"],
+                "size_gb": 12.91,
+            },
+            {
+                "repo_id": "Comfy-Org/Wan_2.2_ComfyUI_Repackaged",
+                "remote_path": "split_files/audio_encoders/wav2vec2_large_english_fp16.safetensors",
+                "local_rel": "models/audio_encoders/wav2vec2_large_english_fp16.safetensors",
+                "size_gb": 0.59,
+            },
+            {
+                "repo_id": "Comfy-Org/Wan_2.2_ComfyUI_Repackaged",
+                "remote_path": "split_files/text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+                "local_rel": "models/text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+                "size_gb": 6.27,
+            },
+            {
+                "repo_id": "Comfy-Org/Wan_2.2_ComfyUI_Repackaged",
+                "remote_path": "split_files/vae/wan_2.1_vae.safetensors",
+                "local_rel": "models/vae/wan_2.1_vae.safetensors",
+                "size_gb": 0.24,
+            },
+            {
+                "repo_id": "lightx2v/Wan2.2-Distill-Loras",
+                "remote_path": "wan2.2_t2v_A14b_low_noise_lora_rank64_lightx2v_4step_1217.safetensors",
+                "local_rel": "models/loras/wan2.2_t2v_A14b_low_noise_lora_rank64_lightx2v_4step_1217.safetensors",
+                "optional": True,
+                "size_gb": 0.57,
+            },
+        ],
+    },
+    # -------------------------------------------------------------------------
+    # NEURAL POST-PROCESSING UTILITIES (GPU UPSCALER + RIFE INTERPOLATION)
+    # -------------------------------------------------------------------------
+    "upscale_ultrasharp": {
+        "kind": "utility",
+        "display_name": "4x-UltraSharp Neural Upscaler (64 MB)",
+        "badge": "AI 4× HD UPSCALE",
+        "description": "True neural GPU super-resolution replacing basic Lanczos scaling on 2×/4× HD Polish.",
+        "requires_image": True,
+        "supports_image": True,
+        "supports_second_image": False,
+        "supports_audio": False,
+        "default_width": 1024,
+        "default_height": 1024,
+        "default_steps": 1,
+        "default_cfg": 1.0,
+        "dim_step": 16,
+        "files": [
+            {
+                "repo_id": "Kim2091/UltraSharp",
+                "remote_path": "4x-UltraSharp.pth",
+                "local_rel": "models/upscale_models/4x-UltraSharp.pth",
+                "alt_local_rels": ["models/upscale_models/RealESRGAN_x4plus.pth"],
+                "size_gb": 0.06,
+            },
+        ],
+    },
+    "rife_vfi": {
+        "kind": "utility",
+        "display_name": "RIFE v4.26 GPU Frame Interpolation (22 MB)",
+        "badge": "GPU 32/48 FPS",
+        "description": "Zero-ghosting Comfy-Org RIFE v4.26 GPU optical-flow interpolation for silky 32fps/48fps Wan & LTX videos (~1-2s per clip).",
+        "requires_image": False,
+        "supports_image": False,
+        "supports_second_image": False,
+        "supports_audio": False,
+        "default_width": 480,
+        "default_height": 832,
+        "default_steps": 1,
+        "default_cfg": 1.0,
+        "dim_step": 16,
+        "files": [
+            {
+                "repo_id": "Comfy-Org/Frame-Interpolation",
+                "remote_path": "frame_interpolation/rife_v4.26.safetensors",
+                "local_rel": "models/frame_interpolation/rife_v4.26.safetensors",
+                "alt_local_rels": [
+                    "models/frame_interpolation/rife_v4.26_heavy.safetensors",
+                    "models/frame_interpolation/rife_v4.25.safetensors",
+                    "models/frame_interpolation/film_net_fp16.safetensors",
+                ],
+                "size_gb": 0.02,
+            },
+        ],
+    },
 }
 
 
@@ -782,35 +897,258 @@ def read_asset_metadata(asset_path: Path) -> dict[str, Any] | None:
         return None
 
 
-def polish_image_hd(image_path: Path, output_dir: Path, scale: int = 2) -> dict[str, Any]:
-    """1-click 2x HD Lanczos upscale + subtle detail/micro-contrast sharpening polish."""
+_BUILTIN_LORA_PREFIXES = (
+    "wan2.2_i2v_a14b_",
+    "wan2.2_i2v_lightx2v_",
+    "wan2.2_t2v_a14b_",
+    "wan2.2_t2v_lightx2v_",
+    "qwen-image-edit-2509-lightning",
+    "qwen-image-edit-2511-lightning",
+)
+
+
+def _classify_lora_family(filename: str) -> str:
+    low = filename.lower()
+    if "wan" in low:
+        return "wan"
+    if "ltx" in low:
+        return "ltx"
+    if "flux" in low or "klein" in low:
+        return "flux"
+    if "qwen" in low:
+        return "qwen"
+    if "z_image" in low or "z-image" in low or "lumina" in low:
+        return "z_image"
+    return "universal"
+
+
+def _load_lora_triggers(triggers_file: Path | None) -> dict[str, str]:
+    if not triggers_file or not triggers_file.exists():
+        return {}
+    try:
+        data = json.loads(triggers_file.read_text(encoding="utf-8"))
+        return {str(k): str(v) for k, v in data.items()} if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def save_lora_trigger(triggers_file: Path, lora_name: str, trigger_word: str) -> dict[str, str]:
+    triggers_file.parent.mkdir(parents=True, exist_ok=True)
+    cur = _load_lora_triggers(triggers_file)
+    clean_trig = (trigger_word or "").strip()[:160]
+    if clean_trig:
+        cur[lora_name] = clean_trig
+    else:
+        cur.pop(lora_name, None)
+    triggers_file.write_text(json.dumps(cur, indent=2), encoding="utf-8")
+    return cur
+
+
+def list_available_loras(
+    comfy_dir: Path = COMFYUI_DIR,
+    triggers_file: Path | None = None,
+) -> list[dict[str, Any]]:
+    """Auto-discover user and built-in LoRA files in ComfyUI/models/loras/ with family tags & trigger words."""
+    loras_root = comfy_dir / "models" / "loras"
+    if not loras_root.exists():
+        return []
+    triggers = _load_lora_triggers(triggers_file)
+    out: list[dict[str, Any]] = []
+    for p in sorted(loras_root.rglob("*")):
+        if not p.is_file() or p.suffix.lower() not in (".safetensors", ".pt", ".ckpt"):
+            continue
+        if p.stat().st_size < 1024:
+            continue
+        rel_name = p.relative_to(loras_root).as_posix()
+        base_low = p.name.lower()
+        is_builtin = any(base_low.startswith(pref) for pref in _BUILTIN_LORA_PREFIXES)
+        out.append(
+            {
+                "name": rel_name,
+                "filename": p.name,
+                "family": _classify_lora_family(rel_name),
+                "size_mb": round(p.stat().st_size / (1024 * 1024), 1),
+                "is_builtin": is_builtin,
+                "trigger": triggers.get(rel_name, ""),
+            }
+        )
+    # User LoRAs first, then builtin speed LoRAs
+    out.sort(key=lambda x: (x["is_builtin"], x["name"].lower()))
+    return out
+
+
+def _attach_user_loras(
+    graph: dict[str, Any],
+    model_ref: list[Any],
+    loras: list[dict[str, Any]] | None,
+    prefix: str = "ulora",
+) -> list[Any]:
+    """Chain up to 3 user-selected LoRAs via LoraLoaderModelOnly without disturbing existing node IDs."""
+    cur = model_ref
+    if not loras:
+        return cur
+    for idx, item in enumerate(loras[:3]):
+        name = str(item.get("name") or "").strip()
+        if not name:
+            continue
+        strength = max(-2.0, min(2.0, float(item.get("strength", 0.8))))
+        nid = f"{prefix}_{idx}"
+        graph[nid] = {
+            "class_type": "LoraLoaderModelOnly",
+            "inputs": {
+                "model": cur,
+                "lora_name": name,
+                "strength_model": strength,
+            },
+        }
+        cur = [nid, 0]
+    return cur
+
+
+def _apply_lora_triggers(prompt: str, loras: list[dict[str, Any]] | None) -> str:
+    if not loras:
+        return prompt
+    additions: list[str] = []
+    low = (prompt or "").lower()
+    for item in loras[:3]:
+        trig = str(item.get("trigger") or "").strip()
+        if trig and trig.lower() not in low:
+            additions.append(trig)
+            low += " " + trig.lower()
+    if not additions:
+        return prompt
+    return f"{', '.join(additions)}, {prompt}" if prompt else ", ".join(additions)
+
+
+def build_ultrasharp_upscale_workflow(
+    image_filename: str,
+    model_name: str = "4x-UltraSharp.pth",
+    target_width: int | None = None,
+    target_height: int | None = None,
+    filename_prefix: str = "clipforge/upscale_hd",
+) -> dict[str, Any]:
+    """Native ComfyUI GPU super-resolution using 4x-UltraSharp / RealESRGAN with optional exact 2x downscale."""
+    graph: dict[str, Any] = {
+        "1": {"class_type": "LoadImage", "inputs": {"image": image_filename}},
+        "2": {"class_type": "UpscaleModelLoader", "inputs": {"model_name": model_name}},
+        "3": {"class_type": "ImageUpscaleWithModel", "inputs": {"upscale_model": ["2", 0], "image": ["1", 0]}},
+    }
+    img_out = ["3", 0]
+    if target_width and target_height:
+        graph["4"] = {
+            "class_type": "ImageScale",
+            "inputs": {
+                "image": ["3", 0],
+                "upscale_method": "lanczos",
+                "width": int(target_width),
+                "height": int(target_height),
+                "crop": "disabled",
+            },
+        }
+        img_out = ["4", 0]
+    graph["5"] = {"class_type": "SaveImage", "inputs": {"images": img_out, "filename_prefix": filename_prefix}}
+    return graph
+
+
+def build_rife_interpolate_workflow(
+    video_filename: str,
+    model_name: str = "rife_v4.26.safetensors",
+    multiplier: int = 2,
+    output_fps: float = 32.0,
+    filename_prefix: str = "clipforge/rife_smooth",
+) -> dict[str, Any]:
+    """Native ComfyUI GPU RIFE v4.26 frame interpolation preserving original audio stream."""
+    mult = max(2, min(4, int(multiplier)))
+    return {
+        "1": {"class_type": "LoadVideo", "inputs": {"file": video_filename}},
+        "2": {"class_type": "GetVideoComponents", "inputs": {"video": ["1", 0]}},
+        "3": {"class_type": "FrameInterpolationModelLoader", "inputs": {"model_name": model_name}},
+        "4": {
+            "class_type": "FrameInterpolate",
+            "inputs": {"interp_model": ["3", 0], "images": ["2", 0], "multiplier": mult},
+        },
+        "5": {
+            "class_type": "CreateVideo",
+            "inputs": {"images": ["4", 0], "fps": float(output_fps), "audio": ["2", 1]},
+        },
+        "6": {
+            "class_type": "SaveVideo",
+            "inputs": {"video": ["5", 0], "filename_prefix": filename_prefix, "format": "mp4"},
+        },
+    }
+
+
+def polish_image_hd(
+    image_path: Path,
+    output_dir: Path,
+    scale: int = 2,
+    prefer_ai: bool = True,
+    base_url: str = COMFYUI_URL,
+    comfy_dir: Path = COMFYUI_DIR,
+) -> dict[str, Any]:
+    """1-click 2x/4x HD neural upscale (4x-UltraSharp on GPU when installed, with clean FFmpeg Lanczos fallback)."""
     src = Path(image_path).resolve()
     if not src.exists() or not src.is_file():
         raise FileNotFoundError(f"Image not found: {src}")
-    factor = 2 if scale >= 2 else 1
+    factor = 4 if scale >= 4 else (2 if scale >= 2 else 1)
     output_dir.mkdir(parents=True, exist_ok=True)
     run_id = uuid.uuid4().hex[:6]
     stem = src.stem[:48]
     dest = (output_dir / f"{stem}_hd_{run_id}.png").resolve()
+    orig_dims = read_image_dimensions(src)
 
-    vf = f"scale=iw*{factor}:ih*{factor}:flags=lanczos,unsharp=5:5:0.75:3:3:0.30"
-    res = subprocess.run(
-        ["ffmpeg", "-y", "-hide_banner", "-i", str(src), "-vf", vf, "-frames:v", "1", str(dest)],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if res.returncode != 0 or not dest.exists():
-        raise RuntimeError(f"HD polish failed: {(res.stderr or '')[-400:]}")
+    engine_used = "ffmpeg_lanczos"
+    upscale_fp = _resolve_existing_slot_file(MODEL_SPECS["upscale_ultrasharp"]["files"][0], comfy_dir)
+
+    if prefer_ai and factor >= 2 and upscale_fp is not None:
+        try:
+            ensure_comfyui_running(comfy_dir=comfy_dir, base_url=base_url, wait_sec=45.0)
+            up_name = _upload_image_to_comfyui(src, base_url=base_url)
+            t_w = (orig_dims[0] * factor) if (orig_dims and factor < 4) else None
+            t_h = (orig_dims[1] * factor) if (orig_dims and factor < 4) else None
+            wf = build_ultrasharp_upscale_workflow(
+                image_filename=up_name,
+                model_name=upscale_fp.name,
+                target_width=t_w,
+                target_height=t_h,
+                filename_prefix=f"clipforge/hd_{run_id}",
+            )
+            _pid, img_info, _elapsed = _execute_comfyui_workflow(
+                workflow=wf,
+                base_url=base_url,
+                timeout_sec=180.0,
+                extensions=(".png", ".jpg", ".jpeg", ".webp"),
+            )
+            view_resp = httpx.get(f"{base_url}/view", params=img_info, timeout=60.0)
+            view_resp.raise_for_status()
+            dest.write_bytes(view_resp.content)
+            engine_used = upscale_fp.stem
+        except Exception:
+            engine_used = "ffmpeg_lanczos"
+
+    if not dest.exists() or dest.stat().st_size < 1024:
+        vf = f"scale=iw*{factor}:ih*{factor}:flags=lanczos,unsharp=5:5:0.75:3:3:0.30"
+        res = subprocess.run(
+            ["ffmpeg", "-y", "-hide_banner", "-i", str(src), "-vf", vf, "-frames:v", "1", str(dest)],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if res.returncode != 0 or not dest.exists():
+            raise RuntimeError(f"HD polish failed: {(res.stderr or '')[-400:]}")
 
     orig_meta = read_asset_metadata(src) or {}
-    write_asset_metadata(dest, {**orig_meta, "polished_from": src.name, "hd_scale": factor})
+    write_asset_metadata(
+        dest,
+        {**orig_meta, "polished_from": src.name, "parent_image": src.name, "hd_scale": factor, "hd_engine": engine_used},
+    )
     dims = read_image_dimensions(dest) or (0, 0)
     return {
         "image_path": str(dest),
         "filename": dest.name,
         "width": dims[0],
         "height": dims[1],
+        "engine": engine_used,
         "file_size_bytes": dest.stat().st_size,
     }
 
@@ -1131,6 +1469,7 @@ def get_model_availability(comfy_dir: Path = COMFYUI_DIR) -> dict[str, dict[str,
             "supports_end_image": spec.get("supports_end_image", False),
             "supports_second_image": spec["supports_second_image"],
             "supports_audio": spec["supports_audio"],
+            "requires_audio": spec.get("requires_audio", False),
             "defaults": {
                 "width": spec["default_width"],
                 "height": spec["default_height"],
@@ -1270,6 +1609,7 @@ def build_wan22_i2v_workflow(
     low_unet: str = "Wan2.2-I2V-A14B-LowNoise-Q4_K_M.gguf",
     high_lora: str = "wan2.2_i2v_A14b_high_noise_lora_rank64_lightx2v_4step_1022.safetensors",
     low_lora: str = "wan2.2_i2v_A14b_low_noise_lora_rank64_lightx2v_4step_1022.safetensors",
+    loras: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     w = snap_dim(width, 16)
     h = snap_dim(height, 16)
@@ -1363,6 +1703,9 @@ def build_wan22_i2v_workflow(
         "16": {"class_type": "CreateVideo", "inputs": {"images": ["15", 0], "fps": float(fps)}},
         "17": {"class_type": "SaveVideo", "inputs": {"video": ["16", 0], "filename_prefix": filename_prefix, "format": "mp4"}},
     }
+    if loras:
+        graph["5"]["inputs"]["model"] = _attach_user_loras(graph, ["3", 0], loras, prefix="ulora_h")
+        graph["6"]["inputs"]["model"] = _attach_user_loras(graph, ["4", 0], loras, prefix="ulora_l")
     if end_image_filename:
         graph["11b"] = {"class_type": "LoadImage", "inputs": {"image": end_image_filename}}
     return graph
@@ -1383,6 +1726,7 @@ def build_wan22_t2v_workflow(
     low_unet: str = "Wan2.2-T2V-A14B-LowNoise-Q4_K_M.gguf",
     high_lora: str = "wan2.2_t2v_A14b_high_noise_lora_rank64_lightx2v_4step_1217.safetensors",
     low_lora: str = "wan2.2_t2v_A14b_low_noise_lora_rank64_lightx2v_4step_1217.safetensors",
+    loras: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Wan 2.2 T2V 14B dual-expert + 4-step Lightx2v LoRAs (GGUF or FP8 safetensors)."""
     w = snap_dim(width, 16)
@@ -1392,7 +1736,7 @@ def build_wan22_t2v_workflow(
     split_step = max(2, total_steps // 2)
     actual_seed = random.randint(1, 2**50) if seed < 0 else int(seed)
 
-    return {
+    graph: dict[str, Any] = {
         "1": _unet_loader_node(high_unet),
         "2": _unet_loader_node(low_unet),
         "3": {
@@ -1464,6 +1808,94 @@ def build_wan22_t2v_workflow(
         "15": {"class_type": "CreateVideo", "inputs": {"images": ["14", 0], "fps": float(fps)}},
         "16": {"class_type": "SaveVideo", "inputs": {"video": ["15", 0], "filename_prefix": filename_prefix, "format": "mp4"}},
     }
+    if loras:
+        graph["5"]["inputs"]["model"] = _attach_user_loras(graph, ["3", 0], loras, prefix="ulora_h")
+        graph["6"]["inputs"]["model"] = _attach_user_loras(graph, ["4", 0], loras, prefix="ulora_l")
+    return graph
+
+
+def build_wan22_s2v_workflow(
+    prompt: str,
+    image_filename: str,
+    audio_filename: str,
+    negative_prompt: str = DEFAULT_NEGATIVE_PROMPT,
+    width: int = 480,
+    height: int = 768,
+    num_frames: int = 77,
+    fps: int = 16,
+    steps: int = 16,
+    cfg: float = 3.5,
+    seed: int = -1,
+    filename_prefix: str = "clipforge/wan22_s2v",
+    unet_name: str = "Wan2.2-S2V-14B-Q4_K_M.gguf",
+    audio_encoder_name: str = "wav2vec2_large_english_fp16.safetensors",
+    lora_name: str | None = None,
+    loras: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Wan 2.2 S2V 14B audio-driven talking-head lip-sync video workflow (pairs directly with F5-TTS WAV)."""
+    w = snap_dim(width, 16)
+    h = snap_dim(height, 16)
+    length = snap_frames(num_frames, 4, minimum=21, maximum=121)
+    actual_seed = random.randint(1, 2**50) if seed < 0 else int(seed)
+
+    graph: dict[str, Any] = {
+        "1": _unet_loader_node(unet_name),
+        "2": {"class_type": "ModelSamplingSD3", "inputs": {"model": ["1", 0], "shift": 8.0}},
+        "3": {
+            "class_type": "CLIPLoader",
+            "inputs": {"clip_name": "umt5_xxl_fp8_e4m3fn_scaled.safetensors", "type": "wan", "device": "default"},
+        },
+        "4": {"class_type": "VAELoader", "inputs": {"vae_name": "wan_2.1_vae.safetensors"}},
+        "5": {"class_type": "CLIPTextEncode", "inputs": {"clip": ["3", 0], "text": prompt}},
+        "6": {"class_type": "CLIPTextEncode", "inputs": {"clip": ["3", 0], "text": negative_prompt}},
+        "7": {"class_type": "LoadImage", "inputs": {"image": image_filename}},
+        "8": {"class_type": "AudioEncoderLoader", "inputs": {"audio_encoder_name": audio_encoder_name}},
+        "9": {"class_type": "LoadAudio", "inputs": {"audio": audio_filename}},
+        "10": {"class_type": "AudioEncoderEncode", "inputs": {"audio_encoder": ["8", 0], "audio": ["9", 0]}},
+        "11": {
+            "class_type": "WanSoundImageToVideo",
+            "inputs": {
+                "positive": ["5", 0],
+                "negative": ["6", 0],
+                "vae": ["4", 0],
+                "width": w,
+                "height": h,
+                "length": length,
+                "batch_size": 1,
+                "audio_encoder_output": ["10", 0],
+                "ref_image": ["7", 0],
+            },
+        },
+        "12": {
+            "class_type": "KSampler",
+            "inputs": {
+                "model": ["2", 0],
+                "seed": actual_seed,
+                "steps": max(4, min(35, int(steps))),
+                "cfg": float(cfg),
+                "sampler_name": "euler",
+                "scheduler": "simple",
+                "positive": ["11", 0],
+                "negative": ["11", 1],
+                "latent_image": ["11", 2],
+                "denoise": 1.0,
+            },
+        },
+        "13": {"class_type": "VAEDecode", "inputs": {"samples": ["12", 0], "vae": ["4", 0]}},
+        "14": {"class_type": "CreateVideo", "inputs": {"images": ["13", 0], "fps": float(fps), "audio": ["9", 0]}},
+        "15": {"class_type": "SaveVideo", "inputs": {"video": ["14", 0], "filename_prefix": filename_prefix, "format": "mp4"}},
+    }
+    model_ref: list[Any] = ["1", 0]
+    if lora_name:
+        graph["1b"] = {
+            "class_type": "LoraLoaderModelOnly",
+            "inputs": {"model": model_ref, "lora_name": lora_name, "strength_model": 1.0},
+        }
+        model_ref = ["1b", 0]
+    if loras:
+        model_ref = _attach_user_loras(graph, model_ref, loras, prefix="ulora")
+    graph["2"]["inputs"]["model"] = model_ref
+    return graph
 
 
 def build_wan22_5b_workflow(
@@ -1478,6 +1910,7 @@ def build_wan22_5b_workflow(
     cfg: float = 3.8,
     seed: int = -1,
     filename_prefix: str = "clipforge/wan22_5b",
+    loras: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     w = snap_dim(width, 32)
     h = snap_dim(height, 32)
@@ -1521,6 +1954,8 @@ def build_wan22_5b_workflow(
         "11": {"class_type": "CreateVideo", "inputs": {"images": ["10", 0], "fps": float(fps)}},
         "12": {"class_type": "SaveVideo", "inputs": {"video": ["11", 0], "filename_prefix": filename_prefix, "format": "mp4"}},
     }
+    if loras:
+        graph["2"]["inputs"]["model"] = _attach_user_loras(graph, ["1", 0], loras, prefix="ulora")
     if image_filename:
         graph["7"] = {"class_type": "LoadImage", "inputs": {"image": image_filename}}
         latent_inputs["start_image"] = ["7", 0]
@@ -1540,6 +1975,7 @@ def build_ltx23_workflow(
     seed: int = -1,
     image_strength: float = 0.95,
     filename_prefix: str = "clipforge/ltx23",
+    loras: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     w = snap_dim(width, 32)
     h = snap_dim(height, 32)
@@ -1606,6 +2042,8 @@ def build_ltx23_workflow(
         "21": {"class_type": "CreateVideo", "inputs": {"images": ["19", 0], "fps": float(fps), "audio": ["20", 0]}},
         "22": {"class_type": "SaveVideo", "inputs": {"video": ["21", 0], "filename_prefix": filename_prefix, "format": "mp4"}},
     }
+    if loras:
+        graph["13"]["inputs"]["model"] = _attach_user_loras(graph, ["1", 0], loras, prefix="ulora")
     if image_filename:
         graph["10"] = {"class_type": "LoadImage", "inputs": {"image": image_filename}}
         graph["10b"] = {"class_type": "LTXVPreprocess", "inputs": {"image": ["10", 0], "img_compression": 35}}
@@ -1629,20 +2067,25 @@ def build_ltx23_workflow(
 def build_flux2_klein_workflow(
     prompt: str,
     image_filename: str | None = None,
+    pose_image_filename: str | None = None,
+    mask_filename: str | None = None,
     negative_prompt: str = "",
     width: int = 1024,
     height: int = 1024,
     steps: int = 4,
     cfg: float = 1.0,
+    denoise: float = 1.0,
     seed: int = -1,
     filename_prefix: str = "clipforge/flux2_klein",
     unet_name: str = "flux-2-klein-4b-Q4_K_M.gguf",
     clip_name: str = "qwen_3_4b_fp8_mixed.safetensors",
+    loras: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    """FLUX.2 [klein] 4B Q4_K_M: 4-step ultra-fast T2I + Reference-Image Friend Photo Editing."""
+    """FLUX.2 [klein] 4B/9B: 4-step T2I, multi-reference photo edit, pose transfer, img2img denoise, & mask inpaint."""
     w = snap_dim(width, 16, minimum=512, maximum=1536)
     h = snap_dim(height, 16, minimum=512, maximum=1536)
     actual_seed = random.randint(1, 2**50) if seed < 0 else int(seed)
+    den = max(0.15, min(1.0, float(denoise)))
 
     graph: dict[str, Any] = {
         "1": _unet_loader_node(unet_name),
@@ -1669,35 +2112,95 @@ def build_flux2_klein_workflow(
         "16": {"class_type": "SaveImage", "inputs": {"images": ["15", 0], "filename_prefix": filename_prefix}},
     }
 
+    model_ref: list[Any] = _attach_user_loras(graph, ["1", 0], loras, prefix="ulora")
+    pos_ref: list[Any] = ["4", 0]
+    neg_ref: list[Any] = ["5", 0]
+
     if image_filename:
         graph["7"] = {"class_type": "LoadImage", "inputs": {"image": image_filename}}
         graph["8"] = {"class_type": "VAEEncode", "inputs": {"pixels": ["7", 0], "vae": ["3", 0]}}
-        graph["9"] = {"class_type": "ReferenceLatent", "inputs": {"conditioning": ["4", 0], "latent": ["8", 0]}}
-        graph["9b"] = {"class_type": "ReferenceLatent", "inputs": {"conditioning": ["5", 0], "latent": ["8", 0]}}
-        graph["10"]["inputs"]["positive"] = ["9", 0]
-        graph["10"]["inputs"]["negative"] = ["9b", 0]
+        graph["9"] = {"class_type": "ReferenceLatent", "inputs": {"conditioning": pos_ref, "latent": ["8", 0]}}
+        graph["9b"] = {"class_type": "ReferenceLatent", "inputs": {"conditioning": neg_ref, "latent": ["8", 0]}}
+        pos_ref = ["9", 0]
+        neg_ref = ["9b", 0]
 
+    if pose_image_filename:
+        graph["7p"] = {"class_type": "LoadImage", "inputs": {"image": pose_image_filename}}
+        graph["8p"] = {"class_type": "VAEEncode", "inputs": {"pixels": ["7p", 0], "vae": ["3", 0]}}
+        graph["9p"] = {"class_type": "ReferenceLatent", "inputs": {"conditioning": pos_ref, "latent": ["8p", 0]}}
+        graph["9pb"] = {"class_type": "ReferenceLatent", "inputs": {"conditioning": neg_ref, "latent": ["8p", 0]}}
+        pos_ref = ["9p", 0]
+        neg_ref = ["9pb", 0]
+
+    # Img2Img Variation or Mask-Brush Pixel-Locked Inpainting
+    if image_filename and (mask_filename or den < 0.99):
+        graph["7s"] = {
+            "class_type": "ImageScale",
+            "inputs": {"image": ["7", 0], "upscale_method": "lanczos", "width": w, "height": h, "crop": "center"},
+        }
+        graph["8s"] = {"class_type": "VAEEncode", "inputs": {"pixels": ["7s", 0], "vae": ["3", 0]}}
+        latent_ref: list[Any] = ["8s", 0]
+
+        if den < 0.99:
+            graph["13b"] = {"class_type": "SplitSigmasDenoise", "inputs": {"sigmas": ["13", 0], "denoise": den}}
+            graph["14"]["inputs"]["sigmas"] = ["13b", 1]
+
+        if mask_filename:
+            graph["1d"] = {"class_type": "DifferentialDiffusion", "inputs": {"model": model_ref, "strength": 1.0}}
+            model_ref = ["1d", 0]
+            graph["m1"] = {"class_type": "LoadImage", "inputs": {"image": mask_filename}}
+            graph["m2"] = {
+                "class_type": "ImageScale",
+                "inputs": {"image": ["m1", 0], "upscale_method": "bilinear", "width": w, "height": h, "crop": "center"},
+            }
+            graph["m3"] = {"class_type": "ImageToMask", "inputs": {"image": ["m2", 0], "channel": "red"}}
+            graph["m4"] = {"class_type": "GrowMask", "inputs": {"mask": ["m3", 0], "expand": 8, "tapered_corners": True}}
+            graph["m5"] = {"class_type": "SetLatentNoiseMask", "inputs": {"samples": ["8s", 0], "mask": ["m4", 0]}}
+            latent_ref = ["m5", 0]
+            graph["15b"] = {
+                "class_type": "ImageCompositeMasked",
+                "inputs": {
+                    "destination": ["7s", 0],
+                    "source": ["15", 0],
+                    "x": 0,
+                    "y": 0,
+                    "resize_source": True,
+                    "mask": ["m4", 0],
+                },
+            }
+            graph["16"]["inputs"]["images"] = ["15b", 0]
+
+        graph["14"]["inputs"]["latent_image"] = latent_ref
+
+    graph["10"]["inputs"]["model"] = model_ref
+    graph["10"]["inputs"]["positive"] = pos_ref
+    graph["10"]["inputs"]["negative"] = neg_ref
     return graph
 
 
 def build_z_image_turbo_workflow(
     prompt: str,
+    image_filename: str | None = None,
+    mask_filename: str | None = None,
     negative_prompt: str = DEFAULT_NEGATIVE_PROMPT,
     width: int = 1024,
     height: int = 1024,
     steps: int = 8,
     cfg: float = 1.0,
+    denoise: float = 1.0,
     seed: int = -1,
     filename_prefix: str = "clipforge/z_image_turbo",
     unet_name: str = "z-image-turbo-Q4_K_M.gguf",
     clip_name: str = "qwen_3_4b_fp8_mixed.safetensors",
+    loras: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    """Z-Image-Turbo (GGUF or BF16 safetensors): 8-step hyper-real candid photography & crisp embedded meme text."""
+    """Z-Image-Turbo (GGUF or BF16 safetensors): 8-step hyper-real photography, crisp text, img2img, & mask inpaint."""
     w = snap_dim(width, 16, minimum=512, maximum=1536)
     h = snap_dim(height, 16, minimum=512, maximum=1536)
     actual_seed = random.randint(1, 2**50) if seed < 0 else int(seed)
+    den = max(0.15, min(1.0, float(denoise)))
 
-    return {
+    graph: dict[str, Any] = {
         "1": _unet_loader_node(unet_name),
         "2": {"class_type": "ModelSamplingAuraFlow", "inputs": {"model": ["1", 0], "shift": 3.0}},
         "3": {
@@ -1720,33 +2223,76 @@ def build_z_image_turbo_workflow(
                 "positive": ["5", 0],
                 "negative": ["6", 0],
                 "latent_image": ["7", 0],
-                "denoise": 1.0,
+                "denoise": den,
             },
         },
         "9": {"class_type": "VAEDecode", "inputs": {"samples": ["8", 0], "vae": ["4", 0]}},
         "10": {"class_type": "SaveImage", "inputs": {"images": ["9", 0], "filename_prefix": filename_prefix}},
     }
 
+    if loras:
+        graph["2"]["inputs"]["model"] = _attach_user_loras(graph, ["1", 0], loras, prefix="ulora")
+
+    if image_filename and (mask_filename or den < 0.99):
+        graph["7a"] = {"class_type": "LoadImage", "inputs": {"image": image_filename}}
+        graph["7s"] = {
+            "class_type": "ImageScale",
+            "inputs": {"image": ["7a", 0], "upscale_method": "lanczos", "width": w, "height": h, "crop": "center"},
+        }
+        graph["7e"] = {"class_type": "VAEEncode", "inputs": {"pixels": ["7s", 0], "vae": ["4", 0]}}
+        latent_ref: list[Any] = ["7e", 0]
+        if mask_filename:
+            graph["2d"] = {"class_type": "DifferentialDiffusion", "inputs": {"model": ["2", 0], "strength": 1.0}}
+            graph["8"]["inputs"]["model"] = ["2d", 0]
+            graph["m1"] = {"class_type": "LoadImage", "inputs": {"image": mask_filename}}
+            graph["m2"] = {
+                "class_type": "ImageScale",
+                "inputs": {"image": ["m1", 0], "upscale_method": "bilinear", "width": w, "height": h, "crop": "center"},
+            }
+            graph["m3"] = {"class_type": "ImageToMask", "inputs": {"image": ["m2", 0], "channel": "red"}}
+            graph["m4"] = {"class_type": "GrowMask", "inputs": {"mask": ["m3", 0], "expand": 8, "tapered_corners": True}}
+            graph["m5"] = {"class_type": "SetLatentNoiseMask", "inputs": {"samples": ["7e", 0], "mask": ["m4", 0]}}
+            latent_ref = ["m5", 0]
+            graph["9b"] = {
+                "class_type": "ImageCompositeMasked",
+                "inputs": {
+                    "destination": ["7s", 0],
+                    "source": ["9", 0],
+                    "x": 0,
+                    "y": 0,
+                    "resize_source": True,
+                    "mask": ["m4", 0],
+                },
+            }
+            graph["10"]["inputs"]["images"] = ["9b", 0]
+        graph["8"]["inputs"]["latent_image"] = latent_ref
+    return graph
+
 
 def build_qwen_edit_workflow(
     prompt: str,
     image_filename: str,
     image_filename_2: str | None = None,
+    image_filename_3: str | None = None,
+    mask_filename: str | None = None,
     negative_prompt: str = "",
     width: int = 1024,
     height: int = 1024,
     steps: int = 4,
     cfg: float = 1.0,
+    denoise: float = 1.0,
     seed: int = -1,
     use_lightning_lora: bool | None = None,
     filename_prefix: str = "clipforge/qwen_edit",
     unet_name: str = "Qwen-Image-Edit-2509-Q4_K_M.gguf",
     lora_name: str | None = None,
+    loras: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    """Qwen-Image-Edit (2509 or 2511 + optional 4-step Lightning LoRA): 1-2 friend photo compositor."""
+    """Qwen-Image-Edit (2509/2511 + Lightning LoRA): 1-3 image compositor, pose transfer, img2img, & mask inpaint."""
     w = snap_dim(width, 16, minimum=512, maximum=1536)
     h = snap_dim(height, 16, minimum=512, maximum=1536)
     actual_seed = random.randint(1, 2**50) if seed < 0 else int(seed)
+    den = max(0.15, min(1.0, float(denoise)))
 
     effective_lora = lora_name
     if use_lightning_lora is False:
@@ -1781,22 +2327,64 @@ def build_qwen_edit_workflow(
                 "positive": ["6", 0],
                 "negative": ["7", 0],
                 "latent_image": ["8", 0],
-                "denoise": 1.0,
+                "denoise": den,
             },
         },
         "10": {"class_type": "VAEDecode", "inputs": {"samples": ["9", 0], "vae": ["4", 0]}},
         "11": {"class_type": "SaveImage", "inputs": {"images": ["10", 0], "filename_prefix": filename_prefix}},
     }
+    model_ref: list[Any] = ["1", 0]
     if effective_lora:
         graph["1b"] = {
             "class_type": "LoraLoaderModelOnly",
-            "inputs": {"model": ["1", 0], "lora_name": effective_lora, "strength_model": 1.0},
+            "inputs": {"model": model_ref, "lora_name": effective_lora, "strength_model": 1.0},
         }
-        graph["2"]["inputs"]["model"] = ["1b", 0]
+        model_ref = ["1b", 0]
+    if loras:
+        model_ref = _attach_user_loras(graph, model_ref, loras, prefix="ulora")
+    graph["2"]["inputs"]["model"] = model_ref
+
     if image_filename_2:
         graph["5b"] = {"class_type": "LoadImage", "inputs": {"image": image_filename_2}}
         pos_inputs["image2"] = ["5b", 0]
         neg_inputs["image2"] = ["5b", 0]
+    if image_filename_3:
+        graph["5c"] = {"class_type": "LoadImage", "inputs": {"image": image_filename_3}}
+        pos_inputs["image3"] = ["5c", 0]
+        neg_inputs["image3"] = ["5c", 0]
+
+    if mask_filename or den < 0.99:
+        graph["5s"] = {
+            "class_type": "ImageScale",
+            "inputs": {"image": ["5", 0], "upscale_method": "lanczos", "width": w, "height": h, "crop": "center"},
+        }
+        graph["8e"] = {"class_type": "VAEEncode", "inputs": {"pixels": ["5s", 0], "vae": ["4", 0]}}
+        latent_ref: list[Any] = ["8e", 0]
+        if mask_filename:
+            graph["2d"] = {"class_type": "DifferentialDiffusion", "inputs": {"model": ["2", 0], "strength": 1.0}}
+            graph["9"]["inputs"]["model"] = ["2d", 0]
+            graph["m1"] = {"class_type": "LoadImage", "inputs": {"image": mask_filename}}
+            graph["m2"] = {
+                "class_type": "ImageScale",
+                "inputs": {"image": ["m1", 0], "upscale_method": "bilinear", "width": w, "height": h, "crop": "center"},
+            }
+            graph["m3"] = {"class_type": "ImageToMask", "inputs": {"image": ["m2", 0], "channel": "red"}}
+            graph["m4"] = {"class_type": "GrowMask", "inputs": {"mask": ["m3", 0], "expand": 8, "tapered_corners": True}}
+            graph["m5"] = {"class_type": "SetLatentNoiseMask", "inputs": {"samples": ["8e", 0], "mask": ["m4", 0]}}
+            latent_ref = ["m5", 0]
+            graph["10b"] = {
+                "class_type": "ImageCompositeMasked",
+                "inputs": {
+                    "destination": ["5s", 0],
+                    "source": ["10", 0],
+                    "x": 0,
+                    "y": 0,
+                    "resize_source": True,
+                    "mask": ["m4", 0],
+                },
+            }
+            graph["11"]["inputs"]["images"] = ["10b", 0]
+        graph["9"]["inputs"]["latent_image"] = latent_ref
     return graph
 
 
@@ -1819,6 +2407,41 @@ def _upload_image_to_comfyui(image_path: str | Path, base_url: str = COMFYUI_URL
         )
     resp.raise_for_status()
     return resp.json()["name"]
+
+
+def _upload_media_to_comfyui(
+    file_path: str | Path,
+    base_url: str = COMFYUI_URL,
+    comfy_dir: Path = COMFYUI_DIR,
+    prefix: str = "cf_media",
+) -> str:
+    """Upload audio/video/image input into ComfyUI's input directory (HTTP /upload/image with local input-dir fallback)."""
+    p = Path(file_path).expanduser().resolve()
+    if not p.exists() or not p.is_file():
+        raise FileNotFoundError(f"Input file not found: {p}")
+    ext = p.suffix.lower() or ".bin"
+    safe_name = f"{prefix}_{uuid.uuid4().hex[:8]}{ext}"
+    try:
+        with open(p, "rb") as fh:
+            resp = httpx.post(
+                f"{base_url}/upload/image",
+                files={"image": (safe_name, fh, "application/octet-stream")},
+                data={"overwrite": "true"},
+                timeout=90.0,
+            )
+        if resp.status_code == 200:
+            name = resp.json().get("name")
+            if name:
+                return name
+    except Exception:
+        pass
+    # Direct fallback for local ComfyUI when /upload/image filters non-image MIME types
+    in_dir = comfy_dir / "input"
+    if in_dir.exists():
+        dest = in_dir / safe_name
+        dest.write_bytes(p.read_bytes())
+        return safe_name
+    raise RuntimeError(f"Could not upload '{p.name}' to ComfyUI at {base_url}.")
 
 
 _MODEL_SWITCH_LOCK = threading.Lock()
@@ -1865,19 +2488,27 @@ def _format_comfyui_error(messages: Any) -> str:
 
 def _extract_saved_output_info(history_entry: dict[str, Any], extensions: tuple[str, ...]) -> dict[str, str] | None:
     outputs = history_entry.get("outputs") or {}
+    fallback: dict[str, str] | None = None
     for _node_id, node_out in outputs.items():
         for key in ("videos", "images", "gifs"):
             items = node_out.get(key)
             if isinstance(items, list) and items:
                 for it in items:
                     fn = it.get("filename", "")
-                    if fn.lower().endswith(extensions):
-                        return {
-                            "filename": fn,
-                            "subfolder": it.get("subfolder", ""),
-                            "type": it.get("type", "output"),
-                        }
-    return None
+                    if not fn.lower().endswith(extensions):
+                        continue
+                    ftype = it.get("type", "output")
+                    info = {
+                        "filename": fn,
+                        "subfolder": it.get("subfolder", ""),
+                        "type": ftype,
+                    }
+                    # Prefer genuine SaveImage/SaveVideo outputs over LoadVideo/LoadImage 'input' previews
+                    if ftype == "output":
+                        return info
+                    if ftype != "input" and fallback is None:
+                        fallback = info
+    return fallback
 
 
 def _execute_comfyui_workflow(
@@ -1973,7 +2604,10 @@ def _execute_comfyui_workflow(
                     status = entry.get("status", {})
                     if status.get("status_str") == "error":
                         msgs = status.get("messages", [])
-                        if any("interrupt" in str(m).lower() for m in msgs):
+                        if any(
+                            isinstance(m, list) and len(m) >= 1 and m[0] == "execution_interrupted"
+                            for m in msgs
+                        ):
                             raise GenerationCanceledError("Interrupted on GPU.")
                         err_text = _format_comfyui_error(msgs)
                         if "out of memory" in err_text.lower() or "outofmemory" in err_text.lower():
@@ -2000,6 +2634,7 @@ def generate_video_via_comfyui(
     model: VideoModelId = "wan22_5b",
     image_path: str | None = None,
     end_image_path: str | None = None,
+    audio_path: str | None = None,
     negative_prompt: str = DEFAULT_NEGATIVE_PROMPT,
     style_preset: str | None = None,
     camera_preset: str | None = None,
@@ -2011,6 +2646,7 @@ def generate_video_via_comfyui(
     steps: int | None = None,
     cfg: float | None = None,
     seed: int = -1,
+    loras: list[dict[str, Any]] | None = None,
     base_url: str = COMFYUI_URL,
     comfy_dir: Path = COMFYUI_DIR,
     auto_start: bool = True,
@@ -2020,13 +2656,15 @@ def generate_video_via_comfyui(
     on_prompt_id: Callable[[str], None] | None = None,
     cancel_event: threading.Event | None = None,
 ) -> dict[str, Any]:
-    """Queue a Wan 2.2 or LTX-2.3 video workflow on local ComfyUI and save the rendered MP4 + remix metadata."""
+    """Queue a Wan 2.2 (5B/I2V/T2V/S2V) or LTX-2.3 video workflow on local ComfyUI and save the rendered MP4 + remix metadata."""
     if model not in MODEL_SPECS or MODEL_SPECS[model]["kind"] != "video":
-        raise ValueError(f"Unknown video model '{model}'. Valid: wan22_5b, wan22_i2v, wan22_t2v, ltx23")
+        raise ValueError(f"Unknown video model '{model}'. Valid: wan22_5b, wan22_i2v, wan22_t2v, wan22_s2v, ltx23")
 
     spec = MODEL_SPECS[model]
     if spec["requires_image"] and not image_path:
         raise ValueError(f"Model '{spec['display_name']}' requires a reference photo (`image_path`).")
+    if spec.get("requires_audio") and not audio_path:
+        raise ValueError(f"Model '{spec['display_name']}' requires a speech/voice audio file (`audio_path`).")
 
     avail = get_model_availability(comfy_dir)
     if not avail[model]["ready"]:
@@ -2048,6 +2686,7 @@ def generate_video_via_comfyui(
 
     uploaded_img_name: str | None = None
     uploaded_end_name: str | None = None
+    uploaded_audio_name: str | None = None
     if image_path:
         if on_progress:
             on_progress("Uploading start frame image...", 4)
@@ -2056,8 +2695,12 @@ def generate_video_via_comfyui(
         if on_progress:
             on_progress("Uploading end frame image...", 6)
         uploaded_end_name = _upload_image_to_comfyui(end_image_path, base_url=base_url)
+    if audio_path and spec.get("requires_audio"):
+        if on_progress:
+            on_progress("Uploading voice audio track...", 6)
+        uploaded_audio_name = _upload_media_to_comfyui(audio_path, base_url=base_url, comfy_dir=comfy_dir, prefix="cf_aud")
 
-    full_prompt = apply_prompt_preset(prompt, style_preset, camera_preset)
+    full_prompt = _apply_lora_triggers(apply_prompt_preset(prompt, style_preset, camera_preset), loras)
     if (match_photo_aspect or (not width and not height)) and image_path:
         matched = compute_aspect_matched_dims(image_path, kind="video", dim_step=spec["dim_step"])
         use_w, use_h = matched if matched else (spec["default_width"], spec["default_height"])
@@ -2090,6 +2733,7 @@ def generate_video_via_comfyui(
             low_unet=_resolve_model_slot_filename("wan22_i2v", 1, comfy_dir),
             high_lora=_resolve_model_slot_filename("wan22_i2v", 2, comfy_dir),
             low_lora=_resolve_model_slot_filename("wan22_i2v", 3, comfy_dir),
+            loras=loras,
         )
     elif model == "wan22_t2v":
         workflow = build_wan22_t2v_workflow(
@@ -2107,6 +2751,31 @@ def generate_video_via_comfyui(
             low_unet=_resolve_model_slot_filename("wan22_t2v", 1, comfy_dir),
             high_lora=_resolve_model_slot_filename("wan22_t2v", 2, comfy_dir),
             low_lora=_resolve_model_slot_filename("wan22_t2v", 3, comfy_dir),
+            loras=loras,
+        )
+    elif model == "wan22_s2v":
+        assert uploaded_img_name is not None and uploaded_audio_name is not None
+        opt_lora_fp = _resolve_existing_slot_file(MODEL_SPECS["wan22_s2v"]["files"][4], comfy_dir)
+        s2v_lora = opt_lora_fp.name if (opt_lora_fp is not None and steps is None) else None
+        s2v_steps = 6 if (s2v_lora and steps is None) else use_steps
+        s2v_cfg = 1.0 if (s2v_lora and cfg is None) else use_cfg
+        workflow = build_wan22_s2v_workflow(
+            prompt=full_prompt,
+            image_filename=uploaded_img_name,
+            audio_filename=uploaded_audio_name,
+            negative_prompt=negative_prompt,
+            width=use_w,
+            height=use_h,
+            num_frames=use_frames,
+            fps=use_fps,
+            steps=s2v_steps,
+            cfg=s2v_cfg,
+            seed=actual_seed,
+            filename_prefix=f"clipforge/wan22_s2v_{run_id}",
+            unet_name=_resolve_model_slot_filename("wan22_s2v", 0, comfy_dir),
+            audio_encoder_name=_resolve_model_slot_filename("wan22_s2v", 1, comfy_dir),
+            lora_name=s2v_lora,
+            loras=loras,
         )
     elif model == "wan22_5b":
         workflow = build_wan22_5b_workflow(
@@ -2121,6 +2790,7 @@ def generate_video_via_comfyui(
             cfg=use_cfg,
             seed=actual_seed,
             filename_prefix=f"clipforge/wan22_5b_{run_id}",
+            loras=loras,
         )
     else:
         workflow = build_ltx23_workflow(
@@ -2135,6 +2805,7 @@ def generate_video_via_comfyui(
             cfg=use_cfg,
             seed=actual_seed,
             filename_prefix=f"clipforge/ltx23_{run_id}",
+            loras=loras,
         )
 
     prompt_id, vid_info, elapsed = _execute_comfyui_workflow(
@@ -2172,6 +2843,8 @@ def generate_video_via_comfyui(
             "seed": actual_seed,
             "image_path": image_path,
             "end_image_path": end_image_path,
+            "audio_path": audio_path,
+            "loras": loras or [],
             "generation_time_sec": elapsed,
         },
     )
@@ -2196,6 +2869,8 @@ def generate_image_via_comfyui(
     model: ImageModelId = "flux2_klein",
     image_path: str | None = None,
     image_path_2: str | None = None,
+    pose_image_path: str | None = None,
+    mask_path: str | None = None,
     negative_prompt: str = "",
     style_preset: str | None = None,
     width: int | None = None,
@@ -2203,8 +2878,11 @@ def generate_image_via_comfyui(
     match_photo_aspect: bool = False,
     steps: int | None = None,
     cfg: float | None = None,
+    denoise: float = 1.0,
     seed: int = -1,
     batch_size: int = 1,
+    loras: list[dict[str, Any]] | None = None,
+    parent_image: str | None = None,
     base_url: str = COMFYUI_URL,
     comfy_dir: Path = COMFYUI_DIR,
     auto_start: bool = True,
@@ -2214,7 +2892,7 @@ def generate_image_via_comfyui(
     on_prompt_id: Callable[[str], None] | None = None,
     cancel_event: threading.Event | None = None,
 ) -> dict[str, Any]:
-    """Queue 1-4 FLUX.2-klein, Z-Image-Turbo, or 4-step Lightning Qwen-Image-Edit runs with sidecar remix metadata."""
+    """Queue 1-4 image generation, iterative edit, pose-transfer, img2img variation, or mask-inpaint runs."""
     if model not in MODEL_SPECS or MODEL_SPECS[model]["kind"] != "image":
         raise ValueError(
             f"Unknown image model '{model}'. Valid: flux2_klein, flux2_klein_9b, z_image_turbo, qwen_edit, qwen_edit_2511"
@@ -2242,24 +2920,44 @@ def generate_image_via_comfyui(
 
     _maybe_unload_on_model_switch(model, base_url=base_url)
 
+    den = max(0.15, min(1.0, float(denoise)))
     up_img1: str | None = None
     up_img2: str | None = None
-    if image_path and spec["supports_image"]:
+    up_pose: str | None = None
+    up_mask: str | None = None
+
+    if image_path and (spec["supports_image"] or mask_path or den < 0.99):
         if on_progress:
             on_progress("Uploading friend photo #1...", 4)
         up_img1 = _upload_image_to_comfyui(image_path, base_url=base_url)
     if image_path_2 and spec["supports_second_image"]:
         if on_progress:
-            on_progress("Uploading friend photo #2...", 6)
+            on_progress("Uploading friend photo #2...", 5)
         up_img2 = _upload_image_to_comfyui(image_path_2, base_url=base_url)
+    if pose_image_path:
+        if on_progress:
+            on_progress("Uploading pose/framing reference...", 6)
+        up_pose = _upload_image_to_comfyui(pose_image_path, base_url=base_url)
+    if mask_path:
+        if on_progress:
+            on_progress("Uploading inpaint mask...", 7)
+        up_mask = _upload_image_to_comfyui(mask_path, base_url=base_url)
 
-    full_prompt = apply_prompt_preset(prompt, style_preset)
-    if (match_photo_aspect or (not width and not height)) and image_path and spec["supports_image"]:
-        matched = compute_aspect_matched_dims(image_path, kind="image", dim_step=spec["dim_step"])
+    full_prompt = _apply_lora_triggers(apply_prompt_preset(prompt, style_preset), loras)
+    if up_pose and "pose" not in full_prompt.lower() and "framing" not in full_prompt.lower():
+        ref_slot_label = "picture 3" if (up_img1 and up_img2) else ("picture 2" if up_img1 else "the reference image")
+        full_prompt = (
+            f"{full_prompt}, matching the exact pose, body posture, camera angle, and framing of {ref_slot_label}"
+        )
+
+    aspect_src = image_path or pose_image_path
+    if (match_photo_aspect or (not width and not height)) and aspect_src and (spec["supports_image"] or up_mask or den < 0.99):
+        matched = compute_aspect_matched_dims(aspect_src, kind="image", dim_step=spec["dim_step"])
         use_w, use_h = matched if matched else (spec["default_width"], spec["default_height"])
     else:
         use_w = width or spec["default_width"]
         use_h = height or spec["default_height"]
+
     model_defaults = avail[model]["defaults"]
     use_steps = steps or model_defaults["steps"]
     use_cfg = cfg if cfg is not None else model_defaults["cfg"]
@@ -2284,60 +2982,80 @@ def generate_image_via_comfyui(
             workflow = build_flux2_klein_workflow(
                 prompt=full_prompt,
                 image_filename=up_img1,
+                pose_image_filename=up_pose,
+                mask_filename=up_mask,
                 negative_prompt=negative_prompt,
                 width=use_w,
                 height=use_h,
                 steps=use_steps,
                 cfg=use_cfg,
+                denoise=den,
                 seed=cur_seed,
                 filename_prefix=f"clipforge/{model}_{run_id}",
                 unet_name=_resolve_model_slot_filename(model, 0, comfy_dir),
                 clip_name=_resolve_model_slot_filename(model, 1, comfy_dir),
+                loras=loras,
             )
         elif model == "z_image_turbo":
             workflow = build_z_image_turbo_workflow(
                 prompt=full_prompt,
+                image_filename=up_img1,
+                mask_filename=up_mask,
                 negative_prompt=negative_prompt or DEFAULT_NEGATIVE_PROMPT,
                 width=use_w,
                 height=use_h,
                 steps=use_steps,
                 cfg=use_cfg,
+                denoise=den,
                 seed=cur_seed,
                 filename_prefix=f"clipforge/z_image_{run_id}",
                 unet_name=_resolve_model_slot_filename("z_image_turbo", 0, comfy_dir),
                 clip_name=_resolve_model_slot_filename("z_image_turbo", 1, comfy_dir),
+                loras=loras,
             )
         elif model == "qwen_edit_2511":
             assert up_img1 is not None
+            q_img2 = up_img2 if up_img2 else up_pose
+            q_img3 = up_pose if up_img2 else None
             workflow = build_qwen_edit_workflow(
                 prompt=full_prompt,
                 image_filename=up_img1,
-                image_filename_2=up_img2,
+                image_filename_2=q_img2,
+                image_filename_3=q_img3,
+                mask_filename=up_mask,
                 negative_prompt=negative_prompt,
                 width=use_w,
                 height=use_h,
                 steps=use_steps,
                 cfg=use_cfg,
+                denoise=den,
                 seed=cur_seed,
                 filename_prefix=f"clipforge/qwen_edit_2511_{run_id}",
                 unet_name=_resolve_model_slot_filename("qwen_edit_2511", 0, comfy_dir),
                 lora_name=_resolve_model_slot_filename("qwen_edit_2511", 1, comfy_dir),
+                loras=loras,
             )
         else:
             assert up_img1 is not None
+            q_img2 = up_img2 if up_img2 else up_pose
+            q_img3 = up_pose if up_img2 else None
             workflow = build_qwen_edit_workflow(
                 prompt=full_prompt,
                 image_filename=up_img1,
-                image_filename_2=up_img2,
+                image_filename_2=q_img2,
+                image_filename_3=q_img3,
+                mask_filename=up_mask,
                 negative_prompt=negative_prompt,
                 width=use_w,
                 height=use_h,
                 steps=use_steps,
                 cfg=use_cfg,
+                denoise=den,
                 seed=cur_seed,
                 filename_prefix=f"clipforge/qwen_edit_{run_id}",
                 unet_name=_resolve_model_slot_filename("qwen_edit", 0, comfy_dir),
                 lora_name=qwen2509_lora_name,
+                loras=loras,
             )
 
         def _batch_prog(msg: str, pct: int | None) -> None:
@@ -2380,9 +3098,14 @@ def generate_image_via_comfyui(
                 "height": use_h,
                 "steps": use_steps,
                 "cfg": use_cfg,
+                "denoise": den,
                 "seed": cur_seed,
                 "image_path": image_path,
                 "image_path_2": image_path_2,
+                "pose_image_path": pose_image_path,
+                "inpainted": bool(mask_path),
+                "parent_image": parent_image,
+                "loras": loras or [],
                 "generation_time_sec": elapsed,
             },
         )
@@ -2412,6 +3135,215 @@ def generate_image_via_comfyui(
         "generation_time_sec": total_elapsed,
         "file_size_bytes": first["file_size_bytes"],
     }
+
+
+def interpolate_video_rife_via_comfyui(
+    video_path: str | Path,
+    output_mp4: Path,
+    source_fps: float = 16.0,
+    target_fps: float = 32.0,
+    base_url: str = COMFYUI_URL,
+    comfy_dir: Path = COMFYUI_DIR,
+) -> dict[str, Any]:
+    """GPU RIFE v4.26 video frame interpolation via native ComfyUI FrameInterpolate + fast-seek keyframe remux."""
+    rife_fp = _resolve_existing_slot_file(MODEL_SPECS["rife_vfi"]["files"][0], comfy_dir)
+    if rife_fp is None:
+        raise RuntimeError("RIFE v4.26 weights (rife_v4.26.safetensors) not installed in ComfyUI/models/frame_interpolation/.")
+
+    ensure_comfyui_running(comfy_dir=comfy_dir, base_url=base_url, wait_sec=45.0)
+    up_vid = _upload_media_to_comfyui(video_path, base_url=base_url, comfy_dir=comfy_dir, prefix="cf_rife")
+    src_fps = max(8.0, float(source_fps or 16.0))
+    mult = 4 if (target_fps / src_fps) >= 3.0 else 2
+    eff_fps = round(min(60.0, src_fps * mult), 2)
+    run_id = uuid.uuid4().hex[:8]
+
+    wf = build_rife_interpolate_workflow(
+        video_filename=up_vid,
+        model_name=rife_fp.name,
+        multiplier=mult,
+        output_fps=eff_fps,
+        filename_prefix=f"clipforge/rife_{run_id}",
+    )
+    _pid, vid_info, elapsed = _execute_comfyui_workflow(
+        workflow=wf,
+        base_url=base_url,
+        timeout_sec=300.0,
+        extensions=(".mp4", ".webm", ".mkv", ".mov"),
+    )
+    raw_tmp = output_mp4.with_name(f"_rife_raw_{run_id}.mp4")
+    output_mp4.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        view_resp = httpx.get(f"{base_url}/view", params=vid_info, timeout=120.0)
+        view_resp.raise_for_status()
+        raw_tmp.write_bytes(view_resp.content)
+        # Re-encode with -g 24 keyframes + faststart for instant zero-flash browser scrubbing
+        res = subprocess.run(
+            [
+                "ffmpeg",
+                "-y",
+                "-hide_banner",
+                "-i",
+                str(raw_tmp),
+                "-c:v",
+                "libx264",
+                "-preset",
+                "fast",
+                "-crf",
+                "18",
+                "-g",
+                "24",
+                "-pix_fmt",
+                "yuv420p",
+                "-c:a",
+                "copy",
+                "-movflags",
+                "+faststart",
+                str(output_mp4),
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if res.returncode != 0 or not output_mp4.exists():
+            raw_tmp.replace(output_mp4)
+    finally:
+        raw_tmp.unlink(missing_ok=True)
+
+    return {
+        "output_path": str(output_mp4.resolve()),
+        "target_fps": eff_fps,
+        "multiplier": mult,
+        "engine": "rife_v4.26_gpu",
+        "elapsed_sec": elapsed,
+    }
+
+
+def _resolve_face_worker_script() -> Path | None:
+    candidates: list[Path] = []
+    if getattr(sys, "frozen", False):
+        meipass = getattr(sys, "_MEIPASS", None)
+        if meipass:
+            candidates.append(Path(meipass) / "clipforge" / "face_worker.py")
+    candidates.append(Path(__file__).resolve().parent / "face_worker.py")
+    for c in candidates:
+        if c.exists() and c.is_file():
+            return c
+    return None
+
+
+def _run_face_worker(args: list[str], comfy_dir: Path = COMFYUI_DIR) -> dict[str, Any]:
+    py_exe = resolve_comfyui_python(comfy_dir) or COMFYUI_PYTHON
+    script = _resolve_face_worker_script()
+    if not py_exe.exists() or script is None:
+        raise RuntimeError("Face detailer worker requires local ComfyUI Python environment (OpenCV + Pillow).")
+    clean_env = clean_pyinstaller_env()
+    clean_env["PYTHONUTF8"] = "1"
+    res = subprocess.run([str(py_exe), str(script), *args], capture_output=True, text=True, timeout=60, env=clean_env)
+    if res.returncode != 0:
+        raise RuntimeError(f"Face worker failed: {(res.stderr or res.stdout or '')[-500:]}")
+    for ln in reversed((res.stdout or "").splitlines()):
+        if ln.startswith("RESULT_JSON:"):
+            return json.loads(ln[len("RESULT_JSON:") :])
+    raise RuntimeError("Face worker produced no JSON output.")
+
+
+def detail_faces_in_image(
+    image_path: str | Path,
+    output_dir: Path,
+    prompt: str = "sharp realistic natural facial features, clear detailed eyes, authentic natural skin texture",
+    ref_face_path: str | None = None,
+    denoise: float = 0.38,
+    model: str = "auto",
+    base_url: str = COMFYUI_URL,
+    comfy_dir: Path = COMFYUI_DIR,
+    on_progress: Callable[[str, int | None], None] | None = None,
+) -> dict[str, Any]:
+    """Detect small/distant faces, refine each 512x512 crop at low denoise via ComfyUI, and feather-blend back."""
+    src = Path(image_path).resolve()
+    if not src.exists():
+        raise FileNotFoundError(f"Image not found: {src}")
+
+    run_id = uuid.uuid4().hex[:8]
+    work_dir = (output_dir / f"_facedetail_{run_id}").resolve()
+    work_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        if on_progress:
+            on_progress("Detecting faces in image...", 8)
+        det = _run_face_worker(
+            ["--mode", "detect", "--image", str(src), "--crops-dir", str(work_dir), "--max-faces", "4", "--crop-size", "512"],
+            comfy_dir=comfy_dir,
+        )
+        faces = det.get("faces") or []
+        if not faces:
+            raise RuntimeError("No faces detected in this image to detail.")
+
+        chosen = model
+        if chosen == "auto":
+            avail = get_model_availability(comfy_dir)
+            order = ["flux2_klein_9b", "flux2_klein", "qwen_edit_2511", "qwen_edit", "z_image_turbo"]
+            chosen = next((m for m in order if avail.get(m, {}).get("ready")), "flux2_klein")
+
+        patches: list[dict[str, Any]] = []
+        for idx, face in enumerate(faces):
+            if on_progress:
+                pct = 15 + int((idx / max(1, len(faces))) * 75)
+                on_progress(f"Refining face {idx + 1}/{len(faces)} with {chosen}...", pct)
+            crop_p = face["crop_path"]
+            # If user supplied a reference face photo (e.g. Cast friend) and model supports 2 images, lock identity!
+            use_img2 = ref_face_path if (ref_face_path and MODEL_SPECS[chosen]["supports_second_image"]) else None
+            use_pose = ref_face_path if (ref_face_path and chosen in ("flux2_klein", "flux2_klein_9b")) else None
+            ref_res = generate_image_via_comfyui(
+                prompt=prompt,
+                output_dir=work_dir,
+                model=chosen,  # type: ignore[arg-type]
+                image_path=crop_p,
+                image_path_2=use_img2,
+                pose_image_path=use_pose,
+                width=512,
+                height=512,
+                match_photo_aspect=False,
+                denoise=max(0.22, min(0.65, float(denoise))),
+                batch_size=1,
+                base_url=base_url,
+                comfy_dir=comfy_dir,
+            )
+            patches.append({"crop_box": face["crop_box"], "refined_path": ref_res["image_path"]})
+
+        if on_progress:
+            on_progress("Seamlessly blending refined faces back...", 94)
+        patches_file = work_dir / "patches.json"
+        patches_file.write_text(json.dumps(patches), encoding="utf-8")
+        dest = (output_dir / f"{src.stem[:42]}_faces_{run_id}.png").resolve()
+        _run_face_worker(
+            ["--mode", "paste", "--image", str(src), "--patches-json", str(patches_file), "--out-image", str(dest)],
+            comfy_dir=comfy_dir,
+        )
+
+        orig_meta = read_asset_metadata(src) or {}
+        write_asset_metadata(
+            dest,
+            {
+                **orig_meta,
+                "parent_image": src.name,
+                "face_detailed": True,
+                "faces_count": len(patches),
+                "face_detail_model": chosen,
+            },
+        )
+        dims = read_image_dimensions(dest) or (0, 0)
+        return {
+            "image_path": str(dest),
+            "filename": dest.name,
+            "faces_refined": len(patches),
+            "model": chosen,
+            "width": dims[0],
+            "height": dims[1],
+            "file_size_bytes": dest.stat().st_size,
+        }
+    finally:
+        import shutil as _shutil
+
+        _shutil.rmtree(work_dir, ignore_errors=True)
 
 
 # ---------------------------------------------------------------------------

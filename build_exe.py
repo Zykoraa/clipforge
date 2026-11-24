@@ -137,6 +137,8 @@ def main() -> None:
         f"{ROOT / 'clipforge' / 'static'}{os.pathsep}clipforge/static",
         "--add-data",
         f"{ROOT / 'clipforge' / 'voice_worker.py'}{os.pathsep}clipforge",
+        "--add-data",
+        f"{ROOT / 'clipforge' / 'face_worker.py'}{os.pathsep}clipforge",
         "--collect-all",
         "faster_whisper",
         "--collect-all",

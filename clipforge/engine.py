@@ -637,8 +637,13 @@ class ProjectEngine:
             "preview_url": f"/api/generate/ref/{fname}",
         }
 
-    def smooth_clip_fps(self, clip_id: str, target_fps: float = 32.0) -> dict[str, Any]:
-        """Motion-interpolate a choppy 16-24fps generated clip to silky smooth 32-48fps with fast-seek keyframes."""
+    def smooth_clip_fps(
+        self,
+        clip_id: str,
+        target_fps: float = 32.0,
+        prefer_rife: bool = True,
+    ) -> dict[str, Any]:
+        """Motion-interpolate a choppy 16-24fps clip to silky 32-48fps (GPU RIFE 4.9 first, FFmpeg minterpolate fallback)."""
         state = self.get_state()
         clip = state.get_clip(clip_id)
         if not clip:
@@ -652,34 +657,51 @@ class ProjectEngine:
         smooth_dir.mkdir(parents=True, exist_ok=True)
         out_mp4 = smooth_dir / f"{Path(media.filename).stem}_{int(fps_val)}fps_{uuid.uuid4().hex[:6]}.mp4"
 
-        vf = f"minterpolate=fps={fps_val:.2f}:mi_mode=mci:mc_mode=aobmc:me_mode=bidir:vsbmc=1"
-        cmd = [
-            "ffmpeg",
-            "-y",
-            "-hide_banner",
-            "-i",
-            media.path,
-            "-vf",
-            vf,
-            "-c:v",
-            "libx264",
-            "-preset",
-            "fast",
-            "-crf",
-            "18",
-            "-g",
-            "24",
-            "-pix_fmt",
-            "yuv420p",
-            "-c:a",
-            "copy",
-            "-movflags",
-            "+faststart",
-            str(out_mp4),
-        ]
-        res = subprocess.run(cmd, capture_output=True, text=True, check=False)
-        if res.returncode != 0 or not out_mp4.exists():
-            raise RuntimeError(f"Smooth FPS interpolation failed: {(res.stderr or '')[-500:]}")
+        engine_used = "ffmpeg_minterpolate"
+        if prefer_rife:
+            try:
+                from .generator import interpolate_video_rife_via_comfyui
+
+                rife_res = interpolate_video_rife_via_comfyui(
+                    video_path=media.path,
+                    output_mp4=out_mp4,
+                    source_fps=media.fps or 16.0,
+                    target_fps=fps_val,
+                )
+                fps_val = float(rife_res.get("target_fps", fps_val))
+                engine_used = str(rife_res.get("engine", "rife_4.9_gpu"))
+            except Exception:
+                engine_used = "ffmpeg_minterpolate"
+
+        if not out_mp4.exists() or out_mp4.stat().st_size < 4096:
+            vf = f"minterpolate=fps={fps_val:.2f}:mi_mode=mci:mc_mode=aobmc:me_mode=bidir:vsbmc=1"
+            cmd = [
+                "ffmpeg",
+                "-y",
+                "-hide_banner",
+                "-i",
+                media.path,
+                "-vf",
+                vf,
+                "-c:v",
+                "libx264",
+                "-preset",
+                "fast",
+                "-crf",
+                "18",
+                "-g",
+                "24",
+                "-pix_fmt",
+                "yuv420p",
+                "-c:a",
+                "copy",
+                "-movflags",
+                "+faststart",
+                str(out_mp4),
+            ]
+            res = subprocess.run(cmd, capture_output=True, text=True, check=False)
+            if res.returncode != 0 or not out_mp4.exists():
+                raise RuntimeError(f"Smooth FPS interpolation failed: {(res.stderr or '')[-500:]}")
 
         new_media = self.import_media([str(out_mp4)])[0]
         with self._lock:
@@ -689,13 +711,14 @@ class ProjectEngine:
                 target_clip.media_id = new_media.id
                 target_clip.out_sec = min(target_clip.out_sec, new_media.duration_sec)
                 if not target_clip.label.endswith("fps)"):
-                    target_clip.label = f"{target_clip.label[:24]} ({int(fps_val)}fps)"
+                    target_clip.label = f"{target_clip.label[:24]} ({int(round(fps_val))}fps)"
                 self._write_unlocked(st)
         return {
             "clip_id": clip_id,
             "media": new_media.model_dump(),
             "output_path": str(out_mp4),
             "target_fps": fps_val,
+            "engine": engine_used,
         }
 
     # -------------------------------------------------------------------------

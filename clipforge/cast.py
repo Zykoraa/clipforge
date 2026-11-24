@@ -53,10 +53,16 @@ class CastManager:
     def _decorate(self, m: dict[str, Any]) -> dict[str, Any]:
         cid = m["id"]
         has_voice = bool(m.get("voice_path") and Path(m["voice_path"]).exists())
+        extras = [p for p in (m.get("extra_photos") or []) if p and Path(p).exists()]
+        all_photos = [m["photo_path"], *extras]
         return {
             **m,
+            "extra_photos": extras,
+            "photo_paths": all_photos,
             "handle": "@" + re.sub(r"\s+", "", m["name"]),
             "photo_url": f"/api/cast/{cid}/photo",
+            "extra_photo_urls": [f"/api/cast/{cid}/photo/{i}" for i in range(len(extras))],
+            "photo_count": len(all_photos),
             "has_voice": has_voice,
             "voice_url": f"/api/cast/{cid}/voice" if has_voice else None,
         }
@@ -156,6 +162,7 @@ class CastManager:
             "id": cast_id,
             "name": clean_name,
             "photo_path": str(dest_photo),
+            "extra_photos": [],
             "voice_path": str(dest_voice) if dest_voice else None,
             "voice_ref_text": (voice_ref_text or "").strip()[:300],
             "created_at": datetime.now(timezone.utc).isoformat(),
@@ -197,6 +204,67 @@ class CastManager:
             self._write_unlocked(members)
             return self._decorate(target)
 
+    def add_extra_photo(
+        self,
+        cast_id: str,
+        photo_bytes: bytes | None = None,
+        photo_filename: str | None = None,
+        photo_path: str | None = None,
+    ) -> dict[str, Any]:
+        """Attach up to 3 extra angle/expression photos to an existing cast profile (4 total)."""
+        uid = uuid.uuid4().hex[:6]
+        if photo_bytes is not None:
+            ext = Path(photo_filename or "angle.png").suffix.lower() or ".png"
+            if ext not in IMAGE_EXTENSIONS:
+                raise ValueError(f"Unsupported photo extension '{ext}'.")
+            dest = (self.photos_dir / f"{cast_id}_alt_{uid}{ext}").resolve()
+            dest.write_bytes(photo_bytes)
+        elif photo_path:
+            src = Path(photo_path).expanduser().resolve()
+            if not src.exists() or not src.is_file():
+                raise FileNotFoundError(f"Photo not found: {src}")
+            ext = src.suffix.lower()
+            if ext not in IMAGE_EXTENSIONS:
+                raise ValueError(f"Unsupported photo extension '{ext}'.")
+            dest = (self.photos_dir / f"{cast_id}_alt_{uid}{ext}").resolve()
+            dest.write_bytes(src.read_bytes())
+        else:
+            raise ValueError("Provide photo bytes or photo_path.")
+
+        with self._lock:
+            members = self._read_unlocked()
+            target = next((m for m in members if m.get("id") == cast_id), None)
+            if not target:
+                dest.unlink(missing_ok=True)
+                raise ValueError(f"Cast member '{cast_id}' not found.")
+            extras = [p for p in (target.get("extra_photos") or []) if p and Path(p).exists()]
+            if len(extras) >= 3:
+                dest.unlink(missing_ok=True)
+                raise ValueError("Maximum 4 photos per cast profile (1 primary + 3 extra angles).")
+            extras.append(str(dest))
+            target["extra_photos"] = extras
+            self._write_unlocked(members)
+            return self._decorate(target)
+
+    def remove_extra_photo(self, cast_id: str, index: int) -> dict[str, Any]:
+        with self._lock:
+            members = self._read_unlocked()
+            target = next((m for m in members if m.get("id") == cast_id), None)
+            if not target:
+                raise ValueError(f"Cast member '{cast_id}' not found.")
+            extras = list(target.get("extra_photos") or [])
+            if index < 0 or index >= len(extras):
+                raise ValueError("Extra photo index out of range.")
+            removed_path = extras.pop(index)
+            target["extra_photos"] = extras
+            self._write_unlocked(members)
+        if removed_path:
+            try:
+                Path(removed_path).unlink(missing_ok=True)
+            except Exception:
+                pass
+        return self._decorate(target)
+
     def delete_member(self, cast_id: str) -> bool:
         removed = None
         with self._lock:
@@ -216,6 +284,11 @@ class CastManager:
                         Path(fp).unlink(missing_ok=True)
                     except Exception:
                         pass
+            for ep in removed.get("extra_photos") or []:
+                try:
+                    Path(ep).unlink(missing_ok=True)
+                except Exception:
+                    pass
             return True
         return False
 
@@ -262,7 +335,15 @@ class CastManager:
             elif out_img2 == m["photo_path"]:
                 slot_for_member[m["id"]] = 2
 
-        multi = bool(out_img1 and out_img2)
+        # Multi-angle likeness boost: if only 1 friend is mentioned and they have a 2nd saved angle, attach it to slot 2!
+        single_friend_multi_angle = False
+        if len(matched) == 1 and out_img1 and not out_img2:
+            extras = matched[0].get("extra_photos") or []
+            if extras and Path(extras[0]).exists():
+                out_img2 = extras[0]
+                single_friend_multi_angle = True
+
+        multi = bool(out_img1 and out_img2 and not single_friend_multi_angle)
 
         def _repl(match: re.Match[str]) -> str:
             tok = match.group(1).lower()

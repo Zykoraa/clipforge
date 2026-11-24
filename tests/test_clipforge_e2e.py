@@ -439,6 +439,7 @@ def test_offline_generator_workflows_and_ref_upload_security(tmp_path: Path, mon
     assert set(status_json["models"].keys()) == {
         "wan22_i2v",
         "wan22_t2v",
+        "wan22_s2v",
         "wan22_5b",
         "ltx23",
         "flux2_klein",
@@ -446,6 +447,8 @@ def test_offline_generator_workflows_and_ref_upload_security(tmp_path: Path, mon
         "z_image_turbo",
         "qwen_edit",
         "qwen_edit_2511",
+        "upscale_ultrasharp",
+        "rife_vfi",
     }
     assert "raw_iphone" in status_json["presets"]
     assert len(status_json["presets"]) >= 20
@@ -750,12 +753,12 @@ def test_cast_mentions_auto_router_aspect_match_hd_polish_and_qwen_lightning(tmp
     assert wf_q["2"]["inputs"]["model"] == ["1b", 0]
     assert wf_q["9"]["inputs"]["steps"] == 4
 
-    # 4. 1-click 2x HD Polish
-    polished = polish_image_hd(p1, ws / "generated_images", scale=2)
+    # 4. 1-click 2x HD Polish (offline FFmpeg fast path in unit test; GPU 4x-UltraSharp tested live)
+    polished = polish_image_hd(p1, ws / "generated_images", scale=2, prefer_ai=False)
     assert polished["width"] == 1080 and polished["height"] == 1920
     assert read_asset_metadata(Path(polished["image_path"]))["hd_scale"] == 2
 
-    # 5. Smooth 32fps interpolation on a 16fps clip
+    # 5. Smooth 32fps interpolation on a 16fps clip (offline FFmpeg fast path in unit test; GPU RIFE tested live)
     vid16 = tmp_path / "choppy16.mp4"
     subprocess.run(
         ["ffmpeg", "-y", "-hide_banner", "-f", "lavfi", "-i", "color=c=navy:s=320x240:r=16:d=1.0",
@@ -765,7 +768,7 @@ def test_cast_mentions_auto_router_aspect_match_hd_polish_and_qwen_lightning(tmp
     )
     imp = eng.import_media([str(vid16)])
     clip = eng.add_timeline_clip(imp[0].id)
-    sm = eng.smooth_clip_fps(clip.id, target_fps=32.0)
+    sm = eng.smooth_clip_fps(clip.id, target_fps=32.0, prefer_rife=False)
     assert Path(sm["output_path"]).exists()
     assert round(sm["media"]["fps"]) == 32
 
@@ -817,4 +820,182 @@ def test_cast_mentions_auto_router_aspect_match_hd_polish_and_qwen_lightning(tmp
     assert av["qwen_edit_2511"]["defaults"]["steps"] == 4
     assert resolve_auto_model("image", True, False, comfy_dir=fake_comfy) == "flux2_klein_9b"
     assert resolve_auto_model("image", True, True, comfy_dir=fake_comfy) == "qwen_edit_2511"
+
+
+def test_tier123_director_refusal_loras_inpaint_pose_vault_angles_and_storyboard(tmp_path: Path, monkeypatch) -> None:
+    """Verify Tier 1-3 upgrades: refusal bypass + literal mode, LoRA stacker, inpaint/pose/denoise/RIFE/UltraSharp/S2V graphs, multi-angle cast, and storyboard planning."""
+    from clipforge.cast import CastManager
+    from clipforge.director import _looks_like_refusal, expand_meme_prompt_local, plan_storyboard_beats_local
+    from clipforge.generator import (
+        build_flux2_klein_workflow,
+        build_qwen_edit_workflow,
+        build_rife_interpolate_workflow,
+        build_ultrasharp_upscale_workflow,
+        build_wan22_s2v_workflow,
+        build_z_image_turbo_workflow,
+        list_available_loras,
+        save_lora_trigger,
+    )
+
+    # 1. Refusal detector + Literal Zero-Sanitize Director + Storyboard Beat Planner
+    assert _looks_like_refusal("I'm sorry, I cannot assist with generating that image.") is True
+    assert _looks_like_refusal("As an AI language model, this violates safety policy.") is True
+    assert _looks_like_refusal("Candid 35mm flash photo of a guy slipping on nacho cheese at 2AM") is False
+
+    lit = expand_meme_prompt_local("wild raccoon heist at waffle house", mode="image", literal_mode=True)
+    assert lit["source"] == "literal_enhancer"
+    assert "wild raccoon heist at waffle house" in lit["prompt"]
+
+    sb = plan_storyboard_beats_local("he accidentally launches his grill into orbit", num_beats=3, literal_mode=True)
+    assert len(sb["beats"]) == 3
+    assert all(b.get("prompt") for b in sb["beats"])
+
+    # 2. LoRA auto-discovery + trigger persistence + workflow injection
+    from clipforge.generator import _apply_lora_triggers
+
+    fake_comfy = tmp_path / "comfy_t123"
+    loras_dir = fake_comfy / "models" / "loras"
+    loras_dir.mkdir(parents=True, exist_ok=True)
+    (loras_dir / "flux2_vintage_film.safetensors").write_bytes(b"\x00" * 4096)
+    (loras_dir / "wan22_action_cam.safetensors").write_bytes(b"\x00" * 4096)
+
+    ws = tmp_path / "ws_t123"
+    triggers_file = ws / "lora_triggers.json"
+    save_lora_trigger(triggers_file, "flux2_vintage_film.safetensors", "vintfilm")
+    found_loras = list_available_loras(fake_comfy, triggers_file)
+    names = {x["name"]: x for x in found_loras}
+    assert "flux2_vintage_film.safetensors" in names
+    assert names["flux2_vintage_film.safetensors"]["family"] == "flux"
+    assert names["flux2_vintage_film.safetensors"]["trigger"] == "vintfilm"
+
+    # 3. Upgraded ComfyUI workflow graphs: Denoise, Mask Inpaint, Pose Ref, LoRA Stacker, UltraSharp, RIFE 4.9, Wan S2V
+    user_lora = [{"name": "flux2_vintage_film.safetensors", "strength": 0.75, "trigger": "vintfilm"}]
+    assert "vintfilm" in _apply_lora_triggers("wearing sunglasses", user_lora)
+    wf_fk_adv = build_flux2_klein_workflow(
+        _apply_lora_triggers("wearing sunglasses", user_lora),
+        image_filename="base.png",
+        pose_image_filename="pose.png",
+        mask_filename="mask.png",
+        denoise=0.6,
+        loras=user_lora,
+    )
+    assert wf_fk_adv["ulora_0"]["class_type"] == "LoraLoaderModelOnly"
+    assert wf_fk_adv["1d"]["class_type"] == "DifferentialDiffusion"
+    assert wf_fk_adv["9p"]["class_type"] == "ReferenceLatent"
+    assert wf_fk_adv["13b"]["class_type"] == "SplitSigmasDenoise"
+    assert wf_fk_adv["m5"]["class_type"] == "SetLatentNoiseMask"
+    assert wf_fk_adv["15b"]["class_type"] == "ImageCompositeMasked"
+    assert "vintfilm" in wf_fk_adv["4"]["inputs"]["text"]
+
+    wf_qw_adv = build_qwen_edit_workflow(
+        "change jacket to red leather",
+        image_filename="base.png",
+        image_filename_2="friend2.png",
+        image_filename_3="pose.png",
+        mask_filename="mask.png",
+        denoise=0.85,
+        loras=user_lora,
+    )
+    assert wf_qw_adv["6"]["inputs"]["image3"] == ["5c", 0]
+    assert wf_qw_adv["m5"]["class_type"] == "SetLatentNoiseMask"
+    assert wf_qw_adv["10b"]["class_type"] == "ImageCompositeMasked"
+    assert wf_qw_adv["9"]["inputs"]["denoise"] == pytest.approx(0.85)
+
+    wf_zit_inp = build_z_image_turbo_workflow(
+        "neon cyberpunk visor",
+        image_filename="base.png",
+        mask_filename="mask.png",
+        denoise=0.72,
+    )
+    assert wf_zit_inp["m5"]["class_type"] == "SetLatentNoiseMask"
+    assert wf_zit_inp["9b"]["class_type"] == "ImageCompositeMasked"
+    assert wf_zit_inp["8"]["inputs"]["denoise"] == pytest.approx(0.72)
+
+    wf_us = build_ultrasharp_upscale_workflow("photo.png", target_width=1024, target_height=1024)
+    assert wf_us["2"]["class_type"] == "UpscaleModelLoader"
+    assert wf_us["3"]["class_type"] == "ImageUpscaleWithModel"
+    assert wf_us["4"]["class_type"] == "ImageScale"
+
+    wf_rife = build_rife_interpolate_workflow("clip.mp4", multiplier=2, output_fps=32.0)
+    assert wf_rife["1"]["class_type"] == "LoadVideo"
+    assert wf_rife["3"]["class_type"] == "FrameInterpolationModelLoader"
+    assert wf_rife["4"]["class_type"] == "FrameInterpolate"
+    assert wf_rife["6"]["class_type"] == "SaveVideo"
+
+    wf_s2v = build_wan22_s2v_workflow("talking meme", image_filename="face.png", audio_filename="voice.wav", loras=user_lora)
+    assert wf_s2v["8"]["class_type"] == "AudioEncoderLoader"
+    assert wf_s2v["11"]["class_type"] == "WanSoundImageToVideo"
+    assert wf_s2v["15"]["class_type"] == "SaveVideo"
+    assert wf_s2v["ulora_0"]["class_type"] == "LoraLoaderModelOnly"
+
+    # 4. Multi-angle Cast Profiles + automatic 2nd-angle attachment for single-friend mentions
+    p1 = tmp_path / "ang1.png"
+    p2 = tmp_path / "ang2.png"
+    subprocess.run(["ffmpeg", "-y", "-hide_banner", "-f", "lavfi", "-i", "color=c=blue:s=256x256:d=1", "-frames:v", "1", str(p1)], capture_output=True, check=True)
+    subprocess.run(["ffmpeg", "-y", "-hide_banner", "-f", "lavfi", "-i", "color=c=green:s=256x256:d=1", "-frames:v", "1", str(p2)], capture_output=True, check=True)
+
+    cm = CastManager(ws)
+    m = cm.save_member("Sam", photo_path=str(p1))
+    m_ang = cm.add_extra_photo(m["id"], photo_path=str(p2))
+    assert m_ang["photo_count"] == 2
+    assert len(m_ang["extra_photo_urls"]) == 1
+
+    _, out_i1, out_i2, matched = cm.resolve_prompt_mentions("@Sam skateboarding on a volcano")
+    assert len(matched) == 1
+    assert out_i1 == m_ang["photo_path"]
+    assert out_i2 == m_ang["extra_photos"][0]
+
+    # 5. New HTTP endpoints & security jails
+    from clipforge import generator as gen_mod
+
+    eng = ProjectEngine(workspace_dir=ws)
+    monkeypatch.setattr(web_server, "engine", eng)
+    monkeypatch.setattr(web_server, "COMFYUI_DIR", fake_comfy)
+    monkeypatch.setattr(gen_mod, "COMFYUI_DIR", fake_comfy)
+    client = TestClient(web_server.app)
+    token = re.search(r'<meta name="clipforge-token" content="([^"]+)"', client.get("/").text).group(1)
+    hdrs = {"X-ClipForge-Token": token}
+
+    r_loras = client.get("/api/loras", headers=hdrs)
+    assert r_loras.status_code == 200
+    assert any(x["name"] == "flux2_vintage_film.safetensors" for x in r_loras.json()["loras"])
+
+    r_trig = client.post("/api/loras/trigger", headers=hdrs, json={"name": "wan22_action_cam.safetensors", "trigger": "gopro_pov"})
+    assert r_trig.status_code == 200
+
+    r_sb = client.post("/api/director/storyboard", headers=hdrs, json={"concept": "pizza delivery on mars", "num_beats": 2, "literal_mode": True})
+    assert r_sb.status_code == 200 and len(r_sb.json()["beats"]) == 2
+
+    # Multi-angle Cast HTTP endpoints
+    r_c_ang = client.post(
+        f"/api/cast/{m['id']}/photo",
+        headers=hdrs,
+        files={"photo": ("angle3.png", p2.read_bytes(), "image/png")},
+    )
+    assert r_c_ang.status_code == 200 and r_c_ang.json()["member"]["photo_count"] == 3
+    assert client.get(f"/api/cast/{m['id']}/photo/0", headers=hdrs).status_code == 200
+    assert client.delete(f"/api/cast/{m['id']}/photo/0", headers=hdrs).status_code == 200
+
+    # Video Vault path traversal block & status fields
+    assert client.get("/api/generate/video/..%5Cproject.json", headers=hdrs).status_code in (400, 404)
+    st = client.get("/api/generate/status", headers=hdrs).json()
+    assert "videos" in st and "loras" in st and "director" in st
+    assert st["models"]["wan22_s2v"]["requires_audio"] is True
+    assert st["models"]["upscale_ultrasharp"]["kind"] == "utility"
+    assert st["models"]["rife_vfi"]["kind"] == "utility"
+
+    # Regression: _extract_saved_output_info must skip LoadVideo 'input' previews and pick SaveVideo 'output'
+    from clipforge.generator import _extract_saved_output_info
+
+    picked = _extract_saved_output_info(
+        {
+            "outputs": {
+                "1": {"images": [{"filename": "cf_rife_in.mp4", "subfolder": "", "type": "input"}]},
+                "6": {"images": [{"filename": "rife_out_00001_.mp4", "subfolder": "clipforge", "type": "output"}]},
+            }
+        },
+        extensions=(".mp4",),
+    )
+    assert picked is not None and picked["filename"] == "rife_out_00001_.mp4" and picked["type"] == "output"
+
 

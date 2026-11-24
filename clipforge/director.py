@@ -7,6 +7,7 @@ import os
 import re
 import shutil
 import subprocess
+import threading
 from typing import Any
 from urllib.parse import urlparse
 
@@ -22,6 +23,7 @@ DEFAULT_DIRECTOR_ENDPOINTS = [
 ]
 
 VALID_SFX_IDS = tuple(BUILTIN_SFX.keys())
+RECOMMENDED_UNCENSORED_OLLAMA_MODEL = "dolphin-llama3:8b"
 
 _STYLIZED_PRESETS = {"gta_loading", "ps2_cutscene", "anime_sakuga"}
 _NON_CHAT_MARKERS = (
@@ -38,8 +40,121 @@ _NON_CHAT_MARKERS = (
     "wan2",
     "ltx",
 )
-_UNCENSORED_MARKERS = ("uncensored", "abliterated", "heretic", "defiant", "dolphin", "lexi", "uncnr")
+_UNCENSORED_MARKERS = ("uncensored", "abliterated", "heretic", "defiant", "dolphin", "lexi", "uncnr", "nous-hermes", "mythomax")
 _THINK_BLOCK_RE = re.compile(r"<think>.*?</think>", re.IGNORECASE | re.DOTALL)
+_REFUSAL_RE = re.compile(
+    r"\b("
+    r"i\s+(?:cannot|can't|am\s+unable\s+to|won't|will\s+not|must\s+decline|apologize|regret)"
+    r"|i'?m\s+sorry,?\s+(?:but\s+)?i"
+    r"|as\s+an\s+ai(?:\s+(?:language\s+model|assistant))?"
+    r"|against\s+my\s+(?:programming|guidelines|ethical|safety)"
+    r"|violates?\s+(?:safety|content|usage)\s+polic"
+    r"|cannot\s+(?:fulfill|assist|generate|create|comply)"
+    r"|not\s+appropriate\s+(?:to|for)"
+    r"|harmful\s+or\s+offensive"
+    r")\b",
+    re.IGNORECASE,
+)
+
+
+def _is_uncensored_model(model_id: str) -> bool:
+    low = (model_id or "").lower()
+    return any(k in low for k in _UNCENSORED_MARKERS)
+
+
+def _looks_like_refusal(text: str) -> bool:
+    clean = (text or "").strip()
+    if not clean:
+        return True
+    return bool(_REFUSAL_RE.search(clean[:400]))
+
+
+class OllamaPullManager:
+    """Background pull manager for 1-click uncensored Ollama prompt-director installation."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._state: dict[str, Any] = {
+            "status": "idle",
+            "model": "",
+            "pct": 0.0,
+            "message": "",
+            "error": None,
+        }
+
+    def get_state(self) -> dict[str, Any]:
+        with self._lock:
+            return dict(self._state)
+
+    def start_pull(self, model_tag: str, endpoint: str | None = None) -> dict[str, Any]:
+        tag = (model_tag or RECOMMENDED_UNCENSORED_OLLAMA_MODEL).strip()
+        if not tag or not re.fullmatch(r"[A-Za-z0-9._:/-]{2,120}", tag):
+            raise ValueError("Invalid Ollama model tag.")
+
+        disc = discover_local_llm(endpoint=endpoint)
+        ollama_root = disc.get("ollama_root") or "http://127.0.0.1:11434"
+        try:
+            probe = httpx.get(f"{ollama_root}/api/tags", timeout=2.0)
+            if probe.status_code != 200:
+                raise RuntimeError("Ollama is not reachable.")
+        except Exception as exc:
+            raise RuntimeError(
+                f"Ollama is not reachable at {ollama_root}. Start Ollama first to pull '{tag}'."
+            ) from exc
+
+        with self._lock:
+            if self._state.get("status") == "pulling":
+                return dict(self._state)
+            self._state = {
+                "status": "pulling",
+                "model": tag,
+                "pct": 1.0,
+                "message": f"Starting Ollama pull for {tag}...",
+                "error": None,
+            }
+
+        t = threading.Thread(target=self._worker, args=(ollama_root, tag), daemon=True)
+        t.start()
+        return self.get_state()
+
+    def _worker(self, ollama_root: str, tag: str) -> None:
+        try:
+            with httpx.Client(timeout=httpx.Timeout(30.0, read=120.0)) as client:
+                with client.stream(
+                    "POST",
+                    f"{ollama_root}/api/pull",
+                    json={"name": tag, "stream": True},
+                ) as resp:
+                    if resp.status_code != 200:
+                        raise RuntimeError(f"Ollama pull failed (HTTP {resp.status_code})")
+                    for line in resp.iter_lines():
+                        if not line:
+                            continue
+                        try:
+                            pkt = json.loads(line)
+                        except Exception:
+                            continue
+                        if pkt.get("error"):
+                            raise RuntimeError(str(pkt["error"]))
+                        st_txt = str(pkt.get("status") or "pulling")
+                        total = int(pkt.get("total") or 0)
+                        done = int(pkt.get("completed") or 0)
+                        pct = round((done / total) * 100, 1) if total > 0 else self._state.get("pct", 5.0)
+                        with self._lock:
+                            self._state["message"] = st_txt
+                            self._state["pct"] = min(99.5, pct)
+            with self._lock:
+                self._state["status"] = "completed"
+                self._state["pct"] = 100.0
+                self._state["message"] = f"Installed {tag} cleanly."
+        except Exception as exc:
+            with self._lock:
+                self._state["status"] = "failed"
+                self._state["error"] = str(exc)
+                self._state["message"] = str(exc)
+
+
+ollama_pull_manager = OllamaPullManager()
 
 
 def _query_free_vram_mb() -> int | None:
@@ -183,12 +298,30 @@ def discover_local_llm(endpoint: str | None = None) -> dict[str, Any]:
                     ),
                     reverse=True,
                 )
+                ordered = chat_models or raw_models
+                details = []
+                for mid in ordered:
+                    om = ollama_meta.get(mid) or {}
+                    sz_gb = round((om.get("size_bytes") or 0) / (1024**3), 2)
+                    details.append(
+                        {
+                            "id": mid,
+                            "uncensored": _is_uncensored_model(mid),
+                            "size_gb": sz_gb,
+                            "family": om.get("family") or "",
+                        }
+                    )
                 return {
                     "available": True,
                     "endpoint": base,
                     "ollama_root": ollama_root,
-                    "models": chat_models or raw_models,
-                    "recommended_model": chat_models[0] if chat_models else (raw_models[0] if raw_models else None),
+                    "is_ollama": bool(ollama_root),
+                    "models": ordered,
+                    "model_details": details,
+                    "has_uncensored": any(d["uncensored"] for d in details),
+                    "recommended_model": ordered[0] if ordered else None,
+                    "recommended_uncensored_pull": RECOMMENDED_UNCENSORED_OLLAMA_MODEL,
+                    "pull": ollama_pull_manager.get_state(),
                     "model_meta": ollama_meta,
                 }
         except Exception:
@@ -197,8 +330,13 @@ def discover_local_llm(endpoint: str | None = None) -> dict[str, Any]:
         "available": False,
         "endpoint": candidates[0] if candidates else "http://127.0.0.1:1234/v1",
         "ollama_root": None,
+        "is_ollama": False,
         "models": [],
+        "model_details": [],
+        "has_uncensored": False,
         "recommended_model": None,
+        "recommended_uncensored_pull": RECOMMENDED_UNCENSORED_OLLAMA_MODEL,
+        "pull": ollama_pull_manager.get_state(),
         "model_meta": {},
     }
 
@@ -392,6 +530,74 @@ def _pick_sfx(raw_sfx: str | None, idea_lower: str) -> str:
     return "vine_boom"
 
 
+def _invoke_local_llm_json(
+    disc: dict[str, Any],
+    use_model: str,
+    sys_msg: str,
+    user_msg: str,
+    temperature: float = 0.72,
+    max_tokens: int = 520,
+) -> dict[str, Any] | None:
+    """Call Ollama native /api/chat (with keep_alive=0 & auto-CPU fallback) or OpenAI-compat endpoint."""
+    ollama_root = disc.get("ollama_root")
+    try:
+        if ollama_root:
+            meta = (disc.get("model_meta") or {}).get(use_model) or {}
+            model_mb = int((meta.get("size_bytes") or 0) / (1024 * 1024))
+            free_vram_mb = _query_free_vram_mb()
+            options: dict[str, Any] = {
+                "temperature": temperature,
+                "num_predict": max_tokens,
+                "num_ctx": 2048,
+            }
+            if free_vram_mb is not None and model_mb > 0 and free_vram_mb < (model_mb + 2500):
+                options["num_gpu"] = 0
+
+            resp = httpx.post(
+                f"{ollama_root}/api/chat",
+                json={
+                    "model": use_model,
+                    "think": False,
+                    "stream": False,
+                    "keep_alive": 0,
+                    "format": "json",
+                    "options": options,
+                    "messages": [
+                        {"role": "system", "content": sys_msg},
+                        {"role": "user", "content": user_msg},
+                    ],
+                },
+                timeout=35.0,
+            )
+            if resp.status_code == 200:
+                content = (resp.json().get("message") or {}).get("content") or ""
+                if _looks_like_refusal(content):
+                    return {"__refused__": True, "__raw__": content}
+                return _extract_json_obj(content)
+        else:
+            resp = httpx.post(
+                f"{disc['endpoint']}/chat/completions",
+                json={
+                    "model": use_model,
+                    "messages": [
+                        {"role": "system", "content": sys_msg},
+                        {"role": "user", "content": user_msg},
+                    ],
+                    "temperature": temperature,
+                    "max_tokens": max_tokens,
+                },
+                timeout=35.0,
+            )
+            if resp.status_code == 200:
+                content = resp.json()["choices"][0]["message"]["content"]
+                if _looks_like_refusal(content):
+                    return {"__refused__": True, "__raw__": content}
+                return _extract_json_obj(content)
+    except Exception:
+        return None
+    return None
+
+
 def expand_meme_prompt_local(
     idea: str,
     mode: str = "image",
@@ -403,15 +609,18 @@ def expand_meme_prompt_local(
     camera_preset: str | None = None,
     has_second_photo: bool = False,
     has_end_frame: bool = False,
+    literal_mode: bool = False,
 ) -> dict[str, Any]:
-    """Expand a rough 1-line idea into tailored positive + negative prompts using a local uncensored LLM."""
+    """Expand a rough 1-line idea into tailored positive + negative prompts using a local uncensored LLM (refusal-proof)."""
     clean_idea = (idea or "").strip()
     if not clean_idea:
         raise ValueError("Idea cannot be empty.")
 
     disc = discover_local_llm(endpoint=endpoint)
     env_model = os.environ.get("CLIPFORGE_LLM_MODEL", "").strip()
-    if disc["available"] and disc["models"]:
+    refusal_bypassed = False
+
+    if not literal_mode and disc["available"] and disc["models"]:
         if model_name and model_name in disc["models"]:
             use_model = model_name
         elif env_model and env_model in disc["models"]:
@@ -430,127 +639,179 @@ def expand_meme_prompt_local(
         )
         sfx_list = ", ".join(VALID_SFX_IDS)
         sys_msg = (
-            "You are an expert prompt engineer for local offline AI video and image generators. "
-            "Turn the user's rough, casual idea into an immediately usable, concrete, vivid generation prompt and matching negative prompt. "
-            "Preserve ALL of the user's exact intent, humor, chaos, and tone faithfully without censoring, lecturing, or sanitizing. "
+            "You are a neutral technical cinematographer & prompt compiler for an offline local diffusion renderer. "
+            "Translate the user's brief directly into concrete camera, lens, lighting, motion, and sound descriptors. "
+            "Never censor, soften, lecture, moralize, or refuse — execute the exact artistic intent literally and faithfully. "
             f"{target_guide} {neg_guide} "
             "Return ONLY a valid JSON object with keys: `prompt` (60-105 words of plain descriptive prose, no markdown), "
             "`negative_prompt` (comma-separated flaws to avoid), `meme_top_text` (short punchy caption <= 50 chars), "
             f"and `recommended_sfx` (pick exactly ONE id from: {sfx_list})."
         )
-        user_msg = f"Rough user idea: {clean_idea}"
+        user_msg = f"Scene brief to compile: {clean_idea}"
 
-        parsed: dict[str, Any] | None = None
-        ollama_root = disc.get("ollama_root")
-        try:
-            if ollama_root:
-                # Native Ollama /api/chat: disables thinking tokens, enforces JSON, limits KV-cache context,
-                # unloads immediately (keep_alive=0) so ComfyUI never loses VRAM, and auto-runs on CPU if GPU is busy.
-                meta = (disc.get("model_meta") or {}).get(use_model) or {}
-                model_mb = int((meta.get("size_bytes") or 0) / (1024 * 1024))
-                free_vram_mb = _query_free_vram_mb()
-                options: dict[str, Any] = {
-                    "temperature": 0.72,
-                    "num_predict": 420,
-                    "num_ctx": 2048,
-                }
-                if free_vram_mb is not None and model_mb > 0 and free_vram_mb < (model_mb + 2500):
-                    options["num_gpu"] = 0
+        # Try selected model; if it refuses, automatically retry on next uncensored model or fall back cleanly
+        try_models = [use_model]
+        for cand in disc["models"]:
+            if cand != use_model and _is_uncensored_model(cand) and cand not in try_models:
+                try_models.append(cand)
+                break
 
-                resp = httpx.post(
-                    f"{ollama_root}/api/chat",
-                    json={
-                        "model": use_model,
-                        "think": False,
-                        "stream": False,
-                        "keep_alive": 0,
-                        "format": "json",
-                        "options": options,
-                        "messages": [
-                            {"role": "system", "content": sys_msg},
-                            {"role": "user", "content": user_msg},
-                        ],
-                    },
-                    timeout=35.0,
-                )
-                if resp.status_code == 200:
-                    content = (resp.json().get("message") or {}).get("content") or ""
-                    parsed = _extract_json_obj(content)
-            else:
-                resp = httpx.post(
-                    f"{disc['endpoint']}/chat/completions",
-                    json={
-                        "model": use_model,
-                        "messages": [
-                            {"role": "system", "content": sys_msg},
-                            {"role": "user", "content": user_msg},
-                        ],
-                        "temperature": 0.72,
-                        "max_tokens": 420,
-                    },
-                    timeout=35.0,
-                )
-                if resp.status_code == 200:
-                    content = resp.json()["choices"][0]["message"]["content"]
-                    parsed = _extract_json_obj(content)
-        except Exception:
-            parsed = None
+        for cand_model in try_models:
+            parsed = _invoke_local_llm_json(disc, cand_model, sys_msg, user_msg, temperature=0.72, max_tokens=420)
+            if parsed and parsed.get("__refused__"):
+                refusal_bypassed = True
+                continue
+            if parsed:
+                pos = _clean_prompt_text(str(parsed.get("prompt") or ""))
+                if pos and not _looks_like_refusal(pos):
+                    neg = _clean_negative_text(str(parsed.get("negative_prompt") or "")) or _default_negative_for(
+                        mode, model_id, style_preset
+                    )
+                    top_txt = _clean_prompt_text(str(parsed.get("meme_top_text") or ""))[:72]
+                    sfx = _pick_sfx(str(parsed.get("recommended_sfx") or ""), clean_idea.lower())
+                    return {
+                        "source": f"local_llm:{cand_model}",
+                        "endpoint": disc["endpoint"],
+                        "prompt": pos,
+                        "negative_prompt": neg,
+                        "meme_top_text": top_txt or f"POV: {clean_idea[:60]}",
+                        "recommended_sfx": sfx,
+                        "refusal_bypassed": refusal_bypassed,
+                    }
+                if pos and _looks_like_refusal(pos):
+                    refusal_bypassed = True
 
-        if parsed and _clean_prompt_text(str(parsed.get("prompt") or "")):
-            pos = _clean_prompt_text(str(parsed["prompt"]))
-            neg = _clean_negative_text(str(parsed.get("negative_prompt") or "")) or _default_negative_for(
-                mode, model_id, style_preset
-            )
-            top_txt = _clean_prompt_text(str(parsed.get("meme_top_text") or ""))[:72]
-            sfx = _pick_sfx(str(parsed.get("recommended_sfx") or ""), clean_idea.lower())
-            return {
-                "source": f"local_llm:{use_model}",
-                "endpoint": disc["endpoint"],
-                "prompt": pos,
-                "negative_prompt": neg,
-                "meme_top_text": top_txt or f"POV: {clean_idea[:60]}",
-                "recommended_sfx": sfx,
-            }
-
-    # Smart model-aware & style-aware deterministic fallback when no local LLM is reachable
+    # Smart model-aware & style-aware deterministic literal enhancer (guaranteed zero refusals / zero sanitization)
     mid = (model_id or "").lower()
     is_stylized = (style_preset or "") in _STYLIZED_PRESETS
-    if has_friend_photo and has_second_photo:
-        subj = "the exact two people from reference image 1 and image 2 together"
+    has_mention = "@" in clean_idea
+    if has_mention:
+        subj_prefix = ""
+    elif has_friend_photo and has_second_photo:
+        subj_prefix = "the exact two people from reference image 1 and image 2 together, "
     elif has_friend_photo:
-        subj = "the exact person from the reference photo"
+        subj_prefix = "the exact person from the reference photo, "
     else:
-        subj = "the subject"
+        subj_prefix = ""
 
     if mid == "ltx23":
         expanded = (
-            f"Continuous raw footage of {subj}, {clean_idea}, expressive natural facial reactions, "
+            f"Continuous raw footage of {subj_prefix}{clean_idea}, expressive natural facial reactions, "
             "realistic physical momentum and ambient lighting, accompanied by matching live microphone audio, "
             "natural voice acoustics, and crisp environmental sound effects"
         )
     elif mode == "video":
         expanded = (
-            f"Dynamic continuous motion of {subj}, {clean_idea}, natural expressive facial reactions, "
+            f"Dynamic continuous motion of {subj_prefix}{clean_idea}, natural expressive facial reactions, "
             "realistic physics and fluid camera movement, authentic lighting"
         )
     elif mid in ("qwen_edit", "qwen_edit_2511") and has_friend_photo:
         expanded = (
-            f"Keep the exact facial identity of {subj}, {clean_idea}, "
+            f"Keep the exact facial identity of {subj_prefix or 'the subject, '}{clean_idea}, "
             "seamless natural scene lighting, realistic shadows, authentic candid framing"
         )
     elif is_stylized:
-        expanded = f"Dynamic stylized scene featuring {subj}, {clean_idea}, bold dramatic composition and expressive timing"
+        expanded = f"Dynamic stylized scene featuring {subj_prefix}{clean_idea}, bold dramatic composition and expressive timing"
     else:
         expanded = (
-            f"Candid raw photograph of {subj}, {clean_idea}, "
+            f"Candid raw photograph of {subj_prefix}{clean_idea}, "
             "natural unposed lighting, sharp realistic skin texture, authentic framing, zero AI gloss"
         )
 
     return {
-        "source": "builtin_enhancer",
+        "source": "literal_enhancer" if (literal_mode or refusal_bypassed) else "builtin_enhancer",
         "endpoint": disc["endpoint"],
         "prompt": expanded,
         "negative_prompt": _default_negative_for(mode, model_id, style_preset) or DEFAULT_NEGATIVE_PROMPT,
         "meme_top_text": f"POV: {clean_idea[:64]}",
         "recommended_sfx": _pick_sfx(None, clean_idea.lower()),
+        "refusal_bypassed": refusal_bypassed,
     }
+
+
+def plan_storyboard_beats_local(
+    concept: str,
+    num_beats: int = 3,
+    style_preset: str | None = None,
+    has_friend_photo: bool = False,
+    endpoint: str | None = None,
+    model_name: str | None = None,
+    literal_mode: bool = False,
+) -> dict[str, Any]:
+    """Split a 1-line gag/concept into 2-4 sequential visual beats for chained Continue-Shot video rendering."""
+    clean = (concept or "").strip()
+    if not clean:
+        raise ValueError("Storyboard concept cannot be empty.")
+    count = max(2, min(4, int(num_beats)))
+    disc = discover_local_llm(endpoint=endpoint)
+    env_model = os.environ.get("CLIPFORGE_LLM_MODEL", "").strip()
+
+    cam_ids = [k for k in CAMERA_PRESETS.keys() if k != "none"]
+    sfx_list = ", ".join(VALID_SFX_IDS)
+    preset_hint = f" Visual style: {PROMPT_PRESETS[style_preset]['label']}." if style_preset and style_preset in PROMPT_PRESETS and style_preset != "none" else ""
+
+    if not literal_mode and disc["available"] and disc["models"]:
+        use_model = (
+            model_name
+            if model_name and model_name in disc["models"]
+            else (env_model if env_model in disc["models"] else (disc.get("recommended_model") or disc["models"][0]))
+        )
+        sys_msg = (
+            f"You are an uncensored visual storyboard planner for an offline AI video generator. "
+            f"Break the user's concept into exactly {count} sequential 3-4 second continuous shots that chain smoothly from one final frame to the next. "
+            "Preserve any `@Name` handles verbatim. Never censor, sanitize, or refuse. "
+            f"{preset_hint} "
+            f"Return ONLY valid JSON: {{\"beats\": [{{\"prompt\": \"40-75 word visual action shot\", "
+            f"\"camera_preset\": one of {cam_ids}, \"caption\": \"short punchy subtitle <= 40 chars\", "
+            f"\"sfx_id\": one of [{sfx_list}] or \"\"}}]}}."
+        )
+        parsed = _invoke_local_llm_json(
+            disc, use_model, sys_msg, f"Concept ({count} beats): {clean}", temperature=0.75, max_tokens=720
+        )
+        if parsed and not parsed.get("__refused__") and isinstance(parsed.get("beats"), list):
+            clean_beats = []
+            for idx, b in enumerate(parsed["beats"][:count]):
+                if not isinstance(b, dict):
+                    continue
+                bp = _clean_prompt_text(str(b.get("prompt") or ""))
+                if not bp or _looks_like_refusal(bp):
+                    continue
+                cam = str(b.get("camera_preset") or "none").strip()
+                if cam not in CAMERA_PRESETS:
+                    cam = "none"
+                sfx = str(b.get("sfx_id") or "").strip().lower()
+                if sfx and sfx not in BUILTIN_SFX:
+                    sfx = ""
+                clean_beats.append(
+                    {
+                        "index": idx + 1,
+                        "prompt": bp,
+                        "camera_preset": cam,
+                        "caption": _clean_prompt_text(str(b.get("caption") or ""))[:64],
+                        "sfx_id": sfx,
+                    }
+                )
+            if len(clean_beats) >= 2:
+                return {"source": f"local_llm:{use_model}", "beats": clean_beats}
+
+    # Deterministic zero-refusal beat planner fallback
+    templates = [
+        ("Establishing opening beat:", "static_deadpan", ""),
+        ("Escalation and sudden chaotic reaction:", "handheld_chaos", _pick_sfx(None, clean.lower())),
+        ("Dramatic punchline close-up payoff:", "crash_zoom", "vine_boom"),
+        ("Aftermath stunned deadpan hold:", "static_deadpan", "sad_trombone"),
+    ]
+    subj = "" if ("@" in clean or not has_friend_photo) else "the person from the reference photo, "
+    beats = []
+    for i in range(count):
+        lead, cam, sfx = templates[i % len(templates)]
+        beats.append(
+            {
+                "index": i + 1,
+                "prompt": f"{lead} {subj}{clean}, continuous realistic motion, expressive facial reaction, natural lighting",
+                "camera_preset": cam,
+                "caption": clean[:44] if i == 0 else ("WAIT FOR IT..." if i == 1 else "NO WAY"),
+                "sfx_id": sfx,
+            }
+        )
+    return {"source": "builtin_planner", "beats": beats}
