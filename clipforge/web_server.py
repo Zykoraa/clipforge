@@ -41,6 +41,7 @@ from .generator import (
 )
 from .media import IMAGE_EXTENSIONS, MEDIA_EXTENSIONS
 from .models import MemeTemplateType, TransitionType
+from .platform_utils import detect_gpu_info
 from .sfx import ensure_builtin_sfx_file, list_builtin_sfx
 
 
@@ -926,10 +927,16 @@ async def api_generate_status() -> dict[str, Any]:
     models = await asyncio.to_thread(get_model_availability)
     gallery = await asyncio.to_thread(_list_image_gallery)
     ref_images = await asyncio.to_thread(_list_ref_images)
+    gpu = await asyncio.to_thread(detect_gpu_info)
     return {
         "comfyui_url": COMFYUI_URL,
         "comfyui_dir": str(COMFYUI_DIR),
         "comfyui_running": running,
+        "gpu_name": gpu.get("short_name") or "Local GPU",
+        "gpu_full_name": gpu.get("name") or "",
+        "gpu_vram_mb": gpu.get("vram_mb") or 0,
+        "has_nvidia": bool(gpu.get("has_nvidia")),
+        "platform": sys.platform,
         "models": models,
         "jobs": job_manager.list_jobs(),
         "presets": PROMPT_PRESETS,

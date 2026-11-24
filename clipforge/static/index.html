@@ -30,7 +30,7 @@
         <span class="status-dot"></span>
         <span id="mcpStatusText">MCP LIVE SYNC · v1</span>
       </div>
-      <button id="btnOpenModels" class="models-pill-btn" title="Manage Local AI Models (E:\ComfyUI)">
+      <button id="btnOpenModels" class="models-pill-btn" title="Manage Local AI Models (ComfyUI)">
         <span class="models-dot" id="headerModelsDot"></span>
         <span>Models</span>
         <span id="modelsBadgeText" class="models-badge-count">...</span>
@@ -61,7 +61,7 @@
       <section id="tab-media" class="tab-content active">
         <div class="import-box">
           <div class="input-row">
-            <input id="importPathInput" type="text" placeholder="Paste file or folder path (C:\Videos\...)" />
+            <input id="importPathInput" type="text" placeholder="Paste file or folder path..." />
             <button id="btnImportPath" class="btn btn-secondary">Import</button>
           </div>
           <label class="dropzone" id="uploadDropzone">
@@ -256,11 +256,11 @@
               </div>
               <div>
                 <label class="field-label" for="genRefPathInput">Local Photo Path #1 (optional)</label>
-                <input id="genRefPathInput" type="text" class="input-full" placeholder="C:\Pictures\friend.png" />
+                <input id="genRefPathInput" type="text" class="input-full" placeholder="/path/to/friend.png" />
               </div>
               <div id="genRef2PathWrap" class="hidden">
                 <label class="field-label" for="genRef2PathInput">Local Photo Path #2 (optional)</label>
-                <input id="genRef2PathInput" type="text" class="input-full" placeholder="C:\Pictures\friend2.png" />
+                <input id="genRef2PathInput" type="text" class="input-full" placeholder="/path/to/friend2.png" />
               </div>
               <label class="checkbox-row">
                 <input id="genAutoTimeline" type="checkbox" checked />
@@ -610,7 +610,7 @@
       </label>
       <label class="checkbox-row">
         <input id="renderHwAccel" type="checkbox" checked />
-        <span>Use NVIDIA NVENC hardware acceleration (RTX 4060)</span>
+        <span id="renderHwAccelLabel">Use NVIDIA NVENC hardware acceleration</span>
       </label>
 
       <div id="renderResultBox" class="report-box hidden"></div>
@@ -628,7 +628,7 @@
       <div class="modal-header-bar">
         <div>
           <h3>Local AI Model Manager</h3>
-          <p class="hint">100% offline weights stored on <code>E:\ComfyUI\models</code> · Resumable HTTP downloads · Zero refusals</p>
+          <p class="hint">100% offline weights stored in <code id="modelsDirPath">ComfyUI/models</code> · Resumable HTTP downloads · Zero refusals</p>
         </div>
         <div class="modal-header-right">
           <span id="modelsModalComfyBadge" class="badge">Checking...</span>

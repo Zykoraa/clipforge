@@ -13,6 +13,7 @@ from .models import (
     sanitize_font_name,
     sanitize_single_line,
 )
+from .platform_utils import resolve_ass_font_name
 
 
 def hex_to_ass_color(hex_color: str, opacity: float = 1.0) -> str:
@@ -223,10 +224,10 @@ def generate_ass(project: ProjectState) -> str:
     back_ass = hex_to_ass_color(st.back_color, st.back_opacity)
 
     border_style = 3 if st.back_opacity > 0.05 else 1
-    bold_flag = -1 if st.bold else 0
-    italic_flag = -1 if st.italic else 0
     safe_title = sanitize_single_line(project.name)
-    safe_font = sanitize_font_name(st.font_name)
+    safe_font, force_bold = resolve_ass_font_name(sanitize_font_name(st.font_name))
+    bold_flag = -1 if (st.bold or force_bold) else 0
+    italic_flag = -1 if st.italic else 0
     safe_align = st.alignment if 1 <= st.alignment <= 9 else 2
 
     header = f"""[Script Info]

@@ -40,6 +40,7 @@ from .generator import (
 )
 from .media import IMAGE_EXTENSIONS
 from .models import MemeTemplateType, TransitionType
+from .platform_utils import detached_popen_kwargs
 from .sfx import list_builtin_sfx as _list_builtin_sfx
 
 INSTRUCTIONS = """ClipForge MCP — AI-Controllable Non-Linear Video Editor & Offline AI Media Studio.
@@ -49,7 +50,7 @@ Workflow recommendations for AI agents:
 2. Call `import_media` with file paths or folder paths to load video, audio, or static meme image files into the Media Bin.
 3. For offline AI Image & Video Generation (local ComfyUI, zero refusals):
    - Call `get_video_generator_status` to inspect installed Video (`wan22_5b`, `wan22_i2v`, `ltx23`) and Image (`flux2_klein`, `z_image_turbo`, `qwen_edit`) models plus available style presets.
-   - Call `download_model_bundle` to download any missing model weights in the background onto E:\\ComfyUI.
+   - Call `download_model_bundle` to download any missing model weights in the background into the local ComfyUI models directory (`CLIPFORGE_COMFYUI_DIR`).
    - Call `generate_image` to create photorealistic memes or edit/composite 1-2 friend photos (`flux2_klein`, `z_image_turbo`, `qwen_edit`), optionally adding a 3s still to the timeline.
    - Call `generate_video_clip` to animate any friend photo or generated meme image into a video clip (`wan22_5b`, `wan22_i2v`, `ltx23`) and auto-append to the timeline.
    - Call `list_generated_assets` to browse previously generated images, videos, and uploaded friend photos.
@@ -131,9 +132,6 @@ def open_editor_ui(port: int = 8765, launch_browser: bool = True) -> dict[str, A
             )
     else:
         log_path = get_engine().workspace_dir / "web_server.log"
-        creationflags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0) | getattr(
-            subprocess, "DETACHED_PROCESS", 0
-        )
         launch_cmd = (
             [sys.executable, "--port", str(port), "--no-browser"]
             if getattr(sys, "frozen", False)
@@ -144,8 +142,8 @@ def open_editor_ui(port: int = 8765, launch_browser: bool = True) -> dict[str, A
                 launch_cmd,
                 stdout=log_fh,
                 stderr=log_fh,
-                creationflags=creationflags,
                 env={**os.environ, "CLIPFORGE_WORKSPACE": str(get_engine().workspace_dir)},
+                **detached_popen_kwargs(),
             )
     if launch_browser:
         try:
@@ -507,7 +505,7 @@ def get_video_generator_status(auto_start: bool = False) -> dict[str, Any]:
 
 @mcp.tool()
 def download_model_bundle(model_id: str) -> dict[str, Any]:
-    """Start (or resume) a background HuggingFace download for a local ComfyUI model bundle onto E:\\ComfyUI.
+    """Start (or resume) a background HuggingFace download for a local ComfyUI model bundle into CLIPFORGE_COMFYUI_DIR.
 
     Valid `model_id` values:
     - Video: 'wan22_5b', 'wan22_i2v', 'ltx23'

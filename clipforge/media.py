@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import ctypes
 import json
+import os
 import re
 import subprocess
+import sys
 import threading
 from pathlib import Path
 from typing import Any
@@ -28,8 +30,33 @@ _SILENCE_EVENT_RE = re.compile(
 )
 
 
+def _iter_nvidia_wheel_lib_dirs(subdir_name: str) -> list[Path]:
+    """Discover pip/uv-installed nvidia-cublas-cu12 / nvidia-cudnn-cu12 library directories."""
+    roots: list[Path] = []
+    meipass = getattr(sys, "_MEIPASS", None)
+    if meipass:
+        roots.append(Path(meipass))
+    for sp in sys.path:
+        if sp:
+            p = Path(sp)
+            if p.is_dir():
+                roots.append(p)
+
+    found: list[Path] = []
+    seen: set[Path] = set()
+    for root in roots:
+        for pkg in ("cublas", "cudnn"):
+            cand = root / "nvidia" / pkg / subdir_name
+            if cand.is_dir():
+                resolved = cand.resolve()
+                if resolved not in seen:
+                    seen.add(resolved)
+                    found.append(resolved)
+    return found
+
+
 def _cuda_runtime_available() -> bool:
-    """Verify both CUDA GPU presence and required cuBLAS/cuDNN runtime DLLs before loading on GPU."""
+    """Verify both CUDA GPU presence and required cuBLAS/cuDNN runtime libraries before loading on GPU."""
     global _CUDA_AVAILABLE_CACHED
     if _CUDA_AVAILABLE_CACHED is not None:
         return _CUDA_AVAILABLE_CACHED
@@ -39,9 +66,47 @@ def _cuda_runtime_available() -> bool:
         if ctranslate2.get_cuda_device_count() <= 0:
             _CUDA_AVAILABLE_CACHED = False
             return False
-        ctypes.WinDLL("cublas64_12.dll")
-        ctypes.WinDLL("cublasLt64_12.dll")
-        _CUDA_AVAILABLE_CACHED = True
+
+        if sys.platform == "win32":
+            for lib_dir in _iter_nvidia_wheel_lib_dirs("bin"):
+                try:
+                    os.add_dll_directory(str(lib_dir))
+                except Exception:
+                    pass
+            ctypes.WinDLL("cublas64_12.dll")
+            ctypes.WinDLL("cublasLt64_12.dll")
+            _CUDA_AVAILABLE_CACHED = True
+        elif sys.platform.startswith("linux"):
+            # Preload cuBLAS 12 (and cuDNN 9 if installed) with RTLD_GLOBAL so ctranslate2's dlopen succeeds
+            # even when libraries come from pip/uv nvidia-*-cu12 wheels instead of system LD_LIBRARY_PATH.
+            wheel_dirs = _iter_nvidia_wheel_lib_dirs("lib")
+            rtld_global = getattr(ctypes, "RTLD_GLOBAL", 0)
+
+            def _load_linux_lib(soname: str) -> bool:
+                for d in wheel_dirs:
+                    cand = d / soname
+                    if cand.exists():
+                        try:
+                            ctypes.CDLL(str(cand), mode=rtld_global)
+                            return True
+                        except OSError:
+                            pass
+                try:
+                    ctypes.CDLL(soname, mode=rtld_global)
+                    return True
+                except OSError:
+                    return False
+
+            # Load cublasLt before cublas so symbol dependencies resolve cleanly
+            lt_ok = _load_linux_lib("libcublasLt.so.12")
+            blas_ok = _load_linux_lib("libcublas.so.12")
+            # Optional cuDNN preload if present (beneficial for conv layers / future ctranslate2 builds)
+            _load_linux_lib("libcudnn_ops.so.9")
+            _load_linux_lib("libcudnn_cnn.so.9")
+            _load_linux_lib("libcudnn.so.9")
+            _CUDA_AVAILABLE_CACHED = bool(lt_ok and blas_ok)
+        else:
+            _CUDA_AVAILABLE_CACHED = False
     except Exception:
         _CUDA_AVAILABLE_CACHED = False
     return _CUDA_AVAILABLE_CACHED

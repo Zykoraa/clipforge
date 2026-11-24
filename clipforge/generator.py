@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import random
+import shlex
 import subprocess
 import sys
 import threading
@@ -13,12 +14,23 @@ import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Literal
+from urllib.parse import urlparse
 
 import httpx
 
-COMFYUI_DIR = Path(os.environ.get("CLIPFORGE_COMFYUI_DIR", r"E:\ComfyUI"))
+from .platform_utils import (
+    clean_pyinstaller_env,
+    detached_popen_kwargs,
+    detect_gpu_info,
+    resolve_comfyui_python,
+    resolve_default_comfyui_dir,
+)
+
+COMFYUI_DIR = resolve_default_comfyui_dir()
 COMFYUI_URL = os.environ.get("CLIPFORGE_COMFYUI_URL", "http://127.0.0.1:8188").rstrip("/")
-COMFYUI_PYTHON = COMFYUI_DIR / ".venv" / "Scripts" / "python.exe"
+COMFYUI_PYTHON = resolve_comfyui_python(COMFYUI_DIR) or (
+    COMFYUI_DIR / ".venv" / ("Scripts" if sys.platform == "win32" else "bin") / ("python.exe" if sys.platform == "win32" else "python")
+)
 
 VideoModelId = Literal["wan22_5b", "wan22_i2v", "ltx23"]
 ImageModelId = Literal["flux2_klein", "z_image_turbo", "qwen_edit"]
@@ -184,7 +196,7 @@ DEFAULT_NEGATIVE_PROMPT = (
     "extra limbs, jittering, artifacts, overexposed, neon oversaturation, plastic skin"
 )
 
-# Exact verified HuggingFace model catalog (Video + Image, all stored cleanly on E:\ComfyUI\models\)
+# Exact verified HuggingFace model catalog (Video + Image, stored inside ComfyUI models/)
 MODEL_SPECS: dict[str, dict[str, Any]] = {
     # -------------------------------------------------------------------------
     # VIDEO MODELS
@@ -250,24 +262,28 @@ MODEL_SPECS: dict[str, dict[str, Any]] = {
                 "repo_id": "QuantStack/Wan2.2-I2V-A14B-GGUF",
                 "remote_path": "HighNoise/Wan2.2-I2V-A14B-HighNoise-Q4_K_M.gguf",
                 "local_rel": "models/diffusion_models/Wan2.2-I2V-A14B-HighNoise-Q4_K_M.gguf",
+                "alt_local_rels": ["models/diffusion_models/wan2.2_i2v_high_noise_14B_fp8_scaled.safetensors"],
                 "size_gb": 8.99,
             },
             {
                 "repo_id": "QuantStack/Wan2.2-I2V-A14B-GGUF",
                 "remote_path": "LowNoise/Wan2.2-I2V-A14B-LowNoise-Q4_K_M.gguf",
                 "local_rel": "models/diffusion_models/Wan2.2-I2V-A14B-LowNoise-Q4_K_M.gguf",
+                "alt_local_rels": ["models/diffusion_models/wan2.2_i2v_low_noise_14B_fp8_scaled.safetensors"],
                 "size_gb": 8.99,
             },
             {
                 "repo_id": "lightx2v/Wan2.2-Distill-Loras",
                 "remote_path": "wan2.2_i2v_A14b_high_noise_lora_rank64_lightx2v_4step_1022.safetensors",
                 "local_rel": "models/loras/wan2.2_i2v_A14b_high_noise_lora_rank64_lightx2v_4step_1022.safetensors",
+                "alt_local_rels": ["models/loras/wan2.2_i2v_lightx2v_4steps_lora_v1_high_noise.safetensors"],
                 "size_gb": 0.59,
             },
             {
                 "repo_id": "lightx2v/Wan2.2-Distill-Loras",
                 "remote_path": "wan2.2_i2v_A14b_low_noise_lora_rank64_lightx2v_4step_1022.safetensors",
                 "local_rel": "models/loras/wan2.2_i2v_A14b_low_noise_lora_rank64_lightx2v_4step_1022.safetensors",
+                "alt_local_rels": ["models/loras/wan2.2_i2v_lightx2v_4steps_lora_v1_low_noise.safetensors"],
                 "size_gb": 0.69,
             },
             {
@@ -362,6 +378,7 @@ MODEL_SPECS: dict[str, dict[str, Any]] = {
                 "repo_id": "Comfy-Org/z_image_turbo",
                 "remote_path": "split_files/text_encoders/qwen_3_4b_fp8_mixed.safetensors",
                 "local_rel": "models/text_encoders/qwen_3_4b_fp8_mixed.safetensors",
+                "alt_local_rels": ["models/text_encoders/qwen_3_4b.safetensors"],
                 "size_gb": 5.25,
             },
             {
@@ -391,12 +408,14 @@ MODEL_SPECS: dict[str, dict[str, Any]] = {
                 "repo_id": "unsloth/Z-Image-Turbo-GGUF",
                 "remote_path": "z-image-turbo-Q4_K_M.gguf",
                 "local_rel": "models/diffusion_models/z-image-turbo-Q4_K_M.gguf",
+                "alt_local_rels": ["models/diffusion_models/z_image_turbo_bf16.safetensors"],
                 "size_gb": 3.59,
             },
             {
                 "repo_id": "Comfy-Org/z_image_turbo",
                 "remote_path": "split_files/text_encoders/qwen_3_4b_fp8_mixed.safetensors",
                 "local_rel": "models/text_encoders/qwen_3_4b_fp8_mixed.safetensors",
+                "alt_local_rels": ["models/text_encoders/qwen_3_4b.safetensors"],
                 "size_gb": 5.25,
             },
             {
@@ -465,6 +484,36 @@ def apply_prompt_preset(
     return ", ".join(parts)
 
 
+def _resolve_existing_slot_file(file_spec: dict[str, Any], comfy_dir: Path) -> Path | None:
+    """Return an existing file on disk satisfying a MODEL_SPECS file slot (primary or alt safetensors/GGUF)."""
+    primary = comfy_dir / file_spec["local_rel"]
+    alts = [comfy_dir / rel for rel in file_spec.get("alt_local_rels", ())]
+
+    # On 14GB+ GPUs (e.g. RTX 4080 16GB), prefer full/FP8 safetensors when both variants exist on disk
+    prefer_alt = int(detect_gpu_info().get("vram_mb") or 0) >= 14000
+    ordered = [*alts, primary] if prefer_alt else [primary, *alts]
+    for cand in ordered:
+        if cand.exists() and cand.stat().st_size > 1024 * 1024:
+            return cand
+    return None
+
+
+def _resolve_model_slot_filename(model_id: str, slot_index: int, comfy_dir: Path) -> str:
+    """Resolve the basename (for ComfyUI loader inputs) of a model slot from disk or default spec."""
+    file_spec = MODEL_SPECS[model_id]["files"][slot_index]
+    found = _resolve_existing_slot_file(file_spec, comfy_dir)
+    if found is not None:
+        return found.name
+    return Path(file_spec["local_rel"]).name
+
+
+def _unet_loader_node(unet_name: str) -> dict[str, Any]:
+    """Build either UnetLoaderGGUF (for .gguf) or native ComfyUI UNETLoader (for .safetensors)."""
+    if unet_name.lower().endswith(".gguf"):
+        return {"class_type": "UnetLoaderGGUF", "inputs": {"unet_name": unet_name}}
+    return {"class_type": "UNETLoader", "inputs": {"unet_name": unet_name, "weight_dtype": "default"}}
+
+
 def snap_dim(val: int, step: int, minimum: int = 256, maximum: int = 1536) -> int:
     clamped = max(minimum, min(maximum, int(val)))
     return max(minimum, (clamped // step) * step)
@@ -477,7 +526,7 @@ def snap_frames(num_frames: int, step: int, minimum: int = 17, maximum: int = 16
 
 
 # ---------------------------------------------------------------------------
-# Resumable In-Process Model Download Manager (Direct HTTP Range -> E:\ComfyUI)
+# Resumable In-Process Model Download Manager (Direct HTTP Range -> ComfyUI)
 # ---------------------------------------------------------------------------
 @dataclass
 class DownloadState:
@@ -494,7 +543,7 @@ class DownloadState:
 
 
 class ModelDownloadManager:
-    """Streams HuggingFace model files with HTTP Range resume & exact live progress onto E:\\ComfyUI."""
+    """Streams HuggingFace model files with HTTP Range resume & exact live progress into the local ComfyUI dir."""
 
     def __init__(self, comfy_dir: Path = COMFYUI_DIR) -> None:
         self.comfy_dir = comfy_dir
@@ -569,9 +618,9 @@ class ModelDownloadManager:
             # Resolve exact sizes upfront where possible
             exact_sizes: list[int] = []
             for f in files:
-                dest = self.comfy_dir / f["local_rel"]
-                if dest.exists() and dest.stat().st_size > 1024 * 1024:
-                    exact_sizes.append(dest.stat().st_size)
+                existing_fp = _resolve_existing_slot_file(f, self.comfy_dir)
+                if existing_fp is not None:
+                    exact_sizes.append(existing_fp.stat().st_size)
                 else:
                     url = f"https://huggingface.co/{f['repo_id']}/resolve/main/{f['remote_path']}"
                     try:
@@ -596,11 +645,12 @@ class ModelDownloadManager:
                 file_lock = self._get_file_lock(f["local_rel"])
 
                 with file_lock:
-                    if dest.exists() and dest.stat().st_size > 1024 * 1024:
-                        completed_bytes += dest.stat().st_size
+                    existing_fp = _resolve_existing_slot_file(f, self.comfy_dir)
+                    if existing_fp is not None:
+                        completed_bytes += existing_fp.stat().st_size
                         with self._lock:
                             st.file_index = idx + 1
-                            st.current_file = dest.name
+                            st.current_file = existing_fp.name
                             st.downloaded_bytes = completed_bytes
                         continue
 
@@ -673,18 +723,27 @@ download_manager = ModelDownloadManager()
 
 
 def get_model_availability(comfy_dir: Path = COMFYUI_DIR) -> dict[str, dict[str, Any]]:
-    """Inspect all video & image model bundles on E:\\ComfyUI plus any active download progress."""
+    """Inspect all video & image model bundles in the local ComfyUI directory plus any active download progress."""
     report: dict[str, dict[str, Any]] = {}
     for model_id, spec in MODEL_SPECS.items():
         present: list[str] = []
         missing: list[dict[str, Any]] = []
         total_gb = 0.0
+        using_safetensors_unet = False
         for f in spec["files"]:
-            total_gb += f["size_gb"]
-            fp = comfy_dir / f["local_rel"]
-            if fp.exists() and fp.stat().st_size > 1024 * 1024:
-                present.append(f["local_rel"])
+            found_fp = _resolve_existing_slot_file(f, comfy_dir)
+            if found_fp is not None:
+                try:
+                    rel_str = found_fp.relative_to(comfy_dir).as_posix()
+                except ValueError:
+                    rel_str = found_fp.name
+                present.append(rel_str)
+                total_gb += found_fp.stat().st_size / (1024**3)
+                if "diffusion_models" in f["local_rel"] and found_fp.suffix.lower() == ".safetensors":
+                    using_safetensors_unet = True
             else:
+                total_gb += f["size_gb"]
+                fp = comfy_dir / f["local_rel"]
                 part = fp.with_name(fp.name + ".part")
                 partial_gb = round(part.stat().st_size / (1024**3), 2) if part.exists() else 0.0
                 missing.append({"file": f["local_rel"], "size_gb": f["size_gb"], "partial_gb": partial_gb})
@@ -697,6 +756,7 @@ def get_model_availability(comfy_dir: Path = COMFYUI_DIR) -> dict[str, dict[str,
             "badge": spec["badge"],
             "description": spec["description"],
             "ready": len(missing) == 0,
+            "variant": "safetensors" if using_safetensors_unet else "gguf",
             "requires_image": spec["requires_image"],
             "supports_image": spec["supports_image"],
             "supports_end_image": spec.get("supports_end_image", False),
@@ -733,51 +793,64 @@ def ensure_comfyui_running(
     base_url: str = COMFYUI_URL,
     wait_sec: float = 45.0,
 ) -> dict[str, Any]:
-    """Start headless ComfyUI on 127.0.0.1:8188 (--lowvram) if not already listening."""
+    """Start headless ComfyUI on the configured loopback URL if not already listening."""
     if is_comfyui_reachable(base_url):
         return {"running": True, "url": base_url, "started_now": False}
 
-    py_exe = comfy_dir / ".venv" / "Scripts" / "python.exe"
+    py_exe = resolve_comfyui_python(comfy_dir)
     main_py = comfy_dir / "main.py"
-    if not py_exe.exists() or not main_py.exists():
-        raise RuntimeError(f"ComfyUI installation not found at {comfy_dir}")
-
-    log_path = comfy_dir / "comfyui_server.log"
-    # Strip PyInstaller _MEIPASS / _internal entries from PATH so ComfyUI never loads DLLs from ClipForge\_internal
-    clean_env = {k: v for k, v in os.environ.items() if not k.startswith("_MEIPASS")}
-    meipass = getattr(sys, "_MEIPASS", None)
-    if meipass and "PATH" in clean_env:
-        mp_norm = str(Path(meipass).resolve()).lower()
-        clean_env["PATH"] = os.pathsep.join(
-            p for p in clean_env["PATH"].split(os.pathsep) if p and not p.lower().startswith(mp_norm)
+    if py_exe is None or not main_py.exists():
+        raise RuntimeError(
+            f"ComfyUI installation not found at {comfy_dir}. "
+            "Set CLIPFORGE_COMFYUI_DIR to your ComfyUI folder (with .venv/ or venv/)."
         )
+
+    parsed = urlparse(base_url)
+    listen_host = parsed.hostname or "127.0.0.1"
+    listen_port = str(parsed.port or 8188)
+
+    tmp_dir = comfy_dir / ".tmp"
+    tmp_dir.mkdir(parents=True, exist_ok=True)
+    log_path = comfy_dir / "comfyui_server.log"
+
+    # Strip PyInstaller _MEIPASS paths from PATH / LD_LIBRARY_PATH so ComfyUI never loads bundled libs
+    clean_env = clean_pyinstaller_env()
     env = {
         **clean_env,
         "HF_HOME": str(comfy_dir / ".hf-cache"),
-        "TMP": str(comfy_dir / ".tmp"),
-        "TEMP": str(comfy_dir / ".tmp"),
+        "TMP": str(tmp_dir),
+        "TEMP": str(tmp_dir),
+        "TMPDIR": str(tmp_dir),
         "PYTHONUTF8": "1",
     }
-    creationflags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0) | getattr(
-        subprocess, "DETACHED_PROCESS", 0
-    )
+
+    extra_args_raw = os.environ.get("CLIPFORGE_COMFYUI_ARGS", "").strip()
+    if extra_args_raw:
+        extra_args = shlex.split(extra_args_raw)
+    else:
+        gpu = detect_gpu_info()
+        # Use --lowvram on <=10 GiB GPUs (e.g. 8GB RTX 4060); let 12GB+ GPUs (e.g. 16GB RTX 4080) use default VRAM policy
+        vram_mb = int(gpu.get("vram_mb") or 0)
+        extra_args = ["--lowvram"] if (vram_mb == 0 or vram_mb <= 10240) else []
+
+    cmd = [
+        str(py_exe),
+        str(main_py),
+        "--listen",
+        listen_host,
+        "--port",
+        listen_port,
+        *extra_args,
+        "--disable-auto-launch",
+    ]
     with open(log_path, "ab") as log_fh:
         subprocess.Popen(
-            [
-                str(py_exe),
-                str(main_py),
-                "--listen",
-                "127.0.0.1",
-                "--port",
-                "8188",
-                "--lowvram",
-                "--disable-auto-launch",
-            ],
+            cmd,
             cwd=str(comfy_dir),
             stdout=log_fh,
             stderr=log_fh,
-            creationflags=creationflags,
             env=env,
+            **detached_popen_kwargs(),
         )
 
     deadline = time.monotonic() + wait_sec
@@ -807,6 +880,10 @@ def build_wan22_i2v_workflow(
     cfg: float = 1.0,
     seed: int = -1,
     filename_prefix: str = "clipforge/wan22_i2v",
+    high_unet: str = "Wan2.2-I2V-A14B-HighNoise-Q4_K_M.gguf",
+    low_unet: str = "Wan2.2-I2V-A14B-LowNoise-Q4_K_M.gguf",
+    high_lora: str = "wan2.2_i2v_A14b_high_noise_lora_rank64_lightx2v_4step_1022.safetensors",
+    low_lora: str = "wan2.2_i2v_A14b_low_noise_lora_rank64_lightx2v_4step_1022.safetensors",
 ) -> dict[str, Any]:
     w = snap_dim(width, 16)
     h = snap_dim(height, 16)
@@ -831,13 +908,13 @@ def build_wan22_i2v_workflow(
         cond_inputs["end_image"] = ["11b", 0]
 
     graph: dict[str, Any] = {
-        "1": {"class_type": "UnetLoaderGGUF", "inputs": {"unet_name": "Wan2.2-I2V-A14B-HighNoise-Q4_K_M.gguf"}},
-        "2": {"class_type": "UnetLoaderGGUF", "inputs": {"unet_name": "Wan2.2-I2V-A14B-LowNoise-Q4_K_M.gguf"}},
+        "1": _unet_loader_node(high_unet),
+        "2": _unet_loader_node(low_unet),
         "3": {
             "class_type": "LoraLoaderModelOnly",
             "inputs": {
                 "model": ["1", 0],
-                "lora_name": "wan2.2_i2v_A14b_high_noise_lora_rank64_lightx2v_4step_1022.safetensors",
+                "lora_name": high_lora,
                 "strength_model": 1.0,
             },
         },
@@ -845,7 +922,7 @@ def build_wan22_i2v_workflow(
             "class_type": "LoraLoaderModelOnly",
             "inputs": {
                 "model": ["2", 0],
-                "lora_name": "wan2.2_i2v_A14b_low_noise_lora_rank64_lightx2v_4step_1022.safetensors",
+                "lora_name": low_lora,
                 "strength_model": 1.0,
             },
         },
@@ -1075,6 +1152,8 @@ def build_flux2_klein_workflow(
     cfg: float = 1.0,
     seed: int = -1,
     filename_prefix: str = "clipforge/flux2_klein",
+    unet_name: str = "flux-2-klein-4b-Q4_K_M.gguf",
+    clip_name: str = "qwen_3_4b_fp8_mixed.safetensors",
 ) -> dict[str, Any]:
     """FLUX.2 [klein] 4B Q4_K_M: 4-step ultra-fast T2I + Reference-Image Friend Photo Editing."""
     w = snap_dim(width, 16, minimum=512, maximum=1536)
@@ -1082,10 +1161,10 @@ def build_flux2_klein_workflow(
     actual_seed = random.randint(1, 2**50) if seed < 0 else int(seed)
 
     graph: dict[str, Any] = {
-        "1": {"class_type": "UnetLoaderGGUF", "inputs": {"unet_name": "flux-2-klein-4b-Q4_K_M.gguf"}},
+        "1": _unet_loader_node(unet_name),
         "2": {
             "class_type": "CLIPLoader",
-            "inputs": {"clip_name": "qwen_3_4b_fp8_mixed.safetensors", "type": "flux2", "device": "default"},
+            "inputs": {"clip_name": clip_name, "type": "flux2", "device": "default"},
         },
         "3": {"class_type": "VAELoader", "inputs": {"vae_name": "flux2-vae.safetensors"}},
         "4": {"class_type": "CLIPTextEncode", "inputs": {"clip": ["2", 0], "text": prompt}},
@@ -1126,18 +1205,20 @@ def build_z_image_turbo_workflow(
     cfg: float = 1.0,
     seed: int = -1,
     filename_prefix: str = "clipforge/z_image_turbo",
+    unet_name: str = "z-image-turbo-Q4_K_M.gguf",
+    clip_name: str = "qwen_3_4b_fp8_mixed.safetensors",
 ) -> dict[str, Any]:
-    """Z-Image-Turbo Q4_K_M: 8-step hyper-real candid photography & crisp embedded meme text."""
+    """Z-Image-Turbo (GGUF or BF16 safetensors): 8-step hyper-real candid photography & crisp embedded meme text."""
     w = snap_dim(width, 16, minimum=512, maximum=1536)
     h = snap_dim(height, 16, minimum=512, maximum=1536)
     actual_seed = random.randint(1, 2**50) if seed < 0 else int(seed)
 
     return {
-        "1": {"class_type": "UnetLoaderGGUF", "inputs": {"unet_name": "z-image-turbo-Q4_K_M.gguf"}},
+        "1": _unet_loader_node(unet_name),
         "2": {"class_type": "ModelSamplingAuraFlow", "inputs": {"model": ["1", 0], "shift": 3.0}},
         "3": {
             "class_type": "CLIPLoader",
-            "inputs": {"clip_name": "qwen_3_4b_fp8_mixed.safetensors", "type": "lumina2", "device": "default"},
+            "inputs": {"clip_name": clip_name, "type": "lumina2", "device": "default"},
         },
         "4": {"class_type": "VAELoader", "inputs": {"vae_name": "ae.safetensors"}},
         "5": {"class_type": "CLIPTextEncode", "inputs": {"clip": ["3", 0], "text": prompt}},
@@ -1271,7 +1352,8 @@ def _execute_comfyui_workflow(
 
     # Optional background WS listener for exact sampling step percentages
     ws_stop = threading.Event()
-    step_info = {"pct": 5, "label": "Queued on RTX 4060..."}
+    gpu_label = detect_gpu_info().get("short_name") or "local GPU"
+    step_info = {"pct": 5, "label": f"Queued on {gpu_label}..."}
 
     def _ws_listener() -> None:
         try:
@@ -1428,6 +1510,10 @@ def generate_video_via_comfyui(
             cfg=use_cfg,
             seed=seed,
             filename_prefix=f"clipforge/wan22_i2v_{run_id}",
+            high_unet=_resolve_model_slot_filename("wan22_i2v", 0, comfy_dir),
+            low_unet=_resolve_model_slot_filename("wan22_i2v", 1, comfy_dir),
+            high_lora=_resolve_model_slot_filename("wan22_i2v", 2, comfy_dir),
+            low_lora=_resolve_model_slot_filename("wan22_i2v", 3, comfy_dir),
         )
     elif model == "wan22_5b":
         workflow = build_wan22_5b_workflow(
@@ -1565,6 +1651,8 @@ def generate_image_via_comfyui(
                 cfg=use_cfg,
                 seed=cur_seed,
                 filename_prefix=f"clipforge/flux2_klein_{run_id}",
+                unet_name=_resolve_model_slot_filename("flux2_klein", 0, comfy_dir),
+                clip_name=_resolve_model_slot_filename("flux2_klein", 1, comfy_dir),
             )
         elif model == "z_image_turbo":
             workflow = build_z_image_turbo_workflow(
@@ -1576,6 +1664,8 @@ def generate_image_via_comfyui(
                 cfg=use_cfg,
                 seed=cur_seed,
                 filename_prefix=f"clipforge/z_image_{run_id}",
+                unet_name=_resolve_model_slot_filename("z_image_turbo", 0, comfy_dir),
+                clip_name=_resolve_model_slot_filename("z_image_turbo", 1, comfy_dir),
             )
         else:
             assert up_img1 is not None

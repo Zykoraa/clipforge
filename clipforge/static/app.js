@@ -181,6 +181,8 @@ const el = {
   // Model Manager Modal & Lightbox & Toasts
   modelsModal: document.getElementById("modelsModal"),
   modelsModalComfyBadge: document.getElementById("modelsModalComfyBadge"),
+  modelsDirPath: document.getElementById("modelsDirPath"),
+  renderHwAccelLabel: document.getElementById("renderHwAccelLabel"),
   btnModalStartComfy: document.getElementById("btnModalStartComfy"),
   btnCloseModelsModal: document.getElementById("btnCloseModelsModal"),
   modelsImageList: document.getElementById("modelsImageList"),
@@ -1474,7 +1476,7 @@ function renderSubtitleOverlay(t) {
 
   const box = document.createElement("div");
   box.className = "sub-box";
-  box.style.fontFamily = `'${fontName}', 'Arial Black', sans-serif`;
+  box.style.fontFamily = `'${fontName}', 'Arial Black', 'Liberation Sans', 'Noto Sans', sans-serif`;
   box.style.fontSize = `${fontSizePx}px`;
   box.style.fontWeight = st.bold ? "900" : "600";
   box.style.background = bgRgba;
@@ -2466,10 +2468,12 @@ function buildModelManagerCard(m) {
   descEl.className = "model-card-desc";
   descEl.textContent = m.description;
 
+  const comfyDir = genState.statusData?.comfyui_dir || "ComfyUI";
+  const variantTag = m.variant === "safetensors" ? "Safetensors" : "GGUF";
   const metaEl = document.createElement("div");
   metaEl.className = "model-card-meta";
   metaEl.textContent = m.ready
-    ? `${m.total_files}/${m.total_files} files installed · ${m.total_gb} GB on E:\\ComfyUI`
+    ? `${m.total_files}/${m.total_files} files installed (${variantTag}) · ${m.total_gb} GB in ${comfyDir}`
     : `${m.present_count}/${m.total_files} files present · ${m.missing_gb} GB remaining (total ${m.total_gb} GB)`;
 
   info.appendChild(titleRow);
@@ -2575,7 +2579,9 @@ function renderModelsModal() {
 async function startModelDownload(modelId) {
   try {
     await apiCall(`/api/generate/models/${encodeURIComponent(modelId)}/download`, "POST");
-    showToast(`Started resumable download for ${modelId} → E:\\ComfyUI\\models`, "info");
+    const comfyDir = genState.statusData?.comfyui_dir || "ComfyUI";
+    const sep = comfyDir.includes("\\") ? "\\" : "/";
+    showToast(`Started resumable download for ${modelId} → ${comfyDir}${sep}models`, "info");
     logEvent(`Started model download: ${modelId}`);
     await refreshGeneratorStatus();
   } catch (err) {
@@ -2605,9 +2611,33 @@ async function refreshGeneratorStatus() {
     const activeDls = models.filter((m) => m.download?.status === "downloading");
     const activeJobs = (data.jobs || []).filter((j) => j.status === "running" || j.status === "queued");
 
+    const gpuName = data.gpu_name || "Local GPU";
+    const comfyDir = data.comfyui_dir || "ComfyUI";
+    const pathSep = data.platform === "win32" ? "\\" : "/";
+    if (el.btnOpenModels) {
+      el.btnOpenModels.title = `Manage Local AI Models (${comfyDir})`;
+    }
+    if (el.modelsDirPath) {
+      el.modelsDirPath.textContent = `${comfyDir}${pathSep}models`;
+    }
+    if (el.renderHwAccelLabel) {
+      el.renderHwAccelLabel.textContent = data.has_nvidia
+        ? `Use NVIDIA NVENC hardware acceleration (${gpuName})`
+        : "Use NVIDIA NVENC hardware acceleration (falls back to CPU x264)";
+    }
+    if (data.platform === "win32") {
+      if (el.importPathInput) el.importPathInput.placeholder = "Paste file or folder path (C:\\Videos\\...)";
+      if (el.genRefPathInput) el.genRefPathInput.placeholder = "C:\\Pictures\\friend.png";
+      if (el.genRef2PathInput) el.genRef2PathInput.placeholder = "C:\\Pictures\\friend2.png";
+    } else {
+      if (el.importPathInput) el.importPathInput.placeholder = "Paste file or folder path (/home/user/Videos/...)";
+      if (el.genRefPathInput) el.genRefPathInput.placeholder = "/home/user/Pictures/friend.png";
+      if (el.genRef2PathInput) el.genRef2PathInput.placeholder = "/home/user/Pictures/friend2.png";
+    }
+
     el.comfyStatusDot.className = `mini-dot ${data.comfyui_running ? "online" : "offline"}`;
     el.comfyStatusText.textContent = data.comfyui_running
-      ? "Local ComfyUI Online · RTX 4060"
+      ? `Local ComfyUI Online · ${gpuName}`
       : "ComfyUI Offline (auto-starts on generate)";
     el.btnStartComfy.classList.toggle("hidden", Boolean(data.comfyui_running));
 

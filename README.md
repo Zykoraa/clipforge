@@ -1,6 +1,6 @@
 # ClipForge — AI-Controllable Video Editor, Offline Media Studio & MCP Server
 
-ClipForge is a local-first Non-Linear Video Editor (NLE) with a live WebSocket-synced **MCP Server (32 tools)** and integrated **offline ComfyUI Image & Video Generation** (zero cloud filters, zero API fees).
+ClipForge is a cross-platform (Windows & Linux) local-first Non-Linear Video Editor (NLE) with a live WebSocket-synced **MCP Server (32 tools)** and integrated **offline ComfyUI Image & Video Generation** (zero cloud filters, zero API fees).
 
 ---
 
@@ -29,23 +29,69 @@ ClipForge is a local-first Non-Linear Video Editor (NLE) with a live WebSocket-s
 
 ### Prerequisites
 - Python 3.10+, [uv](https://docs.astral.sh/uv/) (recommended), and `ffmpeg` / `ffprobe` on `PATH`.
+- On Linux: `fontconfig` and standard sans/mono fonts (e.g. Liberation / Noto / DejaVu).
 - Optional: local [ComfyUI](https://github.com/comfyanonymous/ComfyUI) (`CLIPFORGE_COMFYUI_DIR`, `CLIPFORGE_COMFYUI_URL`, defaults to `http://127.0.0.1:8188`).
+  - Auto-detected on Linux at `~/CreationTools/ComfyUI` or `~/ComfyUI`, and on Windows at `E:\ComfyUI` or `C:\ComfyUI`.
+  - Automatically uses existing FP8/BF16 safetensors weights via native `UNETLoader` when present (`Wan 2.2 I2V 14B`, `Z-Image-Turbo`, shared `qwen_3_4b`), or GGUF weights via `ComfyUI-GGUF` (`UnetLoaderGGUF`).
 
-### Install & Run
-```powershell
+### Install & Run (Linux / macOS)
+```bash
 uv sync
+# Optional: enable CUDA 12 libraries for GPU-accelerated faster-whisper on NVIDIA GPUs
+uv sync --extra cuda
+
+./start_editor.sh
+# Or directly:
 uv run python main.py --port 8765
 ```
-Open **http://127.0.0.1:8765**.
 
-### Build Standalone Windows Executable
+### Install & Run (Windows)
 ```powershell
-uv pip install pyinstaller
-uv run python build_exe.py
-# Output: dist/ClipForge/ClipForge.exe (supports Web UI default & `--mcp` stdio mode)
+uv sync
+.\start_editor.bat
+# Or directly:
+uv run python main.py --port 8765
 ```
 
-### MCP Server Configuration
+Open **http://127.0.0.1:8765**.
+
+---
+
+## Standalone Native Builds (Windows & Linux)
+
+`build_exe.py` builds a native standalone bundle for whichever OS you run it on (PyInstaller compiles native executables per platform, and `.github/workflows/build-release.yml` builds both Windows and Linux release archives automatically on `v*` tags):
+
+```bash
+# Install PyInstaller extra and build native bundle (+ optional release archive)
+uv sync --extra build
+uv run python build_exe.py --archive
+
+# Linux output:   dist/ClipForge/ClipForge      (+ dist/ClipForge-linux-x86_64.tar.gz)
+# Windows output: dist/ClipForge/ClipForge.exe  (+ dist/ClipForge-windows-x86_64.zip)
+```
+
+Both binaries default to launching the Web UI and accept `--mcp` for stdio MCP mode.
+
+---
+
+## MCP Server Configuration
+
+### Linux / macOS
+```json
+{
+  "mcpServers": {
+    "clipforge": {
+      "command": "<path-to-clipforge>/.venv/bin/python",
+      "args": ["-m", "clipforge.mcp_server"],
+      "env": {
+        "CLIPFORGE_WORKSPACE": "<path-to-clipforge>/workspace"
+      }
+    }
+  }
+}
+```
+
+### Windows
 ```json
 {
   "mcpServers": {
@@ -60,7 +106,9 @@ uv run python build_exe.py
 }
 ```
 
-### Run Tests
-```powershell
+---
+
+## Run Tests
+```bash
 uv run pytest -v tests/test_clipforge_e2e.py
 ```

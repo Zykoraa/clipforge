@@ -519,3 +519,113 @@ def test_sfx_auto_duck_meme_layout_continue_shot_and_director(tmp_path: Path, mo
     assert r_dir.status_code == 200
     assert "raccoon" in r_dir.json()["prompt"].lower()
 
+
+def test_cross_platform_helpers_fonts_and_env(tmp_path: Path, monkeypatch) -> None:
+    """Verify cross-platform ComfyUI discovery, PyInstaller env cleanup, font resolution, and status metadata."""
+    import os
+    import sys
+
+    from clipforge.platform_utils import (
+        clean_pyinstaller_env,
+        detached_popen_kwargs,
+        resolve_ass_font_name,
+        resolve_comfyui_python,
+        resolve_default_comfyui_dir,
+        resolve_ffmpeg_fontfile,
+    )
+
+    # 1. Detached subprocess kwargs are OS-valid
+    dk = detached_popen_kwargs()
+    if sys.platform == "win32":
+        assert "creationflags" in dk
+    else:
+        assert dk.get("start_new_session") is True
+
+    # 2. PyInstaller _MEIPASS cleanup strips bundled dirs from PATH and restores LD_LIBRARY_PATH
+    fake_mp = str((tmp_path / "meipass").resolve())
+    monkeypatch.setattr(sys, "_MEIPASS", fake_mp, raising=False)
+    cleaned = clean_pyinstaller_env(
+        {
+            "PATH": f"{fake_mp}{os.pathsep}/usr/bin",
+            "LD_LIBRARY_PATH": f"{fake_mp}:/opt/cuda/lib64",
+            "LD_LIBRARY_PATH_ORIG": "/opt/cuda/lib64",
+            "_MEIPASS2": fake_mp,
+        }
+    )
+    assert "_MEIPASS2" not in cleaned
+    assert fake_mp not in cleaned.get("PATH", "")
+    assert cleaned.get("LD_LIBRARY_PATH") == "/opt/cuda/lib64"
+    assert "LD_LIBRARY_PATH_ORIG" not in cleaned
+
+    # 3. ComfyUI dir honors CLIPFORGE_COMFYUI_DIR and locates OS-native venv python
+    fake_comfy = tmp_path / "ComfyUI"
+    py_rel = Path(".venv/Scripts/python.exe") if sys.platform == "win32" else Path(".venv/bin/python")
+    py_path = fake_comfy / py_rel
+    py_path.parent.mkdir(parents=True, exist_ok=True)
+    py_path.write_text("", encoding="utf-8")
+    monkeypatch.setenv("CLIPFORGE_COMFYUI_DIR", str(fake_comfy))
+    assert resolve_default_comfyui_dir() == fake_comfy
+    assert resolve_comfyui_python(fake_comfy) == py_path
+
+    # 4. FFmpeg drawtext font resolution returns an existing font file on Linux/Windows
+    ff_bold = resolve_ffmpeg_fontfile("arialbd.ttf")
+    assert ff_bold != ""
+    ff_mono = resolve_ffmpeg_fontfile("consolab.ttf")
+    assert ff_mono != ""
+
+    # 5. libass font resolution never resolves Impact to an icon font (e.g. FontAwesome)
+    impact_fam, _force_bold = resolve_ass_font_name("Impact")
+    assert "fontawesome" not in impact_fam.lower()
+    assert "emoji" not in impact_fam.lower()
+
+    # 6. Safetensors / FP8 / BF16 auto-detection satisfies model availability & switches to UNETLoader
+    from clipforge.generator import (
+        build_wan22_i2v_workflow,
+        build_z_image_turbo_workflow,
+        get_model_availability,
+    )
+
+    st_comfy = tmp_path / "comfy_st"
+    for rel in (
+        "models/diffusion_models/z_image_turbo_bf16.safetensors",
+        "models/text_encoders/qwen_3_4b.safetensors",
+        "models/vae/ae.safetensors",
+        "models/diffusion_models/wan2.2_i2v_high_noise_14B_fp8_scaled.safetensors",
+        "models/diffusion_models/wan2.2_i2v_low_noise_14B_fp8_scaled.safetensors",
+        "models/loras/wan2.2_i2v_lightx2v_4steps_lora_v1_high_noise.safetensors",
+        "models/loras/wan2.2_i2v_lightx2v_4steps_lora_v1_low_noise.safetensors",
+        "models/text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+        "models/vae/wan_2.1_vae.safetensors",
+    ):
+        fp = st_comfy / rel
+        fp.parent.mkdir(parents=True, exist_ok=True)
+        fp.write_bytes(b"\x00" * (1024 * 1024 + 16))
+
+    avail_st = get_model_availability(st_comfy)
+    assert avail_st["z_image_turbo"]["ready"] is True
+    assert avail_st["z_image_turbo"]["variant"] == "safetensors"
+    assert avail_st["wan22_i2v"]["ready"] is True
+    assert avail_st["wan22_i2v"]["variant"] == "safetensors"
+
+    wf_zit_st = build_z_image_turbo_workflow(
+        "test",
+        unet_name="z_image_turbo_bf16.safetensors",
+        clip_name="qwen_3_4b.safetensors",
+    )
+    assert wf_zit_st["1"]["class_type"] == "UNETLoader"
+    assert wf_zit_st["1"]["inputs"]["weight_dtype"] == "default"
+    assert wf_zit_st["3"]["inputs"]["clip_name"] == "qwen_3_4b.safetensors"
+
+    wf_wan_st = build_wan22_i2v_workflow(
+        "test",
+        image_filename="f.png",
+        high_unet="wan2.2_i2v_high_noise_14B_fp8_scaled.safetensors",
+        low_unet="wan2.2_i2v_low_noise_14B_fp8_scaled.safetensors",
+        high_lora="wan2.2_i2v_lightx2v_4steps_lora_v1_high_noise.safetensors",
+        low_lora="wan2.2_i2v_lightx2v_4steps_lora_v1_low_noise.safetensors",
+    )
+    assert wf_wan_st["1"]["class_type"] == "UNETLoader"
+    assert wf_wan_st["2"]["class_type"] == "UNETLoader"
+    assert wf_wan_st["3"]["inputs"]["lora_name"] == "wan2.2_i2v_lightx2v_4steps_lora_v1_high_noise.safetensors"
+
+

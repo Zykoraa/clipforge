@@ -46,14 +46,21 @@ from .subtitles import project_timeline_subtitles, write_subtitle_file
 def _resolve_default_workspace() -> Path:
     env_ws = os.environ.get("CLIPFORGE_WORKSPACE", "").strip()
     if env_ws:
-        return Path(env_ws)
+        return Path(env_ws).expanduser()
     if getattr(sys, "frozen", False):
         exe_dir = Path(sys.executable).resolve().parent
-        # When launched from <repo>/dist/ClipForge/ClipForge.exe, share <repo>/workspace with MCP
+        # When launched from <repo>/dist/ClipForge/ClipForge(.exe), share <repo>/workspace with MCP
         repo_root = exe_dir.parent.parent
         if (repo_root / "pyproject.toml").exists():
             return repo_root / "workspace"
-        return exe_dir / "workspace"
+        if os.access(exe_dir, os.W_OK):
+            return exe_dir / "workspace"
+        # System-wide read-only installs (e.g. /opt/clipforge) fall back to user data dir
+        if sys.platform == "win32":
+            local_app = os.environ.get("LOCALAPPDATA") or str(Path.home() / "AppData" / "Local")
+            return Path(local_app) / "ClipForge" / "workspace"
+        xdg_data = os.environ.get("XDG_DATA_HOME") or str(Path.home() / ".local" / "share")
+        return Path(xdg_data) / "clipforge" / "workspace"
     return Path(__file__).resolve().parent.parent / "workspace"
 
 

@@ -11,21 +11,8 @@ from pathlib import Path
 from typing import Any
 
 from .models import MemeLayoutConfig, ProjectState, ensure_even_dimension, sanitize_hex_color
+from .platform_utils import resolve_ffmpeg_fontfile as _resolve_ffmpeg_fontfile
 from .subtitles import write_subtitle_file
-
-
-def _resolve_ffmpeg_fontfile(preferred: str) -> str:
-    """Resolve a Windows system font file and escape the drive colon for FFmpeg drawtext."""
-    candidates = [
-        Path("C:/Windows/Fonts") / preferred,
-        Path("C:/Windows/Fonts/arialbd.ttf"),
-        Path("C:/Windows/Fonts/arial.ttf"),
-        Path("C:/Windows/Fonts/segoeuib.ttf"),
-    ]
-    for c in candidates:
-        if c.exists():
-            return c.as_posix().replace(":", r"\:")
-    return ""
 
 
 def _append_meme_layout_filters(
