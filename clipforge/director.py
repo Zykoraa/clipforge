@@ -708,52 +708,69 @@ def expand_meme_prompt_local(
                 if pos and _looks_like_refusal(pos):
                     refusal_bypassed = True
 
-    # Smart model-aware & style-aware deterministic literal enhancer (guaranteed zero refusals / zero sanitization)
+    # Smart model-aware & style-aware deterministic literal enhancer (guaranteed zero refusals / zero grammar mangling)
     mid = (model_id or "").lower()
     is_stylized = (style_preset or "") in _STYLIZED_PRESETS
     has_mention = "@" in clean_idea
+
+    # Cleanly rewrite imperative requests ("make him ...", "have her ...") into direct visual phrasing
+    visual_idea = re.sub(r"^(?:please\s+|can you\s+)?make\s+him\s+", "he ", clean_idea, flags=re.IGNORECASE)
+    visual_idea = re.sub(r"^(?:please\s+|can you\s+)?make\s+her\s+", "she ", visual_idea, flags=re.IGNORECASE)
+    visual_idea = re.sub(r"^(?:please\s+|can you\s+)?make\s+them\s+", "they ", visual_idea, flags=re.IGNORECASE)
+    visual_idea = re.sub(r"^(?:please\s+|can you\s+)?have\s+him\s+", "he ", visual_idea, flags=re.IGNORECASE)
+    visual_idea = re.sub(r"^(?:please\s+|can you\s+)?have\s+her\s+", "she ", visual_idea, flags=re.IGNORECASE)
+
     if has_mention:
         subj_prefix = ""
     elif has_friend_photo and has_second_photo:
-        subj_prefix = "the exact two people from reference image 1 and image 2 together, "
+        subj_prefix = "The two people from reference image 1 and image 2 together: "
     elif has_friend_photo:
-        subj_prefix = "the exact person from the reference photo, "
+        subj_prefix = "The person from the reference photo: "
     else:
         subj_prefix = ""
 
     if mid == "ltx23":
-        expanded = (
-            f"Continuous raw footage of {subj_prefix}{clean_idea}, expressive natural facial reactions, "
-            "realistic physical momentum and ambient lighting, accompanied by matching live microphone audio, "
-            "natural voice acoustics, and crisp environmental sound effects"
-        )
+        # LTX-2.3 follows spoken dialogue much better when quoted lines are foregrounded cleanly
+        q_match = re.search(r'"([^"]{1,180})"', visual_idea)
+        if q_match:
+            spoken = q_match.group(1).strip()
+            expanded = (
+                f"{subj_prefix}{visual_idea}. "
+                f'They look expressively toward the camera with clear lip movement and speak loudly and clearly: "{spoken}". '
+                "Synchronized natural voice audio, dynamic facial expression, realistic lighting."
+            )
+        else:
+            expanded = (
+                f"{subj_prefix}{visual_idea}. "
+                "Dynamic realistic motion, expressive facial movement, natural lighting, matching synchronized audio."
+            )
     elif mode == "video":
         expanded = (
-            f"Dynamic continuous motion of {subj_prefix}{clean_idea}, natural expressive facial reactions, "
-            "realistic physics and fluid camera movement, authentic lighting"
+            f"{subj_prefix}{visual_idea}. "
+            "Smooth natural body motion, expressive facial movement, realistic physics and lighting."
         )
     elif mid in ("qwen_edit", "qwen_edit_2511") and has_friend_photo:
         expanded = (
-            f"Keep the exact facial identity of {subj_prefix or 'the subject, '}{clean_idea}, "
-            "seamless natural scene lighting, realistic shadows, authentic candid framing"
+            f"{subj_prefix}{visual_idea}. "
+            "Keep exact facial likeness, natural matching lighting and shadows."
         )
     elif mid == "illustrious_xl":
-        tag_idea = re.sub(r"\s+", " ", clean_idea).strip(" .,")
+        tag_idea = re.sub(r"\s+", " ", visual_idea).strip(" .,")
         expanded = (
-            f"masterpiece, best quality, amazing quality, very aesthetic, absurdres, detailed eyes, clean lineart, "
-            f"dynamic lighting, {tag_idea}"
+            f"masterpiece, best quality, amazing quality, very aesthetic, absurdres, "
+            f"{tag_idea}"
         )
     elif mid in ("krea2_turbo", "chroma_hd"):
         expanded = (
-            f"Ultra-detailed authentic candid photograph of {subj_prefix}{clean_idea}, "
-            "natural dramatic lighting, crisp lens focus, realistic natural skin texture and depth of field, raw editorial realism"
+            f"{subj_prefix}{visual_idea}. "
+            "Candid raw photograph, sharp focus, realistic skin texture, natural lighting."
         )
     elif is_stylized:
-        expanded = f"Dynamic stylized scene featuring {subj_prefix}{clean_idea}, bold dramatic composition and expressive timing"
+        expanded = f"{subj_prefix}{visual_idea}. Bold stylized composition, vivid lighting."
     else:
         expanded = (
-            f"Candid raw photograph of {subj_prefix}{clean_idea}, "
-            "natural unposed lighting, sharp realistic skin texture, authentic framing, zero AI gloss"
+            f"{subj_prefix}{visual_idea}. "
+            "Candid raw photograph, natural lighting, realistic skin texture, sharp focus."
         )
 
     return {

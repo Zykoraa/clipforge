@@ -291,7 +291,12 @@ fn render_simple_talk_card(app: &mut ClipForgeApp, ui: &mut egui::Ui) {
 fn render_simple_create_card(app: &mut ClipForgeApp, ui: &mut egui::Ui) {
     let is_video = app.simple_intent.is_video();
     let mode = if is_video { StudioMode::Video } else { StudioMode::Image };
-    let eff_model_id = app.resolve_auto_model_for_intent(mode, Some(app.simple_intent.as_api_intent()));
+    let eff_intent = if !is_video && app.simple_intent == SimpleIntent::Photo && app.simple_unfiltered {
+        "uncensored"
+    } else {
+        app.simple_intent.as_api_intent()
+    };
+    let eff_model_id = app.resolve_auto_model_for_intent(mode, Some(eff_intent));
     let eff_model = app.gen_status.models.get(&eff_model_id).cloned();
 
     // Clear visual banner when continuing from a previous video clip!
@@ -556,10 +561,82 @@ fn render_simple_create_card(app: &mut ClipForgeApp, ui: &mut egui::Ui) {
 
         ui.add_space(6.0);
 
+        // Unfiltered Engine Toggle on Photo mode (makes installed Chroma1-HD 1-click reachable!)
+        if app.simple_intent == SimpleIntent::Photo {
+            let chroma_ready = app
+                .gen_status
+                .models
+                .get("chroma_hd")
+                .map(|m| m.ready)
+                .unwrap_or(false);
+            if chroma_ready {
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new("Generator:").size(11.0).color(TEXT_MUTED));
+                    let fast_btn = egui::Button::new(
+                        RichText::new("⚡ Fast Everyday")
+                            .size(11.0)
+                            .color(if !app.simple_unfiltered { Color32::WHITE } else { TEXT_MUTED }),
+                    )
+                    .fill(if !app.simple_unfiltered { ACCENT_BLUE } else { BG_ELEVATED })
+                    .corner_radius(CornerRadius::same(10));
+                    if ui.add(fast_btn).on_hover_text("Fastest for normal photos & visible text").clicked() {
+                        app.simple_unfiltered = false;
+                    }
+                    let unf_btn = egui::Button::new(
+                        RichText::new("🔥 Unfiltered (No Limits)")
+                            .size(11.0)
+                            .color(if app.simple_unfiltered { Color32::WHITE } else { TEXT_MUTED }),
+                    )
+                    .fill(if app.simple_unfiltered { ACCENT_RED } else { BG_ELEVATED })
+                    .corner_radius(CornerRadius::same(10));
+                    if ui
+                        .add(unf_btn)
+                        .on_hover_text("Uses your installed open uncensored model (Chroma1-HD) — trained without content scrubbing")
+                        .clicked()
+                    {
+                        app.simple_unfiltered = true;
+                    }
+                });
+                ui.add_space(4.0);
+            }
+        }
+
+        // Video Adherence Toggle (Fast 4-step vs Full-CFG Follow Prompt Closer!)
+        if app.simple_intent == SimpleIntent::Animate {
+            ui.horizontal(|ui| {
+                ui.label(RichText::new("Quality:").size(11.0).color(TEXT_MUTED));
+                let fast_v = egui::Button::new(
+                    RichText::new("⚡ Fast (~35s)")
+                        .size(11.0)
+                        .color(if !app.simple_high_adherence { Color32::WHITE } else { TEXT_MUTED }),
+                )
+                .fill(if !app.simple_high_adherence { ACCENT_BLUE } else { BG_ELEVATED })
+                .corner_radius(CornerRadius::same(10));
+                if ui.add(fast_v).clicked() {
+                    app.simple_high_adherence = false;
+                }
+                let hq_v = egui::Button::new(
+                    RichText::new("🎯 Follow Prompt Closer (~90s)")
+                        .size(11.0)
+                        .color(if app.simple_high_adherence { Color32::WHITE } else { TEXT_MUTED }),
+                )
+                .fill(if app.simple_high_adherence { ACCENT_PURPLE } else { BG_ELEVATED })
+                .corner_radius(CornerRadius::same(10));
+                if ui
+                    .add(hq_v)
+                    .on_hover_text("Turns off the speed shortcut and runs full guidance so the video obeys your prompt much more closely")
+                    .clicked()
+                {
+                    app.simple_high_adherence = true;
+                }
+            });
+            ui.add_space(4.0);
+        }
+
         // Plain-English quality switches
         ui.horizontal_wrapped(|ui| {
-            ui.checkbox(&mut app.simple_auto_enhance, "✨ Auto-improve prompt")
-                .on_hover_text("Expands short ideas into rich visual detail automatically — never censors.");
+            ui.checkbox(&mut app.simple_auto_enhance, "✨ Auto-rewrite prompt")
+                .on_hover_text("Off = sends your exact words verbatim. On = reformats/expands your prompt.");
             if !is_video {
                 ui.checkbox(&mut app.simple_four_grid, "🎲 Make 4 options")
                     .on_hover_text("Creates 4 different versions at once so you can pick the best one.");
@@ -635,7 +712,11 @@ fn submit_simple_creation(app: &mut ClipForgeApp, is_video: bool) {
         app.push_toast("Type a quick description of what you want first.", ToastKind::Warning);
         return;
     }
-    let intent = app.simple_intent.as_api_intent();
+    let intent = if !is_video && app.simple_intent == SimpleIntent::Photo && app.simple_unfiltered {
+        "uncensored"
+    } else {
+        app.simple_intent.as_api_intent()
+    };
     let loras = app.active_loras_json();
 
     if is_video {
@@ -652,6 +733,10 @@ fn submit_simple_creation(app: &mut ClipForgeApp, is_video: bool) {
             "loras": loras,
             "add_to_timeline": false,
         });
+        if app.simple_intent == SimpleIntent::Animate && app.simple_high_adherence {
+            body["steps"] = json!(16);
+            body["cfg"] = json!(3.5);
+        }
         if let Some(pv) = app.continue_parent_video.take() {
             body["parent_video"] = json!(pv);
         }

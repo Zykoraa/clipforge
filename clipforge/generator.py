@@ -1905,27 +1905,12 @@ def build_wan22_i2v_workflow(
         cond_class = "WanFirstLastFrameToVideo"
         cond_inputs["end_image"] = ["11b", 0]
 
+    use_speed_lora = (float(cfg) <= 1.5 and total_steps <= 10)
     graph: dict[str, Any] = {
         "1": _unet_loader_node(high_unet),
         "2": _unet_loader_node(low_unet),
-        "3": {
-            "class_type": "LoraLoaderModelOnly",
-            "inputs": {
-                "model": ["1", 0],
-                "lora_name": high_lora,
-                "strength_model": 1.0,
-            },
-        },
-        "4": {
-            "class_type": "LoraLoaderModelOnly",
-            "inputs": {
-                "model": ["2", 0],
-                "lora_name": low_lora,
-                "strength_model": 1.0,
-            },
-        },
-        "5": {"class_type": "ModelSamplingSD3", "inputs": {"model": ["3", 0], "shift": 5.0}},
-        "6": {"class_type": "ModelSamplingSD3", "inputs": {"model": ["4", 0], "shift": 5.0}},
+        "5": {"class_type": "ModelSamplingSD3", "inputs": {"model": ["1", 0], "shift": 5.0}},
+        "6": {"class_type": "ModelSamplingSD3", "inputs": {"model": ["2", 0], "shift": 5.0}},
         "7": {
             "class_type": "CLIPLoader",
             "inputs": {"clip_name": "umt5_xxl_fp8_e4m3fn_scaled.safetensors", "type": "wan", "device": "default"},
@@ -1975,9 +1960,21 @@ def build_wan22_i2v_workflow(
         "16": {"class_type": "CreateVideo", "inputs": {"images": ["15", 0], "fps": float(fps)}},
         "17": {"class_type": "SaveVideo", "inputs": {"video": ["16", 0], "filename_prefix": filename_prefix, "format": "mp4"}},
     }
-    if loras:
-        graph["5"]["inputs"]["model"] = _attach_user_loras(graph, ["3", 0], loras, prefix="ulora_h")
-        graph["6"]["inputs"]["model"] = _attach_user_loras(graph, ["4", 0], loras, prefix="ulora_l")
+    high_base: list[Any] = ["1", 0]
+    low_base: list[Any] = ["2", 0]
+    if use_speed_lora:
+        graph["3"] = {
+            "class_type": "LoraLoaderModelOnly",
+            "inputs": {"model": ["1", 0], "lora_name": high_lora, "strength_model": 1.0},
+        }
+        graph["4"] = {
+            "class_type": "LoraLoaderModelOnly",
+            "inputs": {"model": ["2", 0], "lora_name": low_lora, "strength_model": 1.0},
+        }
+        high_base = ["3", 0]
+        low_base = ["4", 0]
+    graph["5"]["inputs"]["model"] = _attach_user_loras(graph, high_base, loras, prefix="ulora_h") if loras else high_base
+    graph["6"]["inputs"]["model"] = _attach_user_loras(graph, low_base, loras, prefix="ulora_l") if loras else low_base
     if end_image_filename:
         graph["11b"] = {"class_type": "LoadImage", "inputs": {"image": end_image_filename}}
     return graph
@@ -2245,7 +2242,7 @@ def build_ltx23_workflow(
     steps: int = 8,
     cfg: float = 1.0,
     seed: int = -1,
-    image_strength: float = 0.95,
+    image_strength: float = 0.78,
     filename_prefix: str = "clipforge/ltx23",
     loras: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
@@ -2702,7 +2699,7 @@ def build_chroma_workflow(
                 "steps": max(8, min(40, int(steps))),
                 "cfg": float(cfg),
                 "sampler_name": "euler",
-                "scheduler": "simple",
+                "scheduler": "beta",
                 "positive": ["5", 0],
                 "negative": ["6", 0],
                 "latent_image": ["7", 0],
