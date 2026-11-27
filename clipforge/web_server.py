@@ -1449,7 +1449,7 @@ async def api_director_expand(req: DirectorExpandRequest) -> dict[str, Any]:
         if eff_model_id == "auto":
             eff_model_id = await asyncio.to_thread(resolve_auto_model, req.mode, has_p1, has_p2)
 
-        return await asyncio.to_thread(
+        res = await asyncio.to_thread(
             expand_meme_prompt_local,
             req.idea,
             req.mode,
@@ -1463,6 +1463,10 @@ async def api_director_expand(req: DirectorExpandRequest) -> dict[str, Any]:
             req.has_end_frame,
             req.literal_mode,
         )
+        # Refresh cached director status if local LM Studio auto-started on demand
+        if str(res.get("source") or "").startswith("local_llm:"):
+            _director_status_cache["ts"] = 0.0
+        return res
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
 

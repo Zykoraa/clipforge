@@ -1007,8 +1007,16 @@ fn execute_command(base: &str, tok: &str, cmd: ApiCommand, tx: &Sender<ApiEvent>
                 Ok(v) => {
                     if let Ok(r) = serde_json::from_value::<DirectorExpandResponse>(v) {
                         let bypass = if r.refusal_bypassed { " (refusal bypassed!)" } else { "" };
-                        emit_ok(tx, format!("Enhanced prompt via {}{bypass}", r.source));
+                        let msg = if let Some(mname) = r.source.strip_prefix("local_llm:") {
+                            let short = mname.split('/').last().unwrap_or(mname);
+                            let short_lbl = if short.len() > 36 { &short[..36] } else { short };
+                            format!("✨ Rewrote prompt using local AI ({short_lbl}){bypass}")
+                        } else {
+                            format!("Expanded prompt via {}{bypass}", r.source)
+                        };
+                        emit_ok(tx, msg);
                         let _ = tx.send(ApiEvent::DirectorExpanded(r));
+                        execute_command(base, tok, ApiCommand::RefreshGenStatus, tx);
                     }
                 }
                 Err(e) => emit_err(tx, e),

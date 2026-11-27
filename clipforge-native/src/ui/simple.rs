@@ -906,7 +906,71 @@ fn render_simple_create_card(app: &mut ClipForgeApp, ui: &mut egui::Ui) {
         } else {
             "Describe what you want"
         };
-        ui.label(RichText::new(prompt_heading).size(12.5).strong());
+        let ai_brain_ready = app.gen_status.director.available || app.gen_status.director.can_auto_start_lms;
+        let expanding = app.busy_flags.contains("expand");
+        ui.horizontal(|ui| {
+            ui.label(RichText::new(prompt_heading).size(12.5).strong());
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                let btn_lbl = if expanding {
+                    "✨ Rewriting..."
+                } else if ai_brain_ready {
+                    "✨ Rewrite with AI"
+                } else {
+                    "✨ Enhance Prompt"
+                };
+                let rw_btn = egui::Button::new(
+                    RichText::new(btn_lbl)
+                        .size(11.0)
+                        .strong()
+                        .color(if expanding { TEXT_MUTED } else { Color32::WHITE }),
+                )
+                .fill(if ai_brain_ready { ACCENT_PURPLE } else { BG_ELEVATED })
+                .corner_radius(CornerRadius::same(10));
+                let tip = if ai_brain_ready {
+                    "Uses your local uncensored AI brain to understand your idea and rewrite it into the strongest prompt for this generator"
+                } else {
+                    "Rewrites your rough idea into a fuller prompt (install LM Studio or Ollama for full AI rewriting)"
+                };
+                if ui.add_enabled(!expanding, rw_btn).on_hover_text(tip).clicked() {
+                    let cur = app.prompt_input.trim().to_string();
+                    if cur.is_empty() {
+                        app.push_toast("Type a rough idea first, then click Rewrite with AI.", ToastKind::Warning);
+                    } else {
+                        let idea = if !app.last_enhanced_prompt.is_empty()
+                            && cur == app.last_enhanced_prompt
+                            && !app.raw_idea.is_empty()
+                        {
+                            app.raw_idea.clone()
+                        } else {
+                            cur.clone()
+                        };
+                        app.raw_idea = idea.clone();
+                        app.busy_flags.insert("expand".into());
+                        app.api.send(ApiCommand::DirectorExpand(json!({
+                            "idea": idea,
+                            "mode": if is_video { "video" } else { "image" },
+                            "model_id": eff_model_id,
+                            "style_preset": app.preset_id,
+                            "camera_preset": app.camera_preset,
+                            "has_friend_photo": app.ref1.is_some(),
+                            "has_second_photo": app.ref2.is_some(),
+                            "has_end_frame": app.end_frame.is_some(),
+                            "literal_mode": false,
+                        })));
+                    }
+                }
+                if !app.last_enhanced_prompt.is_empty() && !app.raw_idea.is_empty() {
+                    if ui
+                        .small_button("↩ Original")
+                        .on_hover_text("Restore your original text before AI rewrite")
+                        .clicked()
+                    {
+                        app.prompt_input = app.raw_idea.clone();
+                        app.last_enhanced_prompt.clear();
+                    }
+                }
+            });
+        });
         let hint = if app.continue_parent_video.is_some() {
             "e.g. He suddenly turns around laughing while the lights flicker and sparks fly..."
         } else {
@@ -925,6 +989,14 @@ fn render_simple_create_card(app: &mut ClipForgeApp, ui: &mut egui::Ui) {
                 .desired_width(f32::INFINITY)
                 .hint_text(hint),
         );
+        if ai_brain_ready {
+            let brain_lbl = if app.gen_status.director.has_uncensored {
+                "🧠 Local Uncensored AI Brain Ready — understands slang & rewrites for best results"
+            } else {
+                "🧠 Local AI Brain Ready — rewrites your idea for best results"
+            };
+            ui.label(RichText::new(brain_lbl).size(10.0).color(ACCENT_GREEN));
+        }
 
         ui.add_space(6.0);
 

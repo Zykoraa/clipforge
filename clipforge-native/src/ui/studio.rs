@@ -454,7 +454,7 @@ pub fn render_studio_tab(app: &mut ClipForgeApp, ui: &mut egui::Ui, ctx: &egui::
         // Director micro-bar: LLM selector + Literal toggle + 1-click Uncensored Ollama Pull
         ui.horizontal(|ui| {
             let dir = &app.gen_status.director;
-            let auto_dir_lbl = if dir.available {
+            let auto_dir_lbl = if dir.available || dir.can_auto_start_lms {
                 format!("Auto ({})", dir.recommended_model.as_deref().unwrap_or("Local LLM"))
             } else {
                 "Built-in Literal".into()

@@ -812,6 +812,10 @@ pub struct DirectorStatus {
     #[serde(default)]
     pub is_ollama: bool,
     #[serde(default)]
+    pub is_lmstudio: bool,
+    #[serde(default)]
+    pub can_auto_start_lms: bool,
+    #[serde(default)]
     pub has_uncensored: bool,
     #[serde(default)]
     pub recommended_model: Option<String>,

@@ -1313,6 +1313,53 @@ def test_uncensored_facelock_music_and_offline_speech(tmp_path: Path, monkeypatc
     assert wf_xl["1v"]["class_type"] == "VAELoader"
 
 
+def test_director_llm_scoring_and_model_prompt_guides(monkeypatch) -> None:
+    """Verify fast non-thinking uncensored LLMs outrank slow thinking models, and new model guides cover all engines."""
+    from clipforge import director
+
+    s_gemma = director._score_llm_candidate(
+        "gemma-4-12b-coder-fable5-composer2.5-v1-uncensored-heretic",
+        size_bytes=int(7.15 * 1024**3),
+        family="gemma4",
+    )
+    s_think = director._score_llm_candidate(
+        "llama3.3-8b-instruct-thinking-heretic-uncensored-claude-4.5-opus-high-reasoning-i1",
+        size_bytes=int(4.69 * 1024**3),
+        family="llama",
+    )
+    s_censored = director._score_llm_candidate(
+        "google/gemma-4-12b-qat",
+        size_bytes=int(7.15 * 1024**3),
+        family="gemma4",
+    )
+    assert s_gemma > s_think
+    assert s_gemma > s_censored
+
+    # Model-specific prompt engineering guides for new uncensored photo & video checkpoints
+    g_lust, _ = director._describe_target_for_llm("image", "lustify_sdxl", "none", None, False, False, False)
+    assert "LUSTIFY" in g_lust
+    g_pony, n_pony = director._describe_target_for_llm("image", "pony_realism", "none", None, False, False, False)
+    assert "score_9" in g_pony and "score_6" in n_pony
+    g_wan, _ = director._describe_target_for_llm("video", "wan22_remix_i2v", "none", None, True, False, False)
+    assert "Wan 2.2" in g_wan and "unfiltered" in g_wan.lower()
+
+    # Passive discovery reports can_auto_start_lms when LM Studio CLI has local models even while server is OFF
+    monkeypatch.setattr(director.httpx, "get", lambda *_a, **_k: (_ for _ in ()).throw(RuntimeError("offline")))
+    monkeypatch.setattr(
+        director,
+        "_list_lms_models",
+        lambda force=False: {
+            "gemma-4-12b-uncensored-heretic": {"size_bytes": int(7.1 * 1024**3), "family": "gemma4"},
+        },
+    )
+    st = director.discover_local_llm(auto_start=False)
+    assert st["available"] is False
+    assert st["can_auto_start_lms"] is True
+    assert st["has_uncensored"] is True
+    assert st["recommended_model"] == "gemma-4-12b-uncensored-heretic"
+
+
+
 
 
 

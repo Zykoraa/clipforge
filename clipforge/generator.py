@@ -3690,6 +3690,14 @@ def _execute_comfyui_workflow(
     cancel_event: threading.Event | None = None,
 ) -> tuple[str, dict[str, str], float]:
     """Queue workflow, stream live step progress + latent previews over WebSocket, and support instant cancellation."""
+    # Ensure any LM Studio LLM loaded for Prompt Enhance / Songwriting releases GPU VRAM before diffusion runs
+    try:
+        from .director import unload_lmstudio_models
+
+        unload_lmstudio_models()
+    except Exception:
+        pass
+
     client_id = f"clipforge_{uuid.uuid4().hex[:8]}"
     t0 = time.perf_counter()
 
