@@ -3127,6 +3127,50 @@ def build_illustrious_xl_workflow(
     return graph
 
 
+def normalize_ace_lyrics(lyrics: str, instrumental: bool = False) -> str:
+    """Format lyrics with clean ACE-Step 1.5 section markers without dropping or censoring any word."""
+    if instrumental:
+        return "[Instrumental]"
+    raw = (lyrics or "").replace("\r\n", "\n").strip()
+    if not raw:
+        return "[Instrumental]"
+    if "[" in raw and "]" in raw:
+        return raw
+    # Split blank-line stanzas and add [Verse]/[Chorus] headers so ACE-Step's temporal tracker sings EVERY line
+    blocks = [b.strip() for b in raw.split("\n\n") if b.strip()]
+    if len(blocks) == 1:
+        lines = [ln.strip() for ln in blocks[0].splitlines() if ln.strip()]
+        if len(lines) <= 6:
+            return "[Verse 1]\n" + "\n".join(lines)
+        chunks = [lines[i : i + 4] for i in range(0, len(lines), 4)]
+        out_parts: list[str] = []
+        for idx, ch in enumerate(chunks):
+            hdr = "[Chorus]" if idx == 1 else f"[Verse {idx + 1 if idx == 0 else idx}]"
+            out_parts.append(f"{hdr}\n" + "\n".join(ch))
+        return "\n\n".join(out_parts)
+    out_parts = []
+    for idx, blk in enumerate(blocks):
+        hdr = "[Chorus]" if (idx == 1 and len(blocks) >= 2) else f"[Verse {idx + 1}]"
+        out_parts.append(f"{hdr}\n{blk}")
+    return "\n\n".join(out_parts)
+
+
+def estimate_lyrics_duration_sec(lyrics: str, bpm: int = 120, requested_sec: float = 60.0) -> float:
+    """Ensure ACE-Step 1.5 gets enough duration so it sings EVERY line of custom lyrics instead of dropping verses."""
+    clean = (lyrics or "").strip()
+    if not clean or clean.lower() == "[instrumental]":
+        return max(15.0, min(210.0, float(requested_sec)))
+    lyric_lines = [ln.strip() for ln in clean.splitlines() if ln.strip() and not ln.strip().startswith("[")]
+    word_count = sum(len(ln.split()) for ln in lyric_lines)
+    section_count = sum(1 for ln in clean.splitlines() if ln.strip().startswith("["))
+    # Tempo-adjusted singing rate (words per second) + intro/outro/section breathing room
+    wps = 2.0 if bpm < 95 else (2.4 if bpm < 125 else 2.8)
+    needed = (word_count / wps) + 10.0 + (section_count * 2.5)
+    # Snap up to nearest 5s, never shorter than requested_sec, capped at 210s
+    fitted = math.ceil(max(float(requested_sec), needed) / 5.0) * 5.0
+    return max(15.0, min(210.0, float(fitted)))
+
+
 def build_ace_step_music_workflow(
     tags: str,
     lyrics: str = "",
@@ -3135,6 +3179,7 @@ def build_ace_step_music_workflow(
     keyscale: str = "C major",
     language: str = "en",
     instrumental: bool = False,
+    strict_lyrics: bool = False,
     steps: int = 8,
     cfg: float = 1.0,
     seed: int = -1,
@@ -3142,16 +3187,17 @@ def build_ace_step_music_workflow(
     ckpt_name: str = "ace_step_1.5_turbo_aio.safetensors",
 ) -> dict[str, Any]:
     """Official native ComfyUI ACE-Step 1.5 Turbo AIO full-song generator (vocals + lyrics OR pure instrumental)."""
-    dur = max(10.0, min(240.0, float(duration_sec)))
     eff_bpm = max(50, min(220, int(bpm)))
+    clean_lyrics = normalize_ace_lyrics(lyrics, instrumental=instrumental)
+    dur = estimate_lyrics_duration_sec(clean_lyrics, bpm=eff_bpm, requested_sec=duration_sec)
     actual_seed = random.randint(1, 2**31 - 1) if seed < 0 else int(seed)
     clean_tags = (tags or "").strip() or "upbeat modern pop, catchy synth hook, crisp drums, studio mix"
-    if instrumental:
-        clean_lyrics = "[Instrumental]"
-        if "instrumental" not in clean_tags.lower():
-            clean_tags = f"{clean_tags}, instrumental, no vocals"
-    else:
-        clean_lyrics = (lyrics or "").strip() or "[Instrumental]"
+    if instrumental and "instrumental" not in clean_tags.lower():
+        clean_tags = f"{clean_tags}, instrumental, no vocals"
+
+    # Tighter LM adherence (cfg_scale=2.6, temp=0.72) keeps every line on-script;
+    # strict_lyrics=True disables Qwen3 LM planner so explicit/profane words are NEVER skipped or sanitized!
+    use_audio_codes = not bool(strict_lyrics)
 
     return {
         "1": {"class_type": "CheckpointLoaderSimple", "inputs": {"ckpt_name": ckpt_name}},
@@ -3168,9 +3214,9 @@ def build_ace_step_music_workflow(
                 "timesignature": "4",
                 "language": (language or "en").strip().lower(),
                 "keyscale": keyscale or "C major",
-                "generate_audio_codes": True,
-                "cfg_scale": 2.0,
-                "temperature": 0.85,
+                "generate_audio_codes": use_audio_codes,
+                "cfg_scale": 2.6,
+                "temperature": 0.72,
                 "top_p": 0.9,
                 "top_k": 0,
                 "min_p": 0.0,
@@ -4189,6 +4235,7 @@ def generate_music_via_comfyui(
     lyrics: str = "",
     title: str = "",
     instrumental: bool = False,
+    strict_lyrics: bool = False,
     duration_sec: float = 45.0,
     bpm: int = 120,
     keyscale: str = "C major",
@@ -4224,17 +4271,19 @@ def generate_music_via_comfyui(
 
     run_id = uuid.uuid4().hex[:8]
     actual_seed = random.randint(1, 2**31 - 1) if seed < 0 else int(seed)
-    dur = max(10.0, min(240.0, float(duration_sec)))
+    clean_lyrics = normalize_ace_lyrics(lyrics, instrumental=instrumental)
+    dur = estimate_lyrics_duration_sec(clean_lyrics, bpm=int(bpm), requested_sec=duration_sec)
     ckpt_name = _resolve_model_slot_filename("ace_step_music", 0, comfy_dir)
 
     wf = build_ace_step_music_workflow(
         tags=tags,
-        lyrics=lyrics,
+        lyrics=clean_lyrics,
         duration_sec=dur,
         bpm=bpm,
         keyscale=keyscale,
         language=language,
         instrumental=instrumental,
+        strict_lyrics=strict_lyrics,
         steps=steps,
         cfg=cfg,
         seed=actual_seed,

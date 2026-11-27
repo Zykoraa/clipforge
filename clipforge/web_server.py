@@ -522,6 +522,7 @@ class FaceSwapRequest(BaseModel):
 class PlanSongRequest(BaseModel):
     idea: str
     instrumental: bool = False
+    explicit: bool = True
     variations: int = 2
     duration_sec: float = 60.0
     custom_style: str = ""
@@ -535,6 +536,8 @@ class GenerateMusicRequest(BaseModel):
     lyrics: str = ""
     title: str = ""
     instrumental: bool = False
+    explicit: bool = True
+    strict_lyrics: bool = False
     variations: int = 2
     duration_sec: float = 60.0
     bpm: int | None = None
@@ -2030,12 +2033,13 @@ async def api_delete_generated_audio(filename: str) -> dict[str, Any]:
 @app.post("/api/music/plan")
 async def api_plan_song(req: PlanSongRequest) -> dict[str, Any]:
     """Turn a rough 1-line song idea into ready-to-edit title, style tags, BPM, and structured lyrics (Suno-style)."""
-    if not (req.idea or "").strip() and not (req.custom_style or "").strip():
+    if not (req.idea or "").strip() and not (req.custom_style or "").strip() and not (req.custom_lyrics or "").strip():
         raise HTTPException(status_code=400, detail="Enter a rough song idea first.")
     return await asyncio.to_thread(
         plan_song_from_idea,
         idea=req.idea,
         instrumental=req.instrumental,
+        explicit=req.explicit,
         variations=req.variations,
         duration_sec=req.duration_sec,
         custom_style=req.custom_style,
@@ -2049,8 +2053,9 @@ async def api_generate_music(req: GenerateMusicRequest) -> dict[str, Any]:
     """Suno-style offline music generator: pass EITHER a rough 1-line `idea` OR custom `tags`/`lyrics` and get 1-4 distinct full songs."""
     idea_clean = (req.idea or "").strip()
     tags_clean = (req.tags or "").strip()
-    if not idea_clean and not tags_clean:
-        raise HTTPException(status_code=400, detail="Describe a song idea (or music style) first.")
+    lyrics_clean = (req.lyrics or "").strip()
+    if not idea_clean and not tags_clean and not lyrics_clean:
+        raise HTTPException(status_code=400, detail="Describe a song idea, style, or lyrics first.")
 
     avail = await asyncio.to_thread(get_model_availability)
     if not avail.get("ace_step_music", {}).get("ready"):
@@ -2061,7 +2066,7 @@ async def api_generate_music(req: GenerateMusicRequest) -> dict[str, Any]:
         )
 
     num_takes = max(1, min(4, int(req.variations or 1)))
-    display_label = (req.title or "").strip() or (idea_clean or tags_clean)[:50]
+    display_label = (req.title or "").strip() or (idea_clean or tags_clean or lyrics_clean)[:50]
     job = job_manager.create(kind="audio", model="ace_step_music", prompt=f"🎵 {display_label}")
 
     async def _run_music_job() -> None:
@@ -2074,12 +2079,13 @@ async def api_generate_music(req: GenerateMusicRequest) -> dict[str, Any]:
         try:
             plan = await asyncio.to_thread(
                 plan_song_from_idea,
-                idea=idea_clean or tags_clean,
+                idea=idea_clean,
                 instrumental=req.instrumental,
+                explicit=req.explicit,
                 variations=num_takes,
                 duration_sec=req.duration_sec,
                 custom_style=tags_clean,
-                custom_lyrics=req.lyrics,
+                custom_lyrics=lyrics_clean,
                 custom_bpm=req.bpm,
             )
             takes = plan.get("takes") or []
@@ -2112,6 +2118,7 @@ async def api_generate_music(req: GenerateMusicRequest) -> dict[str, Any]:
                     lyrics=tk["lyrics"],
                     title=take_title,
                     instrumental=req.instrumental,
+                    strict_lyrics=req.strict_lyrics,
                     duration_sec=req.duration_sec,
                     bpm=int(tk["bpm"]),
                     keyscale=req.keyscale.strip() or tk.get("keyscale", "C major"),

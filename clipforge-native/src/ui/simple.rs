@@ -404,10 +404,14 @@ fn render_simple_music_card(app: &mut ClipForgeApp, ui: &mut egui::Ui) {
             );
             ui.add_space(6.0);
             ui.horizontal_wrapped(|ui| {
+                ui.checkbox(&mut app.music_explicit, "🔥 Explicit / Uncensored")
+                    .on_hover_text("Allows cussing, raw profanity, and unfiltered lyrics");
                 ui.checkbox(&mut app.music_two_takes, "🎲 Make 2 different versions")
                     .on_hover_text("Generates 2 distinct songs with different beats & arrangements just like Suno");
                 ui.checkbox(&mut app.music_instrumental, "🎹 Instrumental only");
             });
+            ui.checkbox(&mut app.music_strict_lyrics, "🎯 Never skip / censor vocals")
+                .on_hover_text("Bypasses the built-in planner filter so every explicit word & lyric line is sung directly");
             ui.add_space(4.0);
             ui.horizontal(|ui| {
                 let planning = app.busy_flags.contains("plan_song");
@@ -424,6 +428,7 @@ fn render_simple_music_card(app: &mut ClipForgeApp, ui: &mut egui::Ui) {
                         app.api.send(ApiCommand::PlanSong(json!({
                             "idea": idea,
                             "instrumental": app.music_instrumental,
+                            "explicit": app.music_explicit,
                             "variations": 2,
                             "duration_sec": app.music_duration_sec,
                         })));
@@ -495,7 +500,12 @@ fn render_simple_music_card(app: &mut ClipForgeApp, ui: &mut egui::Ui) {
                         .hint_text("Auto-titled if blank"),
                 );
             });
-            ui.checkbox(&mut app.music_two_takes, "🎲 Make 2 different versions");
+            ui.horizontal_wrapped(|ui| {
+                ui.checkbox(&mut app.music_two_takes, "🎲 Make 2 different versions");
+                ui.checkbox(&mut app.music_explicit, "🔥 Explicit / Uncensored");
+            });
+            ui.checkbox(&mut app.music_strict_lyrics, "🎯 Sing every exact line (no skips / no censoring)")
+                .on_hover_text("Auto-extends song length to fit all your lyrics and bypasses the planner filter so explicit lines aren't skipped");
         }
 
         ui.add_space(8.0);
@@ -538,6 +548,8 @@ fn render_simple_music_card(app: &mut ClipForgeApp, ui: &mut egui::Ui) {
                     app.api.send(ApiCommand::GenerateMusic(json!({
                         "idea": idea,
                         "instrumental": app.music_instrumental,
+                        "explicit": app.music_explicit,
+                        "strict_lyrics": app.music_strict_lyrics,
                         "variations": variations,
                         "duration_sec": app.music_duration_sec,
                         "add_to_timeline": false,
@@ -555,6 +567,8 @@ fn render_simple_music_card(app: &mut ClipForgeApp, ui: &mut egui::Ui) {
                         "lyrics": app.music_lyrics.trim(),
                         "title": app.music_title.trim(),
                         "instrumental": app.music_instrumental,
+                        "explicit": app.music_explicit,
+                        "strict_lyrics": app.music_strict_lyrics,
                         "variations": variations,
                         "duration_sec": app.music_duration_sec,
                         "bpm": app.music_bpm,

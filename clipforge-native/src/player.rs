@@ -584,51 +584,66 @@ fn decode_single_video_frame(path: &str, sec: f64, w: u32, h: u32) -> Option<Col
     ))
 }
 
-fn spawn_audio_only_stream(path_a: String, start_sec: f64, remaining_sec: f64, stop_a: Arc<AtomicBool>) {
-    std::thread::spawn(move || {
-        let mut cmd = Command::new("ffmpeg");
-        cmd.args([
-            "-hide_banner",
-            "-loglevel",
-            "error",
-            "-ss",
-            &format!("{start_sec:.3}"),
-            "-t",
-            &format!("{remaining_sec:.3}"),
-            "-i",
-            &path_a,
-            "-vn",
-            "-ar",
-            "44100",
-            "-ac",
-            "2",
-            "-f",
-            "wav",
-            "-",
-        ])
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null());
-        #[cfg(windows)]
-        cmd.creation_flags(0x0800_0000);
+fn play_pcm_audio(path_a: &str, start_sec: f64, remaining_sec: f64, vol: f32, stop_a: &Arc<AtomicBool>) {
+    // Pipe raw signed 16-bit stereo PCM (s16le) directly into rodio::SamplesBuffer.
+    // Avoids piped WAV 0xFFFFFFFF RIFF-size failures in hound/rodio::Decoder::new_wav!
+    let mut cmd = Command::new("ffmpeg");
+    cmd.args([
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-ss",
+        &format!("{start_sec:.3}"),
+        "-t",
+        &format!("{remaining_sec:.3}"),
+        "-i",
+        path_a,
+        "-vn",
+        "-ar",
+        "44100",
+        "-ac",
+        "2",
+        "-f",
+        "s16le",
+        "-acodec",
+        "pcm_s16le",
+        "-",
+    ])
+    .stdin(Stdio::null())
+    .stdout(Stdio::piped())
+    .stderr(Stdio::null());
+    #[cfg(windows)]
+    cmd.creation_flags(0x0800_0000);
 
-        if let Ok(out) = cmd.output() {
-            if stop_a.load(Ordering::Relaxed) || out.stdout.len() < 64 {
-                return;
-            }
-            if let Ok((_stream, handle)) = rodio::OutputStream::try_default() {
-                if let Ok(sink) = rodio::Sink::try_new(&handle) {
-                    sink.set_volume(1.0);
-                    if let Ok(src) = rodio::Decoder::new_wav(std::io::Cursor::new(out.stdout)) {
-                        sink.append(src);
-                        while !sink.empty() && !stop_a.load(Ordering::Relaxed) {
-                            std::thread::sleep(Duration::from_millis(25));
-                        }
-                        sink.stop();
-                    }
+    if let Ok(out) = cmd.output() {
+        if stop_a.load(Ordering::Relaxed) || out.stdout.len() < 4 {
+            return;
+        }
+        let samples: Vec<i16> = out
+            .stdout
+            .chunks_exact(2)
+            .map(|c| i16::from_le_bytes([c[0], c[1]]))
+            .collect();
+        if samples.is_empty() {
+            return;
+        }
+        if let Ok((_stream, handle)) = rodio::OutputStream::try_default() {
+            if let Ok(sink) = rodio::Sink::try_new(&handle) {
+                sink.set_volume(vol);
+                let src = rodio::buffer::SamplesBuffer::new(2, 44100, samples);
+                sink.append(src);
+                while !sink.empty() && !stop_a.load(Ordering::Relaxed) {
+                    std::thread::sleep(Duration::from_millis(25));
                 }
+                sink.stop();
             }
         }
+    }
+}
+
+fn spawn_audio_only_stream(path_a: String, start_sec: f64, remaining_sec: f64, stop_a: Arc<AtomicBool>) {
+    std::thread::spawn(move || {
+        play_pcm_audio(&path_a, start_sec, remaining_sec, 1.0, &stop_a);
         stop_a.store(true, Ordering::SeqCst);
     });
 }
@@ -648,55 +663,14 @@ fn spawn_playback_stream(
     let speed = clip.speed.clamp(0.25, 4.0);
     let clip_remaining = ((clip.out_sec - start_sec).max(0.05)) / speed;
 
-    // Audio stream thread (native WASAPI/ALSA via rodio)
+    // Audio stream thread (native WASAPI/ALSA via rodio PCM SamplesBuffer)
     if media.has_audio && !clip.muted && clip.volume > 0.01 {
         let path_a = media.path.clone();
         let stop_a = Arc::clone(&stop_flag);
         let vol = clip.volume.clamp(0.0, 2.0) as f32;
+        let rem = (clip.out_sec - start_sec).max(0.05);
         std::thread::spawn(move || {
-            let mut cmd = Command::new("ffmpeg");
-            cmd.args([
-                "-hide_banner",
-                "-loglevel",
-                "error",
-                "-ss",
-                &format!("{start_sec:.3}"),
-                "-t",
-                &format!("{:.3}", (clip.out_sec - start_sec).max(0.05)),
-                "-i",
-                &path_a,
-                "-vn",
-                "-ar",
-                "44100",
-                "-ac",
-                "2",
-                "-f",
-                "wav",
-                "-",
-            ])
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null());
-            #[cfg(windows)]
-            cmd.creation_flags(0x0800_0000);
-
-            if let Ok(out) = cmd.output() {
-                if stop_a.load(Ordering::Relaxed) || out.stdout.len() < 64 {
-                    return;
-                }
-                if let Ok((_stream, handle)) = rodio::OutputStream::try_default() {
-                    if let Ok(sink) = rodio::Sink::try_new(&handle) {
-                        sink.set_volume(vol);
-                        if let Ok(src) = rodio::Decoder::new_wav(std::io::Cursor::new(out.stdout)) {
-                            sink.append(src);
-                            while !sink.empty() && !stop_a.load(Ordering::Relaxed) {
-                                std::thread::sleep(Duration::from_millis(25));
-                            }
-                            sink.stop();
-                        }
-                    }
-                }
-            }
+            play_pcm_audio(&path_a, start_sec, rem, vol, &stop_a);
         });
     }
 

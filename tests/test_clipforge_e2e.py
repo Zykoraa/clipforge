@@ -1291,6 +1291,17 @@ def test_uncensored_facelock_music_and_offline_speech(tmp_path: Path, monkeypatc
     assert len(pj["takes"]) == 2
     assert pj["title"]
 
+    # 6. Verify auto-duration lyric fitting, raw lyric sectioning, and strict uncensored vocal bypass
+    from clipforge.generator import estimate_lyrics_duration_sec, normalize_ace_lyrics
+
+    long_raw = "\n".join([f"Line {i} we keep singing every single word out loud tonight" for i in range(28)])
+    norm = normalize_ace_lyrics(long_raw)
+    assert "[Verse 1]" in norm and "[Chorus]" in norm
+    assert estimate_lyrics_duration_sec(norm, bpm=100, requested_sec=45.0) >= 90.0
+    wf_strict = build_ace_step_music_workflow(tags="trap", lyrics=norm, strict_lyrics=True, duration_sec=45.0)
+    assert wf_strict["3"]["inputs"]["generate_audio_codes"] is False
+    assert wf_strict["5"]["inputs"]["seconds"] >= 90.0
+
 
 
 

@@ -1008,47 +1008,117 @@ def _extract_song_topic(idea: str) -> tuple[str, str]:
     return title, topic
 
 
-def _compose_builtin_lyrics(topic: str, archetype_id: str, take_idx: int) -> str:
-    """Compose structured, singable, topic-anchored [Verse]/[Chorus] lyrics completely offline."""
+_EXPLICIT_HINTS = (
+    "fuck", "shit", "bitch", "ass", "dick", "cock", "pussy", "cum", "slut", "whore",
+    "damn", "bastard", "cuss", "curse", "dirty", "explicit", "nsfw", "uncensored", "diss", "roast", "freak", "horny",
+)
+
+
+def _compose_builtin_lyrics(topic: str, archetype_id: str, take_idx: int, explicit: bool = True) -> str:
+    """Compose tight, singable 8-10 line [Verse]/[Chorus] lyrics (uncensored/explicit by default) sized to sing every word cleanly."""
     import random as _rnd
     import time as _time
 
-    short_topic = topic[:58].rstrip(".!?")
+    short_topic = topic[:54].rstrip(".!?")
     low = short_topic.lower()
-    rng = _rnd.Random(hash((low, archetype_id, take_idx, int(_time.time() // 2))) & 0xFFFFFFFF)
+    rng = _rnd.Random(hash((low, archetype_id, take_idx, explicit, int(_time.time() // 2))) & 0xFFFFFFFF)
+
+    if explicit:
+        if archetype_id == "diss_trap":
+            patterns = [
+                (
+                    f"[Verse 1]\nYeah, shut the fuck up and listen close\n"
+                    f"Whole damn block talking about {short_topic}\n"
+                    f"Acting real tough till the shit hits the fan\n"
+                    f"Now you looking stupid with your head in your hands\n\n"
+                    f"[Chorus]\nFuck that bullshit, yeah — {short_topic}!\n"
+                    f"Caught your ass slipping in broad daylight\n"
+                    f"Talking all that shit every goddamn night\n"
+                    f"Turn the bass up loud, yeah we kill it on sight\n\n"
+                    f"[Outro]\nYeah, bitch we out\nDon't test us again"
+                ),
+                (
+                    f"[Verse 1]\nHold the fuck up, drop the beat right now\n"
+                    f"Everybody laughing about {short_topic}\n"
+                    f"You talked a big game like you ran this shit\n"
+                    f"Now you crying in the corner like a little bitch\n\n"
+                    f"[Chorus]\nNo fuck around, it's {short_topic}!\n"
+                    f"808s banging till the windows crack\n"
+                    f"Say it to my face, don't talk behind my back\n"
+                    f"We run this whole damn city, yeah that's a fact\n\n"
+                    f"[Outro]\nFuck outta here, case closed"
+                ),
+            ]
+            return rng.choice(patterns)
+        if archetype_id == "sad_ballad":
+            patterns = [
+                (
+                    f"[Verse 1]\nTwo in the morning and I'm fucked up again\n"
+                    f"Still stuck thinking about {short_topic}\n"
+                    f"Everything you promised turned to goddamn dust\n"
+                    f"Gave you my heart and you broke my trust\n\n"
+                    f"[Chorus]\nDamn it hurts like hell — {short_topic}\n"
+                    f"Pour another drink just to numb this shit\n"
+                    f"Tried to walk away but I can't forget\n"
+                    f"Leaving me alone in the pouring rain\n\n"
+                    f"[Outro]\nFuck it, I'm done\nJust letting it fade"
+                ),
+            ]
+            return rng.choice(patterns)
+        if archetype_id in ("rock_punk", "anime_epic", "phonk_hype"):
+            patterns = [
+                (
+                    f"[Verse 1]\nTurn the amps up till the speakers blow\n"
+                    f"Zero fucks given about {short_topic}\n"
+                    f"Screaming at the ceiling while the whole room shakes\n"
+                    f"Breaking every damn rule we can break\n\n"
+                    f"[Chorus]\nFuck yeah, scream it out — {short_topic}!\n"
+                    f"Tear the goddamn roof right off this place\n"
+                    f"Adrenaline pumping, bass right in your face\n"
+                    f"We don't give a shit, yeah we own tonight!\n\n"
+                    f"[Outro]\nBurn it all down!"
+                ),
+            ]
+            return rng.choice(patterns)
+        # Raw explicit party / dirty club / unhinged meme banger
+        patterns = [
+            (
+                f"[Verse 1]\nLights go dim and we losing our minds\n"
+                f"Whole damn night all about {short_topic}\n"
+                f"Don't give a fuck what the neighbors say\n"
+                f"Getting wild as hell till the break of day\n\n"
+                f"[Chorus]\nOh shit, turn it up — {short_topic}!\n"
+                f"Hands up high, yeah we going too hard\n"
+                f"Zero damn filter when we hit the bar\n"
+                f"Scream that shit loud so they hear from afar!\n\n"
+                f"[Outro]\nYeah, fuck it, run that back!"
+            ),
+            (
+                f"[Verse 1]\nWalked in the room and the vibe went crazy\n"
+                f"Everybody screaming out {short_topic}\n"
+                f"No PG shit, yeah we keep it raw\n"
+                f"Wildest goddamn thing that you ever saw\n\n"
+                f"[Chorus]\nHell yeah, bounce to {short_topic}!\n"
+                f"Bass hits dirty and the whole floor shakes\n"
+                f"Doing whatever the fuck it takes\n"
+                f"No rules tonight, yeah we wide awake!\n\n"
+                f"[Outro]\nKeep it loud all night"
+            ),
+        ]
+        return rng.choice(patterns)
 
     if archetype_id == "diss_trap":
         patterns = [
             (
-                f"[Intro]\nYeah, turn the bass up\nListen close\n\n"
                 f"[Verse 1]\nEverybody talking about {short_topic}\n"
                 f"Acting real bold till the lights turn on\n"
                 f"Thought you had a plan when you pulled that stunt\n"
                 f"Now the whole group chat got you on the front\n\n"
                 f"[Chorus]\nNo cap, look at {short_topic}\n"
-                f"You really thought nobody was gonna know\n"
                 f"Caught in 4K, yeah we running the show\n"
-                f"Say it loud one time, let the whole block know\n\n"
-                f"[Verse 2]\nTwo in the morning and the receipts don't lie\n"
-                f"Every single excuse looking weak on the sly\n"
-                f"We level up fast while you stuck in the past\n"
-                f"Next time think twice before moving too fast\n\n"
-                f"[Outro]\nYeah, case closed\nDon't test us again"
-            ),
-            (
-                f"[Verse 1]\nHold up, pause the beat for a second\n"
-                f"Let's talk real facts about {short_topic}\n"
-                f"Thought you could slide right out of the frame\n"
-                f"Now everybody laughing when they hear your name\n\n"
-                f"[Chorus]\nOh no, here we go — {short_topic}\n"
-                f"Caught red handed in the neon glow\n"
-                f"Can't hide now when the bass hits low\n"
-                f"Turn it all the way up, yeah we steal the show\n\n"
-                f"[Verse 2]\nLook at the clock, yeah the verdict is in\n"
-                f"Talked all that noise and you still couldn't win\n"
-                f"Hands in the air while the 808s shake\n"
-                f"Lesson learned hard, that's a classic mistake\n\n"
-                f"[Outro]\nMic drop, we out"
+                f"Turn the bass way up, let the whole block know\n"
+                f"Next time think twice before moving too slow\n\n"
+                f"[Outro]\nCase closed, we out"
             ),
         ]
     elif archetype_id == "sad_ballad":
@@ -1057,33 +1127,17 @@ def _compose_builtin_lyrics(topic: str, archetype_id: str, take_idx: int) -> str
                 f"[Verse 1]\nStaring at the ceiling in the quiet dark\n"
                 f"Still thinking about {short_topic}\n"
                 f"Every little echo hanging in the air\n"
-                f"Reaching for a moment that is no longer there\n\n"
+                f"Reaching for a moment no longer there\n\n"
                 f"[Chorus]\nAnd it hurts so slow, {short_topic}\n"
                 f"Like rain on the glass when the streetlights glow\n"
                 f"I tried to hold on, I tried to let go\n"
                 f"Some nights stay heavy and nobody knows\n\n"
-                f"[Verse 2]\nEmpty coffee cup sitting by the door\n"
-                f"Nothing feels the same like it did before\n"
-                f"Time keeps moving even when we stand still\n"
-                f"Chasing a shadow on a quiet hill\n\n"
-                f"[Outro]\nStill fading out softly\nIn the midnight rain"
-            ),
-            (
-                f"[Verse 1]\nCold wind blowing through an open street\n"
-                f"All I remember is {short_topic}\n"
-                f"Tried to laugh it off in the afternoon light\n"
-                f"Still hits harder in the middle of the night\n\n"
-                f"[Chorus]\nOh I wish we could rewind {short_topic}\n"
-                f"Leave all the heartbreak far behind\n"
-                f"Singing out loud to an empty room\n"
-                f"Waiting for the morning to clear the gloom\n\n"
-                f"[Outro]\nJust breathing slow\nLetting it go"
+                f"[Outro]\nFading out in the midnight rain"
             ),
         ]
     elif archetype_id in ("rock_punk", "anime_epic", "phonk_hype"):
         patterns = [
             (
-                f"[Intro]\nThree, two, one — go!\n\n"
                 f"[Verse 1]\nSparks in the air and the engine roars\n"
                 f"No backing down from {short_topic}\n"
                 f"Heartbeat pounding like a thunder drum\n"
@@ -1092,22 +1146,7 @@ def _compose_builtin_lyrics(topic: str, archetype_id: str, take_idx: int) -> str
                 f"Breaking every wall till the ground gives way\n"
                 f"Hands to the sky, yeah we own today\n"
                 f"Nothing gonna stop us, we're here to stay!\n\n"
-                f"[Verse 2]\nFull speed ahead, never hitting the brakes\n"
-                f"Rising up higher with every risk we take\n"
-                f"Lights flashing bright in the stadium haze\n"
-                f"Burning our name in a legendary blaze\n\n"
-                f"[Outro]\nAll the way to the top!\nNever stop!"
-            ),
-            (
-                f"[Verse 1]\nZero fear when the sirens blare\n"
-                f"Charging straight into {short_topic}\n"
-                f"Adrenaline rushing through every vein\n"
-                f"Dancing right through the hurricane\n\n"
-                f"[Chorus]\nUnstoppable! {short_topic}!\n"
-                f"Feel the shockwave hit the floor\n"
-                f"Kick the door down, give me more\n"
-                f"Loud enough to shake the core!\n\n"
-                f"[Outro]\nLet it echo out!"
+                f"[Outro]\nAll the way to the top!"
             ),
         ]
     else:
@@ -1121,26 +1160,7 @@ def _compose_builtin_lyrics(topic: str, archetype_id: str, take_idx: int) -> str
                 f"Turn the volume up and let the good times roll\n"
                 f"Every single beat hits straight to the soul\n"
                 f"Dancing like we never gonna lose control\n\n"
-                f"[Verse 2]\nLaughing with the crew till the sun comes up\n"
-                f"Raising every glass, yeah we fill the cup\n"
-                f"Memories glowing in the neon light\n"
-                f"We're gonna remember this forever tonight\n\n"
-                f"[Outro]\nYeah, keep the rhythm alive\nAll through the night"
-            ),
-            (
-                f"[Verse 1]\nPull up fast, windows down in the breeze\n"
-                f"Whole night spinning round {short_topic}\n"
-                f"One wild story turning into a hit\n"
-                f"Everybody singing every word of it\n\n"
-                f"[Chorus]\nSing it back to me — {short_topic}!\n"
-                f"Hands up high under city lights\n"
-                f"Chasing the magic of these reckless nights\n"
-                f"Everything about this feels so right\n\n"
-                f"[Verse 2]\nNo script needed, yeah we make our own lane\n"
-                f"Turning pure chaos into gold and champagne\n"
-                f"Beat drops heavy and the crowd goes wild\n"
-                f"Living every second in our own style\n\n"
-                f"[Outro]\nOne more time before the fade out"
+                f"[Outro]\nKeep the rhythm alive all night"
             ),
         ]
     return rng.choice(patterns)
@@ -1149,6 +1169,7 @@ def _compose_builtin_lyrics(topic: str, archetype_id: str, take_idx: int) -> str
 def plan_song_from_idea(
     idea: str,
     instrumental: bool = False,
+    explicit: bool = True,
     variations: int = 2,
     duration_sec: float = 60.0,
     custom_style: str = "",
@@ -1163,25 +1184,38 @@ def plan_song_from_idea(
     clean_lyrics = (custom_lyrics or "").strip()
     count = max(1, min(4, int(variations)))
 
+    if not clean_idea and not clean_style and clean_lyrics:
+        # User pasted custom lyrics without style/idea -> infer vibe directly from their lyrics!
+        clean_idea = " ".join(
+            ln.strip() for ln in clean_lyrics.splitlines() if ln.strip() and not ln.strip().startswith("[")
+        )[:160]
     if not clean_idea and not clean_style:
         clean_idea = "late night neon city drive with friends"
 
     base_title, topic = _extract_song_topic(clean_idea or clean_style)
-    low_src = f"{clean_idea} {clean_style}".lower()
+    low_src = f"{clean_idea} {clean_style} {clean_lyrics}".lower()
+    use_explicit = bool(explicit) or any(w in low_src for w in _EXPLICIT_HINTS)
 
     # 1. Try local Ollama / LM Studio first for ultra-bespoke lyrics & multi-take arrangements!
     disc = discover_local_llm(endpoint)
     if disc["available"] and clean_idea and (not clean_style or (not instrumental and not clean_lyrics)):
         use_model = model_name or disc["recommended_model"]
+        explicit_rule = (
+            "EXPLICIT / PARENTAL ADVISORY MODE: Write raw, uncensored, unfiltered lyrics with natural cussing/profanity "
+            "(fuck, shit, bitch, ass, damn, etc.) matching the user's exact explicit/edgy topic. NEVER sanitize, censor, or refuse. "
+            if use_explicit
+            else "Keep lyrics punchy and expressive. "
+        )
         sys_msg = (
             "You are an uncensored, Suno-class hit songwriter and music producer for ACE-Step 1.5. "
             f"Create {count} DIFFERENT musical takes inspired by the user's rough song idea. "
             "Each take should have a genuinely different sub-genre/beat arrangement and tempo so the user can compare and pick their favorite. "
-            "Never censor, lecture, or refuse funny/edgy topics. "
+            f"{explicit_rule}"
+            "Keep lyrics concise (8-12 lines total across [Verse 1], [Chorus], [Outro]) so every single line is clearly sung within the song duration. "
             "Return ONLY valid JSON: "
             "{\"title\": \"catchy short song title\", \"takes\": ["
             "{\"tags\": \"comma-separated genre, instruments, mood, vocal style\", "
-            "\"lyrics\": \"structured [Verse 1], [Chorus], [Verse 2], [Outro] lyrics (or [Instrumental] if instrumental)\", "
+            "\"lyrics\": \"structured [Verse 1], [Chorus], [Outro] lyrics (or [Instrumental] if instrumental)\", "
             "\"bpm\": integer 70-175, \"keyscale\": \"e.g. C major or A minor\"}]}"
         )
         u_msg = (
@@ -1189,7 +1223,7 @@ def plan_song_from_idea(
             f"Instrumental only: {bool(instrumental)}\n"
             f"Target duration: {int(duration_sec)}s\n"
             + (f"User preferred style: {clean_style}\n" if clean_style else "")
-            + (f"User provided lyrics (keep if given): {clean_lyrics}\n" if clean_lyrics else "")
+            + (f"User provided lyrics (keep verbatim if given): {clean_lyrics}\n" if clean_lyrics else "")
         )
         parsed = _invoke_local_llm_json(disc, use_model, sys_msg, u_msg, temperature=0.85, max_tokens=1100)
         if parsed and not parsed.get("__refused__") and isinstance(parsed.get("takes"), list):
@@ -1219,7 +1253,6 @@ def plan_song_from_idea(
                     }
                 )
             if out_takes:
-                # Pad if LLM returned fewer takes than requested
                 while len(out_takes) < count:
                     base_tk = dict(out_takes[0])
                     base_tk["take_index"] = len(out_takes) + 1
@@ -1238,18 +1271,17 @@ def plan_song_from_idea(
             best_hits = hits
             matched_arch = arch
     if matched_arch is None:
-        # Pick a lively random archetype if no explicit genre keyword was mentioned
-        non_default = [a for a in _SONG_ARCHETYPES if a["id"] in ("pop_default", "diss_trap", "edm_party", "rock_punk", "rnb_soul")]
+        preferred = ("diss_trap", "edm_party", "rock_punk", "rnb_soul") if use_explicit else ("pop_default", "diss_trap", "edm_party", "rock_punk", "rnb_soul")
+        non_default = [a for a in _SONG_ARCHETYPES if a["id"] in preferred]
         matched_arch = _rnd.choice(non_default)
 
     pool = list(matched_arch["takes"])
     _rnd.shuffle(pool)
 
-    # Also grab a contrasting flavor from another archetype for extra Suno-like variety when custom_style is empty
     alt_flavors = [
-        ("upbeat synth-pop remix", 124, "G major"),
-        ("acoustic stripped-back live session version", 98, "D major"),
-        ("heavy bass club anthem remix", 132, "F minor"),
+        ("heavy bass club remix, punchy explicit vocal delivery", 132, "F minor"),
+        ("high-energy live rock-trap crossover version", 140, "D minor"),
+        ("bouncy west-coast hip-hop remix", 104, "G minor"),
     ]
 
     takes: list[dict[str, Any]] = []
@@ -1267,13 +1299,15 @@ def plan_song_from_idea(
         else:
             t_tags, def_bpm, t_key = pool[idx % len(pool)]
             t_bpm = custom_bpm or def_bpm
+            if use_explicit and "explicit" not in t_tags.lower():
+                t_tags = f"{t_tags}, raw unfiltered explicit vocal delivery"
 
         if instrumental:
             t_lyrics = "[Instrumental]"
         elif clean_lyrics:
             t_lyrics = clean_lyrics
         else:
-            t_lyrics = _compose_builtin_lyrics(topic, matched_arch["id"], idx)
+            t_lyrics = _compose_builtin_lyrics(topic, matched_arch["id"], idx, explicit=use_explicit)
 
         takes.append(
             {
