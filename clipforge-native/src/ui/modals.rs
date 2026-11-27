@@ -525,7 +525,8 @@ fn render_models_modal(app: &mut ClipForgeApp, ctx: &egui::Context) {
                     for (kind, heading) in [
                         ("image", "🖼 Image & Photo Generators"),
                         ("video", "🎬 Video & Lip-Sync Generators"),
-                        ("utility", "⚡ Quality Enhancers (Auto-Active)"),
+                        ("audio", "🎵 Offline Music & Song Engines"),
+                        ("utility", "⚡ Quality Enhancers & Face Lock (Auto-Active)"),
                     ] {
                         ui.add_space(6.0);
                         ui.label(RichText::new(heading).size(13.0).strong());
@@ -548,7 +549,7 @@ fn render_models_modal(app: &mut ClipForgeApp, ctx: &egui::Context) {
                                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                         let is_dl = m.download.as_ref().map(|d| d.status == "downloading").unwrap_or(false);
                                         if m.ready {
-                                            if m.kind != "utility" && !is_simple {
+                                            if m.kind != "utility" && m.kind != "audio" && !is_simple {
                                                 let use_lbl = if m.requires_audio { "Talk-Sync" } else { "Use" };
                                                 if ui.button(use_lbl).clicked() {
                                                     if m.requires_audio {

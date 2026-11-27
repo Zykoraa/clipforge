@@ -23,6 +23,8 @@ pub enum SimpleIntent {
     Animate,
     AudioVideo,
     Talk,
+    Music,
+    Speech,
 }
 
 impl SimpleIntent {
@@ -34,11 +36,17 @@ impl SimpleIntent {
             SimpleIntent::Animate => "animate",
             SimpleIntent::AudioVideo => "audio_video",
             SimpleIntent::Talk => "talk",
+            SimpleIntent::Music => "music",
+            SimpleIntent::Speech => "speech",
         }
     }
 
     pub fn is_video(&self) -> bool {
         matches!(self, SimpleIntent::Animate | SimpleIntent::AudioVideo | SimpleIntent::Talk)
+    }
+
+    pub fn is_audio(&self) -> bool {
+        matches!(self, SimpleIntent::Music | SimpleIntent::Speech)
     }
 }
 
@@ -46,6 +54,7 @@ impl SimpleIntent {
 pub enum SimpleAsset {
     Image(String),
     Video(String),
+    Audio(String),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -163,6 +172,7 @@ pub struct ClipForgeApp {
     pub ui_mode: UiMode,
     pub simple_intent: SimpleIntent,
     pub simple_unfiltered: bool,
+    pub simple_unfiltered_video: bool,
     pub simple_high_adherence: bool,
     pub simple_auto_enhance: bool,
     pub simple_four_grid: bool,
@@ -170,7 +180,16 @@ pub struct ClipForgeApp {
     pub simple_selected: Option<SimpleAsset>,
     pub last_gallery_head: String,
     pub last_video_head: String,
+    pub last_audio_head: String,
     pub continue_parent_video: Option<String>,
+    // Offline Music (Suno-style) & Speech Studio state
+    pub music_title: String,
+    pub music_tags: String,
+    pub music_lyrics: String,
+    pub music_instrumental: bool,
+    pub music_duration_sec: f32,
+    pub music_bpm: u32,
+    pub speech_voice_preset: String,
     pub left_tab: LeftTab,
     pub selected: Option<SelectedEntity>,
     pub px_per_sec: f32,
@@ -317,6 +336,7 @@ impl ClipForgeApp {
             ui_mode: UiMode::Simple,
             simple_intent: SimpleIntent::Photo,
             simple_unfiltered: false,
+            simple_unfiltered_video: false,
             simple_high_adherence: false,
             simple_auto_enhance: false,
             simple_four_grid: false,
@@ -324,7 +344,15 @@ impl ClipForgeApp {
             simple_selected: None,
             last_gallery_head: String::new(),
             last_video_head: String::new(),
+            last_audio_head: String::new(),
             continue_parent_video: None,
+            music_title: String::new(),
+            music_tags: String::new(),
+            music_lyrics: String::new(),
+            music_instrumental: false,
+            music_duration_sec: 45.0,
+            music_bpm: 120,
+            speech_voice_preset: "auto".into(),
             left_tab: LeftTab::Studio,
             selected: None,
             px_per_sec: 78.0,
@@ -469,20 +497,22 @@ impl ClipForgeApp {
         let has2 = self.ref2.is_some();
         let order: Vec<&str> = match mode {
             StudioMode::Image => match intent {
-                Some("anime") => vec!["illustrious_xl", "chroma_hd", "z_image_turbo", "flux2_klein_9b", "flux2_klein"],
-                Some("uncensored") => vec!["chroma_hd", "z_image_turbo", "krea2_turbo", "illustrious_xl", "flux2_klein_9b", "flux2_klein"],
-                Some("photo") if !has1 => vec!["z_image_turbo", "krea2_turbo", "chroma_hd", "flux2_klein_9b", "flux2_klein"],
+                Some("anime") => vec!["illustrious_xl", "pony_realism", "chroma_hd", "z_image_turbo", "flux2_klein_9b", "flux2_klein"],
+                Some("uncensored") | Some("uncensored_friend") => vec!["lustify_sdxl", "pony_realism", "chroma_hd", "z_image_turbo", "krea2_turbo", "illustrious_xl", "flux2_klein_9b", "flux2_klein"],
+                Some("photo") if !has1 => vec!["z_image_turbo", "krea2_turbo", "lustify_sdxl", "chroma_hd", "flux2_klein_9b", "flux2_klein"],
                 _ if has1 && has2 => vec!["qwen_edit_2511", "qwen_edit", "flux2_klein_9b", "flux2_klein", "krea2_turbo", "z_image_turbo"],
                 _ if has1 => vec!["flux2_klein_9b", "flux2_klein", "qwen_edit_2511", "qwen_edit", "krea2_turbo", "z_image_turbo"],
-                _ => vec!["z_image_turbo", "krea2_turbo", "flux2_klein_9b", "flux2_klein", "chroma_hd", "illustrious_xl"],
+                _ => vec!["z_image_turbo", "krea2_turbo", "flux2_klein_9b", "flux2_klein", "lustify_sdxl", "chroma_hd", "illustrious_xl"],
             },
             StudioMode::Video => {
                 if intent == Some("talk") {
                     vec!["wan22_s2v", "wan22_i2v", "wan22_5b"]
+                } else if intent == Some("uncensored_video") && has1 {
+                    vec!["wan22_remix_i2v", "wan22_smoothmix_i2v", "wan22_i2v", "wan22_5b", "ltx23"]
                 } else if self.want_audio || intent == Some("audio_video") {
                     vec!["ltx23", if has1 { "wan22_i2v" } else { "wan22_t2v" }, "wan22_5b"]
                 } else if has1 && !self.fast_draft {
-                    vec!["wan22_i2v", "wan22_5b", "ltx23"]
+                    vec!["wan22_i2v", "wan22_remix_i2v", "wan22_smoothmix_i2v", "wan22_5b", "ltx23"]
                 } else if !has1 && !self.fast_draft {
                     vec!["wan22_t2v", "wan22_5b", "ltx23"]
                 } else {
@@ -745,13 +775,14 @@ impl ClipForgeApp {
                         }
                     }
                     if self.voice_cast_id.is_empty() {
-                        if let Some(first_v) = st.cast.iter().find(|c| c.has_voice) {
+                        if let Some(first_v) = st.cast.iter().find(|c| c.has_voice).or_else(|| st.cast.first()) {
                             self.voice_cast_id = first_v.id.clone();
                         }
                     }
-                    // Auto-focus newly generated output (Photo OR Video!) on the Simple Result Canvas
+                    // Auto-focus newly generated output (Photo, Video, OR Audio Song/Speech!) on the Simple Result Canvas
                     let newest_img = st.gallery.first().cloned();
                     let newest_vid = st.videos.first().cloned();
+                    let newest_aud = st.audio_tracks.first().cloned();
                     let img_changed = newest_img
                         .as_ref()
                         .map(|g| g.filename != self.last_gallery_head)
@@ -760,32 +791,51 @@ impl ClipForgeApp {
                         .as_ref()
                         .map(|v| v.filename != self.last_video_head)
                         .unwrap_or(false);
+                    let aud_changed = newest_aud
+                        .as_ref()
+                        .map(|a| a.filename != self.last_audio_head)
+                        .unwrap_or(false);
 
-                    let first_load = self.last_gallery_head.is_empty() && self.last_video_head.is_empty();
+                    let first_load = self.last_gallery_head.is_empty()
+                        && self.last_video_head.is_empty()
+                        && self.last_audio_head.is_empty();
                     if let Some(g) = &newest_img {
                         self.last_gallery_head = g.filename.clone();
                     }
                     if let Some(v) = &newest_vid {
                         self.last_video_head = v.filename.clone();
                     }
+                    if let Some(a) = &newest_aud {
+                        self.last_audio_head = a.filename.clone();
+                    }
 
                     if first_load {
-                        // On startup, show whichever creation (photo or video) is newest
-                        match (&newest_img, &newest_vid) {
-                            (Some(g), Some(v)) => {
-                                if v.mtime > g.mtime {
-                                    self.simple_selected = Some(SimpleAsset::Video(v.filename.clone()));
-                                } else {
-                                    self.simple_selected = Some(SimpleAsset::Image(g.filename.clone()));
-                                }
+                        // On startup, show whichever creation (photo, video, or audio) is newest
+                        let mut best_mtime = -1.0_f64;
+                        let mut best_asset: Option<SimpleAsset> = None;
+                        if let Some(g) = &newest_img {
+                            if g.mtime > best_mtime {
+                                best_mtime = g.mtime;
+                                best_asset = Some(SimpleAsset::Image(g.filename.clone()));
                             }
-                            (Some(g), None) => {
-                                self.simple_selected = Some(SimpleAsset::Image(g.filename.clone()));
+                        }
+                        if let Some(v) = &newest_vid {
+                            if v.mtime > best_mtime {
+                                best_mtime = v.mtime;
+                                best_asset = Some(SimpleAsset::Video(v.filename.clone()));
                             }
-                            (None, Some(v)) => {
-                                self.simple_selected = Some(SimpleAsset::Video(v.filename.clone()));
+                        }
+                        if let Some(a) = &newest_aud {
+                            if a.mtime > best_mtime {
+                                best_asset = Some(SimpleAsset::Audio(a.filename.clone()));
                             }
-                            (None, None) => {}
+                        }
+                        if best_asset.is_some() {
+                            self.simple_selected = best_asset;
+                        }
+                    } else if aud_changed {
+                        if let Some(a) = newest_aud {
+                            self.simple_selected = Some(SimpleAsset::Audio(a.filename));
                         }
                     } else if vid_changed {
                         if let Some(v) = newest_vid {
@@ -989,6 +1039,16 @@ impl eframe::App for ClipForgeApp {
                     })
                     .unwrap_or(4.5);
                 self.player.tick_single_video(ctx, &v.video_path, w, h, dur);
+            }
+        } else if let Some(SimpleAsset::Audio(afn)) = &self.simple_selected {
+            if let Some(a) = self.gen_status.audio_tracks.iter().find(|x| &x.filename == afn).cloned() {
+                let dur = a
+                    .meta
+                    .as_ref()
+                    .and_then(|m| m.duration_sec)
+                    .unwrap_or(30.0)
+                    .max(1.0);
+                self.player.tick_single_audio(ctx, &a.audio_path, dur);
             }
         } else if self.player.is_playing {
             self.player.stop_playback();

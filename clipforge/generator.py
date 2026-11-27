@@ -36,20 +36,33 @@ COMFYUI_PYTHON = resolve_comfyui_python(COMFYUI_DIR) or (
     COMFYUI_DIR / ".venv" / ("Scripts" if sys.platform == "win32" else "bin") / ("python.exe" if sys.platform == "win32" else "python")
 )
 
-VideoModelId = Literal["wan22_5b", "wan22_i2v", "wan22_t2v", "wan22_s2v", "ltx23"]
+VideoModelId = Literal[
+    "wan22_5b",
+    "wan22_i2v",
+    "wan22_remix_i2v",
+    "wan22_smoothmix_i2v",
+    "wan22_t2v",
+    "wan22_s2v",
+    "ltx23",
+]
 ImageModelId = Literal[
     "flux2_klein",
     "flux2_klein_9b",
     "z_image_turbo",
     "krea2_turbo",
     "chroma_hd",
+    "lustify_sdxl",
+    "pony_realism",
     "illustrious_xl",
     "qwen_edit",
     "qwen_edit_2511",
 ]
+AudioModelId = Literal["ace_step_music"]
 GeneratorModelId = Literal[
     "wan22_5b",
     "wan22_i2v",
+    "wan22_remix_i2v",
+    "wan22_smoothmix_i2v",
     "wan22_t2v",
     "wan22_s2v",
     "ltx23",
@@ -58,9 +71,13 @@ GeneratorModelId = Literal[
     "z_image_turbo",
     "krea2_turbo",
     "chroma_hd",
+    "lustify_sdxl",
+    "pony_realism",
     "illustrious_xl",
     "qwen_edit",
     "qwen_edit_2511",
+    "ace_step_music",
+    "face_swap",
     "upscale_ultrasharp",
     "rife_vfi",
 ]
@@ -299,6 +316,124 @@ MODEL_SPECS: dict[str, dict[str, Any]] = {
                 "remote_path": "LowNoise/Wan2.2-I2V-A14B-LowNoise-Q4_K_M.gguf",
                 "local_rel": "models/diffusion_models/Wan2.2-I2V-A14B-LowNoise-Q4_K_M.gguf",
                 "alt_local_rels": ["models/diffusion_models/wan2.2_i2v_low_noise_14B_fp8_scaled.safetensors"],
+                "size_gb": 8.99,
+            },
+            {
+                "repo_id": "lightx2v/Wan2.2-Distill-Loras",
+                "remote_path": "wan2.2_i2v_A14b_high_noise_lora_rank64_lightx2v_4step_1022.safetensors",
+                "local_rel": "models/loras/wan2.2_i2v_A14b_high_noise_lora_rank64_lightx2v_4step_1022.safetensors",
+                "alt_local_rels": ["models/loras/wan2.2_i2v_lightx2v_4steps_lora_v1_high_noise.safetensors"],
+                "size_gb": 0.59,
+            },
+            {
+                "repo_id": "lightx2v/Wan2.2-Distill-Loras",
+                "remote_path": "wan2.2_i2v_A14b_low_noise_lora_rank64_lightx2v_4step_1022.safetensors",
+                "local_rel": "models/loras/wan2.2_i2v_A14b_low_noise_lora_rank64_lightx2v_4step_1022.safetensors",
+                "alt_local_rels": ["models/loras/wan2.2_i2v_lightx2v_4steps_lora_v1_low_noise.safetensors"],
+                "size_gb": 0.69,
+            },
+            {
+                "repo_id": "Comfy-Org/Wan_2.2_ComfyUI_Repackaged",
+                "remote_path": "split_files/text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+                "local_rel": "models/text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+                "size_gb": 6.27,
+            },
+            {
+                "repo_id": "Comfy-Org/Wan_2.2_ComfyUI_Repackaged",
+                "remote_path": "split_files/vae/wan_2.1_vae.safetensors",
+                "local_rel": "models/vae/wan_2.1_vae.safetensors",
+                "size_gb": 0.24,
+            },
+        ],
+    },
+    "wan22_remix_i2v": {
+        "kind": "video",
+        "display_name": "Wan 2.2 Remix v2.1 14B (Uncensored Photo -> Video)",
+        "badge": "UNCENSORED I2V",
+        "description": "Community #1 unfiltered Wan 2.2 I2V 14B fine-tune with rich motion, physics, and zero refusal — no LoRAs required. Shares existing Wan 2.2 encoders.",
+        "requires_image": True,
+        "supports_image": True,
+        "supports_end_image": True,
+        "supports_second_image": False,
+        "supports_audio": False,
+        "default_width": 480,
+        "default_height": 832,
+        "default_fps": 16,
+        "default_steps": 6,
+        "default_cfg": 1.0,
+        "default_frames": 81,
+        "frame_step": 4,
+        "dim_step": 16,
+        "files": [
+            {
+                "repo_id": "BigDannyPt/Wan-2.2-Remix-GGUF",
+                "remote_path": "I2V/v2.1/High/wan22RemixT2VI2V_i2vHighV21-Q4_K_M.gguf",
+                "local_rel": "models/diffusion_models/wan22RemixT2VI2V_i2vHighV21-Q4_K_M.gguf",
+                "size_gb": 8.99,
+            },
+            {
+                "repo_id": "BigDannyPt/Wan-2.2-Remix-GGUF",
+                "remote_path": "I2V/v2.1/Low/wan22RemixT2VI2V_i2vLowV21-Q4_K_M.gguf",
+                "local_rel": "models/diffusion_models/wan22RemixT2VI2V_i2vLowV21-Q4_K_M.gguf",
+                "size_gb": 8.99,
+            },
+            {
+                "repo_id": "lightx2v/Wan2.2-Distill-Loras",
+                "remote_path": "wan2.2_i2v_A14b_high_noise_lora_rank64_lightx2v_4step_1022.safetensors",
+                "local_rel": "models/loras/wan2.2_i2v_A14b_high_noise_lora_rank64_lightx2v_4step_1022.safetensors",
+                "alt_local_rels": ["models/loras/wan2.2_i2v_lightx2v_4steps_lora_v1_high_noise.safetensors"],
+                "size_gb": 0.59,
+            },
+            {
+                "repo_id": "lightx2v/Wan2.2-Distill-Loras",
+                "remote_path": "wan2.2_i2v_A14b_low_noise_lora_rank64_lightx2v_4step_1022.safetensors",
+                "local_rel": "models/loras/wan2.2_i2v_A14b_low_noise_lora_rank64_lightx2v_4step_1022.safetensors",
+                "alt_local_rels": ["models/loras/wan2.2_i2v_lightx2v_4steps_lora_v1_low_noise.safetensors"],
+                "size_gb": 0.69,
+            },
+            {
+                "repo_id": "Comfy-Org/Wan_2.2_ComfyUI_Repackaged",
+                "remote_path": "split_files/text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+                "local_rel": "models/text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+                "size_gb": 6.27,
+            },
+            {
+                "repo_id": "Comfy-Org/Wan_2.2_ComfyUI_Repackaged",
+                "remote_path": "split_files/vae/wan_2.1_vae.safetensors",
+                "local_rel": "models/vae/wan_2.1_vae.safetensors",
+                "size_gb": 0.24,
+            },
+        ],
+    },
+    "wan22_smoothmix_i2v": {
+        "kind": "video",
+        "display_name": "SmoothMix Wan 2.2 v2.0 14B (Uncensored Fluid I2V)",
+        "badge": "UNCENSORED SMOOTH",
+        "description": "Most-downloaded community uncensored Wan 2.2 I2V 14B model tuned for fluid skin realism and expressive motion. Shares existing Wan 2.2 encoders.",
+        "requires_image": True,
+        "supports_image": True,
+        "supports_end_image": True,
+        "supports_second_image": False,
+        "supports_audio": False,
+        "default_width": 480,
+        "default_height": 832,
+        "default_fps": 16,
+        "default_steps": 6,
+        "default_cfg": 1.0,
+        "default_frames": 81,
+        "frame_step": 4,
+        "dim_step": 16,
+        "files": [
+            {
+                "repo_id": "BigDannyPt/WAN-2.2-SmoothMix-GGUF",
+                "remote_path": "I2V/v2.0/High/SmoothMix_I2V_v2_High-Q4_K_M.gguf",
+                "local_rel": "models/diffusion_models/SmoothMix_I2V_v2_High-Q4_K_M.gguf",
+                "size_gb": 8.99,
+            },
+            {
+                "repo_id": "BigDannyPt/WAN-2.2-SmoothMix-GGUF",
+                "remote_path": "I2V/v2.0/Low/SmoothMix_I2V_v2_Low-Q4_K_M.gguf",
+                "local_rel": "models/diffusion_models/SmoothMix_I2V_v2_Low-Q4_K_M.gguf",
                 "size_gb": 8.99,
             },
             {
@@ -633,6 +768,52 @@ MODEL_SPECS: dict[str, dict[str, Any]] = {
             },
         ],
     },
+    "lustify_sdxl": {
+        "kind": "image",
+        "display_name": "LUSTIFY! SDXL v2.0 (Uncensored Photorealism)",
+        "badge": "UNCENSORED PHOTO",
+        "description": "Single-file 6.46 GB uncensored photorealism checkpoint trained for raw candid smartphone lighting, real skin, and zero censorship — works with Automatic Friend Face Lock.",
+        "requires_image": False,
+        "supports_image": True,
+        "supports_second_image": False,
+        "supports_audio": False,
+        "default_width": 1024,
+        "default_height": 1024,
+        "default_steps": 26,
+        "default_cfg": 5.5,
+        "dim_step": 8,
+        "files": [
+            {
+                "repo_id": "shootstuff/LUSTIFY-v2.0",
+                "remote_path": "lustifySDXLNSFWSFW_v20.safetensors",
+                "local_rel": "models/checkpoints/lustifySDXLNSFWSFW_v20.safetensors",
+                "size_gb": 6.46,
+            },
+        ],
+    },
+    "pony_realism": {
+        "kind": "image",
+        "display_name": "Pony Realism v2.2 (Uncensored Chaos & Poses)",
+        "badge": "UNCENSORED POSES",
+        "description": "Single-file 6.62 GB uncensored Pony/SDXL realism powerhouse known for complex multi-person poses, wild meme prompts, and automatic quality tagging.",
+        "requires_image": False,
+        "supports_image": True,
+        "supports_second_image": False,
+        "supports_audio": False,
+        "default_width": 1024,
+        "default_height": 1024,
+        "default_steps": 26,
+        "default_cfg": 6.0,
+        "dim_step": 8,
+        "files": [
+            {
+                "repo_id": "TheImposterImposters/PonyRealism-v2.2MainVAE",
+                "remote_path": "ponyRealism_v22MainVAE.safetensors",
+                "local_rel": "models/checkpoints/ponyRealism_v22MainVAE.safetensors",
+                "size_gb": 6.62,
+            },
+        ],
+    },
     "illustrious_xl": {
         "kind": "image",
         "display_name": "Illustrious XL v2.0 (Anime, 2.5D & CivitAI)",
@@ -856,6 +1037,67 @@ MODEL_SPECS: dict[str, dict[str, Any]] = {
             },
         ],
     },
+    "face_swap": {
+        "kind": "utility",
+        "display_name": "Friend Face Lock Engine (inswapper_128, 700 MB)",
+        "badge": "AUTO FACE LOCK",
+        "description": "Pure-ONNX automatic 1-2 friend face lock that stamps your real friends' faces onto any generated scene (including unfiltered photos) in under 1 second.",
+        "requires_image": True,
+        "supports_image": True,
+        "supports_second_image": True,
+        "supports_audio": False,
+        "default_width": 1024,
+        "default_height": 1024,
+        "default_steps": 1,
+        "default_cfg": 1.0,
+        "dim_step": 8,
+        "files": [
+            {
+                "repo_id": "ezioruan/inswapper_128.onnx",
+                "remote_path": "inswapper_128.onnx",
+                "local_rel": "models/insightface/inswapper_128.onnx",
+                "size_gb": 0.52,
+            },
+            {
+                "repo_id": "public-data/insightface",
+                "remote_path": "models/buffalo_l/det_10g.onnx",
+                "local_rel": "models/insightface/det_10g.onnx",
+                "size_gb": 0.02,
+            },
+            {
+                "repo_id": "public-data/insightface",
+                "remote_path": "models/buffalo_l/w600k_r50.onnx",
+                "local_rel": "models/insightface/w600k_r50.onnx",
+                "size_gb": 0.16,
+            },
+        ],
+    },
+    # -------------------------------------------------------------------------
+    # OFFLINE SUNO-STYLE FULL SONG & MUSIC GENERATION (ACE-STEP 1.5 TURBO)
+    # -------------------------------------------------------------------------
+    "ace_step_music": {
+        "kind": "audio",
+        "display_name": "ACE-Step 1.5 Turbo (Offline Suno-Style Songs)",
+        "badge": "SONGS + VOCALS",
+        "description": "Generate full 15s-180s studio songs with singing vocals, custom lyrics, genres/beats, or pure instrumentals completely offline in ~8 steps.",
+        "requires_image": False,
+        "supports_image": False,
+        "supports_second_image": False,
+        "supports_audio": True,
+        "default_width": 0,
+        "default_height": 0,
+        "default_steps": 8,
+        "default_cfg": 1.0,
+        "dim_step": 1,
+        "files": [
+            {
+                "repo_id": "Comfy-Org/ace_step_1.5_ComfyUI_files",
+                "remote_path": "checkpoints/ace_step_1.5_turbo_aio.safetensors",
+                "local_rel": "models/checkpoints/ace_step_1.5_turbo_aio.safetensors",
+                "size_gb": 10.03,
+            },
+        ],
+    },
 }
 
 
@@ -968,26 +1210,30 @@ def resolve_auto_model(
     """Pick the highest-quality ready local model automatically based on inputs, intent, and installed weights."""
     avail = get_model_availability(comfy_dir)
     intent_clean = (intent or "").strip().lower()
+    if kind == "audio":
+        return "ace_step_music"
     if kind == "image":
         if intent_clean == "anime":
-            priority = ["illustrious_xl", "chroma_hd", "z_image_turbo", "flux2_klein_9b", "flux2_klein"]
-        elif intent_clean == "uncensored":
-            priority = ["chroma_hd", "z_image_turbo", "krea2_turbo", "illustrious_xl", "flux2_klein_9b", "flux2_klein"]
+            priority = ["illustrious_xl", "pony_realism", "chroma_hd", "z_image_turbo", "flux2_klein_9b", "flux2_klein"]
+        elif intent_clean in ("uncensored", "unfiltered", "uncensored_friend"):
+            priority = ["lustify_sdxl", "pony_realism", "chroma_hd", "z_image_turbo", "krea2_turbo", "illustrious_xl", "flux2_klein_9b", "flux2_klein"]
         elif intent_clean == "photo" and not has_image1:
-            priority = ["z_image_turbo", "krea2_turbo", "chroma_hd", "flux2_klein_9b", "flux2_klein"]
+            priority = ["z_image_turbo", "krea2_turbo", "lustify_sdxl", "chroma_hd", "flux2_klein_9b", "flux2_klein"]
         elif has_image1 and has_image2:
             priority = ["qwen_edit_2511", "qwen_edit", "flux2_klein_9b", "flux2_klein", "krea2_turbo", "z_image_turbo"]
         elif has_image1:
             priority = ["flux2_klein_9b", "flux2_klein", "qwen_edit_2511", "qwen_edit", "krea2_turbo", "z_image_turbo"]
         else:
-            priority = ["z_image_turbo", "krea2_turbo", "flux2_klein_9b", "flux2_klein", "chroma_hd", "illustrious_xl"]
+            priority = ["z_image_turbo", "krea2_turbo", "flux2_klein_9b", "flux2_klein", "lustify_sdxl", "chroma_hd", "illustrious_xl"]
     else:
         if intent_clean == "talk":
             priority = ["wan22_s2v", "wan22_i2v", "wan22_5b"]
+        elif intent_clean in ("uncensored_video", "animate_unfiltered", "uncensored") and has_image1:
+            priority = ["wan22_remix_i2v", "wan22_smoothmix_i2v", "wan22_i2v", "wan22_5b", "ltx23"]
         elif want_audio or intent_clean == "audio_video":
             priority = ["ltx23", "wan22_i2v" if has_image1 else "wan22_t2v", "wan22_5b"]
         elif has_image1 and not fast_draft:
-            priority = ["wan22_i2v", "wan22_5b", "ltx23"]
+            priority = ["wan22_i2v", "wan22_remix_i2v", "wan22_smoothmix_i2v", "wan22_5b", "ltx23"]
         elif not has_image1 and not fast_draft:
             priority = ["wan22_t2v", "wan22_5b", "ltx23"]
         else:
@@ -1022,6 +1268,22 @@ def get_starter_packs(comfy_dir: Path = COMFYUI_DIR) -> list[dict[str, Any]]:
             "description": "Z-Image-Turbo + FLUX.2 Klein 9B (pro friend edits) + Wan 2.2 14B I2V (photo animation) + 4x-UltraSharp + RIFE 32fps.",
             "model_ids": ["z_image_turbo", "flux2_klein_9b", "wan22_i2v", "upscale_ultrasharp", "rife_vfi"],
             "recommended": vram_mb >= 14000,
+        },
+        {
+            "id": "uncensored_meme_pack",
+            "title": "Unfiltered Memes + Automatic Friend Face Lock (7.2 GB)",
+            "badge": "UNFILTERED + FACE LOCK",
+            "description": "LUSTIFY! SDXL v2.0 (raw uncensored photorealism) + Automatic 1-2 Friend Face Lock (inswapper_128) + 4x-UltraSharp HD + RIFE 32fps.",
+            "model_ids": ["lustify_sdxl", "face_swap", "upscale_ultrasharp", "rife_vfi"],
+            "recommended": False,
+        },
+        {
+            "id": "music_pack",
+            "title": "Offline Music & Song Studio Pack (Suno-Style, 10 GB)",
+            "badge": "SONGS + VOCALS",
+            "description": "ACE-Step 1.5 Turbo all-in-one engine — generate full studio songs with singing vocals, custom lyrics, genres, or pure instrumentals completely offline.",
+            "model_ids": ["ace_step_music"],
+            "recommended": False,
         },
         {
             "id": "anime_civitai",
@@ -1133,12 +1395,14 @@ def _classify_checkpoint_family(filename: str, folder: str) -> tuple[str, list[s
         return "flux", ["flux2_klein_9b", "flux2_klein"]
     if "qwen" in low:
         return "qwen", ["qwen_edit_2511", "qwen_edit"]
+    if "ace_step" in low or "acestep" in low:
+        return "audio", ["ace_step_music"]
     if "wan" in low:
-        return "wan", ["wan22_i2v", "wan22_t2v"]
+        return "wan", ["wan22_i2v", "wan22_remix_i2v", "wan22_smoothmix_i2v", "wan22_t2v"]
     if "ltx" in low:
         return "ltx", ["ltx23"]
-    if folder == "checkpoints" or any(k in low for k in ("illustrious", "pony", "noobai", "sdxl", "janku", "wai", "biglove")):
-        return "illustrious", ["illustrious_xl"]
+    if folder == "checkpoints" or any(k in low for k in ("illustrious", "pony", "lustify", "biglust", "noobai", "sdxl", "janku", "wai", "biglove")):
+        return "illustrious", ["lustify_sdxl", "pony_realism", "illustrious_xl"]
     return "z_image", ["z_image_turbo", "krea2_turbo", "chroma_hd"]
 
 
@@ -2766,8 +3030,11 @@ def build_illustrious_xl_workflow(
     filename_prefix: str = "clipforge/illustrious_xl",
     ckpt_name: str = "Illustrious-XL-v2.0.safetensors",
     loras: list[dict[str, Any]] | None = None,
+    clip_skip: int = -2,
+    sampler_name: str = "euler_ancestral",
+    scheduler: str = "normal",
 ) -> dict[str, Any]:
-    """Illustrious XL / SDXL single-checkpoint graph with CLIP skip -2, full model+CLIP LoRA chaining, img2img & inpaint."""
+    """Illustrious XL / SDXL single-checkpoint graph with CLIP skip, full model+CLIP LoRA chaining, img2img & inpaint."""
     w = snap_dim(width, 8, minimum=512, maximum=1536)
     h = snap_dim(height, 8, minimum=512, maximum=1536)
     actual_seed = random.randint(1, 2**50) if seed < 0 else int(seed)
@@ -2775,7 +3042,7 @@ def build_illustrious_xl_workflow(
 
     graph: dict[str, Any] = {
         "1": {"class_type": "CheckpointLoaderSimple", "inputs": {"ckpt_name": ckpt_name}},
-        "2": {"class_type": "CLIPSetLastLayer", "inputs": {"clip": ["1", 1], "stop_at_clip_layer": -2}},
+        "2": {"class_type": "CLIPSetLastLayer", "inputs": {"clip": ["1", 1], "stop_at_clip_layer": int(clip_skip)}},
         "3": {"class_type": "CLIPTextEncode", "inputs": {"clip": ["2", 0], "text": prompt}},
         "4": {"class_type": "CLIPTextEncode", "inputs": {"clip": ["2", 0], "text": negative_prompt}},
         "5": {"class_type": "EmptyLatentImage", "inputs": {"width": w, "height": h, "batch_size": 1}},
@@ -2786,8 +3053,8 @@ def build_illustrious_xl_workflow(
                 "seed": actual_seed,
                 "steps": max(8, min(50, int(steps))),
                 "cfg": float(cfg),
-                "sampler_name": "euler_ancestral",
-                "scheduler": "normal",
+                "sampler_name": sampler_name,
+                "scheduler": scheduler,
                 "positive": ["3", 0],
                 "negative": ["4", 0],
                 "latent_image": ["5", 0],
@@ -2858,6 +3125,80 @@ def build_illustrious_xl_workflow(
             graph["8"]["inputs"]["images"] = ["7b", 0]
         graph["6"]["inputs"]["latent_image"] = latent_ref
     return graph
+
+
+def build_ace_step_music_workflow(
+    tags: str,
+    lyrics: str = "",
+    duration_sec: float = 45.0,
+    bpm: int = 120,
+    keyscale: str = "C major",
+    language: str = "en",
+    instrumental: bool = False,
+    steps: int = 8,
+    cfg: float = 1.0,
+    seed: int = -1,
+    filename_prefix: str = "clipforge/ace_song",
+    ckpt_name: str = "ace_step_1.5_turbo_aio.safetensors",
+) -> dict[str, Any]:
+    """Official native ComfyUI ACE-Step 1.5 Turbo AIO full-song generator (vocals + lyrics OR pure instrumental)."""
+    dur = max(10.0, min(240.0, float(duration_sec)))
+    eff_bpm = max(50, min(220, int(bpm)))
+    actual_seed = random.randint(1, 2**31 - 1) if seed < 0 else int(seed)
+    clean_tags = (tags or "").strip() or "upbeat modern pop, catchy synth hook, crisp drums, studio mix"
+    if instrumental:
+        clean_lyrics = "[Instrumental]"
+        if "instrumental" not in clean_tags.lower():
+            clean_tags = f"{clean_tags}, instrumental, no vocals"
+    else:
+        clean_lyrics = (lyrics or "").strip() or "[Instrumental]"
+
+    return {
+        "1": {"class_type": "CheckpointLoaderSimple", "inputs": {"ckpt_name": ckpt_name}},
+        "2": {"class_type": "ModelSamplingAuraFlow", "inputs": {"model": ["1", 0], "shift": 3.0}},
+        "3": {
+            "class_type": "TextEncodeAceStepAudio1.5",
+            "inputs": {
+                "clip": ["1", 1],
+                "tags": clean_tags,
+                "lyrics": clean_lyrics,
+                "seed": actual_seed,
+                "bpm": eff_bpm,
+                "duration": dur,
+                "timesignature": "4",
+                "language": (language or "en").strip().lower(),
+                "keyscale": keyscale or "C major",
+                "generate_audio_codes": True,
+                "cfg_scale": 2.0,
+                "temperature": 0.85,
+                "top_p": 0.9,
+                "top_k": 0,
+                "min_p": 0.0,
+            },
+        },
+        "4": {"class_type": "ConditioningZeroOut", "inputs": {"conditioning": ["3", 0]}},
+        "5": {"class_type": "EmptyAceStep1.5LatentAudio", "inputs": {"seconds": dur, "batch_size": 1}},
+        "6": {
+            "class_type": "KSampler",
+            "inputs": {
+                "model": ["2", 0],
+                "seed": actual_seed,
+                "steps": max(4, min(30, int(steps))),
+                "cfg": float(cfg),
+                "sampler_name": "euler",
+                "scheduler": "simple",
+                "positive": ["3", 0],
+                "negative": ["4", 0],
+                "latent_image": ["5", 0],
+                "denoise": 1.0,
+            },
+        },
+        "7": {"class_type": "VAEDecodeAudio", "inputs": {"samples": ["6", 0], "vae": ["1", 2]}},
+        "8": {
+            "class_type": "SaveAudioMP3",
+            "inputs": {"audio": ["7", 0], "filename_prefix": filename_prefix, "quality": "V0"},
+        },
+    }
 
 
 def build_qwen_edit_workflow(
@@ -3081,7 +3422,7 @@ def _extract_saved_output_info(history_entry: dict[str, Any], extensions: tuple[
     outputs = history_entry.get("outputs") or {}
     fallback: dict[str, str] | None = None
     for _node_id, node_out in outputs.items():
-        for key in ("videos", "images", "gifs"):
+        for key in ("videos", "images", "gifs", "audio"):
             items = node_out.get(key)
             if isinstance(items, list) and items:
                 for it in items:
@@ -3250,7 +3591,9 @@ def generate_video_via_comfyui(
 ) -> dict[str, Any]:
     """Queue a Wan 2.2 (5B/I2V/T2V/S2V) or LTX-2.3 video workflow on local ComfyUI and save the rendered MP4 + remix metadata."""
     if model not in MODEL_SPECS or MODEL_SPECS[model]["kind"] != "video":
-        raise ValueError(f"Unknown video model '{model}'. Valid: wan22_5b, wan22_i2v, wan22_t2v, wan22_s2v, ltx23")
+        raise ValueError(
+            f"Unknown video model '{model}'. Valid: wan22_5b, wan22_i2v, wan22_remix_i2v, wan22_smoothmix_i2v, wan22_t2v, wan22_s2v, ltx23"
+        )
 
     spec = MODEL_SPECS[model]
     if spec["requires_image"] and not image_path:
@@ -3306,7 +3649,7 @@ def generate_video_via_comfyui(
     actual_seed = random.randint(1, 2**50) if seed < 0 else int(seed)
     run_id = uuid.uuid4().hex[:8]
 
-    if model == "wan22_i2v":
+    if model in ("wan22_i2v", "wan22_remix_i2v", "wan22_smoothmix_i2v"):
         assert uploaded_img_name is not None
         workflow = build_wan22_i2v_workflow(
             prompt=full_prompt,
@@ -3320,11 +3663,11 @@ def generate_video_via_comfyui(
             steps=use_steps,
             cfg=use_cfg,
             seed=actual_seed,
-            filename_prefix=f"clipforge/wan22_i2v_{run_id}",
-            high_unet=_resolve_model_slot_filename("wan22_i2v", 0, comfy_dir),
-            low_unet=_resolve_model_slot_filename("wan22_i2v", 1, comfy_dir),
-            high_lora=_resolve_model_slot_filename("wan22_i2v", 2, comfy_dir),
-            low_lora=_resolve_model_slot_filename("wan22_i2v", 3, comfy_dir),
+            filename_prefix=f"clipforge/{model}_{run_id}",
+            high_unet=_resolve_model_slot_filename(model, 0, comfy_dir),
+            low_unet=_resolve_model_slot_filename(model, 1, comfy_dir),
+            high_lora=_resolve_model_slot_filename(model, 2, comfy_dir),
+            low_lora=_resolve_model_slot_filename(model, 3, comfy_dir),
             loras=loras,
         )
     elif model == "wan22_t2v":
@@ -3664,26 +4007,56 @@ def generate_image_via_comfyui(
                 loras=loras,
                 use_checkpoint_loader=use_ckpt_ldr,
             )
-        elif model == "illustrious_xl":
-            ckpt_f = resolved_ckpt["name"] if (resolved_ckpt and resolved_ckpt["folder"] == "checkpoints") else _resolve_model_slot_filename("illustrious_xl", 0, comfy_dir)
-            ill_neg = negative_prompt or (
-                "lowres, bad anatomy, bad hands, text, error, missing finger, extra digits, fewer digits, cropped, "
-                "worst quality, low quality, low score, bad score, average score, signature, watermark, username, blurry"
+        elif model in ("illustrious_xl", "lustify_sdxl", "pony_realism"):
+            ckpt_f = (
+                resolved_ckpt["name"]
+                if (resolved_ckpt and resolved_ckpt["folder"] == "checkpoints")
+                else _resolve_model_slot_filename(model, 0, comfy_dir)
             )
+            eff_sdxl_prompt = full_prompt
+            if model == "pony_realism" and "score_9" not in eff_sdxl_prompt.lower():
+                eff_sdxl_prompt = f"score_9, score_8_up, score_7_up, source_photo, {eff_sdxl_prompt}"
+            if model == "lustify_sdxl":
+                sdxl_neg = negative_prompt or (
+                    "3d render, cgi, cartoon, anime, plastic skin, airbrushed, blurry, lowres, "
+                    "bad anatomy, bad hands, extra digits, deformed face, watermark, signature"
+                )
+                sdxl_clip_skip = -1
+                sdxl_sampler = "dpmpp_2m_sde"
+                sdxl_sched = "karras"
+            elif model == "pony_realism":
+                sdxl_neg = negative_prompt or (
+                    "score_6, score_5, score_4, source_anime, source_cartoon, 3d render, cgi, "
+                    "blurry, bad anatomy, bad hands, extra digits, watermark"
+                )
+                sdxl_clip_skip = -2
+                sdxl_sampler = "euler_ancestral"
+                sdxl_sched = "normal"
+            else:
+                sdxl_neg = negative_prompt or (
+                    "lowres, bad anatomy, bad hands, text, error, missing finger, extra digits, fewer digits, cropped, "
+                    "worst quality, low quality, low score, bad score, average score, signature, watermark, username, blurry"
+                )
+                sdxl_clip_skip = -2
+                sdxl_sampler = "euler_ancestral"
+                sdxl_sched = "normal"
             workflow = build_illustrious_xl_workflow(
-                prompt=full_prompt,
+                prompt=eff_sdxl_prompt,
                 image_filename=up_img1,
                 mask_filename=up_mask,
-                negative_prompt=ill_neg,
+                negative_prompt=sdxl_neg,
                 width=use_w,
                 height=use_h,
                 steps=use_steps,
                 cfg=use_cfg,
                 denoise=den,
                 seed=cur_seed,
-                filename_prefix=f"clipforge/illustrious_{run_id}",
+                filename_prefix=f"clipforge/{model}_{run_id}",
                 ckpt_name=ckpt_f,
                 loras=loras,
+                clip_skip=sdxl_clip_skip,
+                sampler_name=sdxl_sampler,
+                scheduler=sdxl_sched,
             )
         elif model == "qwen_edit_2511":
             assert up_img1 is not None
@@ -3807,6 +4180,130 @@ def generate_image_via_comfyui(
         "prompt_id": first["prompt_id"],
         "generation_time_sec": total_elapsed,
         "file_size_bytes": first["file_size_bytes"],
+    }
+
+
+def generate_music_via_comfyui(
+    tags: str,
+    output_dir: Path,
+    lyrics: str = "",
+    title: str = "",
+    instrumental: bool = False,
+    duration_sec: float = 45.0,
+    bpm: int = 120,
+    keyscale: str = "C major",
+    language: str = "en",
+    steps: int = 8,
+    cfg: float = 1.0,
+    seed: int = -1,
+    base_url: str = COMFYUI_URL,
+    comfy_dir: Path = COMFYUI_DIR,
+    auto_start: bool = True,
+    timeout_sec: float = 600.0,
+    on_progress: Callable[[str, int | None], None] | None = None,
+    on_prompt_id: Callable[[str], None] | None = None,
+    cancel_event: threading.Event | None = None,
+) -> dict[str, Any]:
+    """Generate a full offline song (vocals + lyrics or pure instrumental) via native ComfyUI ACE-Step 1.5 Turbo."""
+    avail = get_model_availability(comfy_dir)
+    if not avail.get("ace_step_music", {}).get("ready"):
+        miss = avail.get("ace_step_music", {}).get("missing_gb", 10.0)
+        raise RuntimeError(
+            f"Offline Music Engine (ACE-Step 1.5 Turbo) needs {miss} GB downloaded first "
+            "(open Setup & Packs -> Offline Music & Song Studio Pack)."
+        )
+
+    if auto_start:
+        if on_progress:
+            on_progress("Checking local ComfyUI engine...", 3)
+        ensure_comfyui_running(comfy_dir=comfy_dir, base_url=base_url)
+    elif not is_comfyui_reachable(base_url):
+        raise RuntimeError(f"ComfyUI is not running at {base_url}")
+
+    _maybe_unload_on_model_switch("ace_step_music", base_url=base_url)
+
+    run_id = uuid.uuid4().hex[:8]
+    actual_seed = random.randint(1, 2**31 - 1) if seed < 0 else int(seed)
+    dur = max(10.0, min(240.0, float(duration_sec)))
+    ckpt_name = _resolve_model_slot_filename("ace_step_music", 0, comfy_dir)
+
+    wf = build_ace_step_music_workflow(
+        tags=tags,
+        lyrics=lyrics,
+        duration_sec=dur,
+        bpm=bpm,
+        keyscale=keyscale,
+        language=language,
+        instrumental=instrumental,
+        steps=steps,
+        cfg=cfg,
+        seed=actual_seed,
+        filename_prefix=f"clipforge/song_{run_id}",
+        ckpt_name=ckpt_name,
+    )
+
+    if on_progress:
+        on_progress("Composing song structure & vocals...", 12)
+
+    prompt_id, aud_info, elapsed = _execute_comfyui_workflow(
+        workflow=wf,
+        base_url=base_url,
+        timeout_sec=timeout_sec,
+        extensions=(".mp3", ".flac", ".wav", ".opus", ".ogg"),
+        on_progress=on_progress,
+        on_prompt_id=on_prompt_id,
+        cancel_event=cancel_event,
+    )
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    ext = Path(aud_info["filename"]).suffix.lower() or ".mp3"
+    dest = (output_dir / f"song_{run_id}{ext}").resolve()
+    view_resp = httpx.get(f"{base_url}/view", params=aud_info, timeout=90.0)
+    view_resp.raise_for_status()
+    dest.write_bytes(view_resp.content)
+
+    # Probe exact actual audio duration
+    actual_dur = dur
+    try:
+        from .media import probe_media_file
+
+        pr = probe_media_file(dest, assets_dir=None)
+        if pr.duration_sec > 0.2:
+            actual_dur = round(float(pr.duration_sec), 2)
+    except Exception:
+        pass
+
+    clean_title = (title or "").strip() or (tags.strip()[:42] if tags.strip() else f"Song {run_id}")
+    write_asset_metadata(
+        dest,
+        {
+            "kind": "audio",
+            "subtype": "song",
+            "model": "ace_step_music",
+            "title": clean_title,
+            "tags": tags,
+            "lyrics": "[Instrumental]" if instrumental else lyrics,
+            "instrumental": bool(instrumental),
+            "duration_sec": actual_dur,
+            "bpm": int(bpm),
+            "keyscale": keyscale,
+            "language": language,
+            "seed": actual_seed,
+            "generation_time_sec": elapsed,
+        },
+    )
+    return {
+        "audio_path": str(dest),
+        "filename": dest.name,
+        "title": clean_title,
+        "tags": tags,
+        "instrumental": bool(instrumental),
+        "duration_sec": actual_dur,
+        "bpm": int(bpm),
+        "seed": actual_seed,
+        "prompt_id": prompt_id,
+        "generation_time_sec": elapsed,
+        "file_size_bytes": dest.stat().st_size,
     }
 
 

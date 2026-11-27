@@ -63,8 +63,12 @@ pub enum ApiCommand {
     UploadRef { slot: RefSlot, path: PathBuf },
     GenerateImage(Value),
     GenerateVideo(Value),
+    GenerateMusic(Value),
+    SpeakText(Value),
+    DeleteAudioTrack(String),
     PolishImage { filename: String, scale: u32 },
     DetailFaces { filename: String },
+    SwapFaces { filename: String, body: Value },
     DeleteGalleryImage(String),
     DeleteVaultVideo(String),
     ExtractVaultEndFrame { filename: String },
@@ -830,6 +834,56 @@ fn execute_command(base: &str, tok: &str, cmd: ApiCommand, tx: &Sender<ApiEvent>
                 Err(e) => emit_err(tx, e),
             }
             let _ = tx.send(ApiEvent::ActionDone("generate".into()));
+        }
+        ApiCommand::GenerateMusic(body) => {
+            match post_json_val(base, tok, "/api/generate/music", &body, 60) {
+                Ok(v) => {
+                    let jid = v.get("job_id").and_then(|x| x.as_str()).unwrap_or("");
+                    emit_ok(tx, format!("Composing song offline ({jid})..."));
+                    execute_command(base, tok, ApiCommand::RefreshGenStatus, tx);
+                }
+                Err(e) => emit_err(tx, e),
+            }
+            let _ = tx.send(ApiEvent::ActionDone("generate".into()));
+        }
+        ApiCommand::SpeakText(body) => {
+            match post_json_val(base, tok, "/api/voice/speak", &body, 60) {
+                Ok(v) => {
+                    let jid = v.get("job_id").and_then(|x| x.as_str()).unwrap_or("");
+                    emit_ok(tx, format!("Generating offline speech ({jid})..."));
+                    execute_command(base, tok, ApiCommand::RefreshGenStatus, tx);
+                }
+                Err(e) => emit_err(tx, e),
+            }
+            let _ = tx.send(ApiEvent::ActionDone("generate".into()));
+        }
+        ApiCommand::DeleteAudioTrack(filename) => {
+            let p = format!("/api/generate/audio/{}", urlencoding::encode(&filename));
+            match delete_json_val(base, tok, &p) {
+                Ok(_) => execute_command(base, tok, ApiCommand::RefreshGenStatus, tx),
+                Err(e) => emit_err(tx, e),
+            }
+        }
+        ApiCommand::SwapFaces { filename, body } => {
+            let p = format!("/api/generate/image/{}/swap-faces", urlencoding::encode(&filename));
+            match post_json_val(base, tok, &p, &body, 120) {
+                Ok(v) => {
+                    let fn_out = v.get("filename").and_then(|x| x.as_str()).unwrap_or("").to_string();
+                    let cnt = v.get("faces_swapped").and_then(|x| x.as_u64()).unwrap_or(1);
+                    if !fn_out.is_empty() {
+                        let _ = tx.send(ApiEvent::ImagePolished {
+                            filename: fn_out.clone(),
+                            engine: "Face Lock".into(),
+                            width: 0,
+                            height: 0,
+                        });
+                    }
+                    emit_ok(tx, format!("Locked {cnt} friend face(s) onto photo!"));
+                    execute_command(base, tok, ApiCommand::RefreshGenStatus, tx);
+                }
+                Err(e) => emit_err(tx, e),
+            }
+            let _ = tx.send(ApiEvent::ActionDone("face_swap".into()));
         }
         ApiCommand::PolishImage { filename, scale } => {
             let p = format!("/api/generate/image/{}/polish", urlencoding::encode(&filename));

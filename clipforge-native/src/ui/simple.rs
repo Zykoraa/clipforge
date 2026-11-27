@@ -1,6 +1,6 @@
 use crate::api::{ApiCommand, RefSlot, ToastKind};
 use crate::app::{ActiveLora, ClipForgeApp, RefAttachment, SimpleAsset, SimpleIntent, StudioMode, UiMode};
-use crate::models::{GalleryImage, VaultVideo};
+use crate::models::{AudioTrack, GalleryImage, VaultVideo};
 use crate::theme::*;
 use egui::{Align, Color32, CornerRadius, Frame, Image, Layout, Margin, Pos2, Rect, RichText, Sense, Stroke, Vec2};
 use serde_json::json;
@@ -26,10 +26,11 @@ pub fn render_simple_workspace(app: &mut ClipForgeApp, ctx: &egui::Context) {
                     render_starter_pack_banner(app, ui);
                     render_intent_cards(app, ui);
                     ui.add_space(8.0);
-                    if app.simple_intent == SimpleIntent::Talk {
-                        render_simple_talk_card(app, ui);
-                    } else {
-                        render_simple_create_card(app, ui);
+                    match app.simple_intent {
+                        SimpleIntent::Talk => render_simple_talk_card(app, ui),
+                        SimpleIntent::Music => render_simple_music_card(app, ui),
+                        SimpleIntent::Speech => render_simple_speech_card(app, ui),
+                        _ => render_simple_create_card(app, ui),
                     }
                     render_simple_active_job(app, ui);
                 });
@@ -143,11 +144,13 @@ fn render_intent_cards(app: &mut ClipForgeApp, ui: &mut egui::Ui) {
 
     let intents = [
         (SimpleIntent::Photo, "📷 Photo", "Realistic images & text"),
-        (SimpleIntent::Friend, "👥 Friend in Scene", "Put a friend into any photo"),
+        (SimpleIntent::Friend, "👥 Friend in Scene", "Put friends into any scene"),
         (SimpleIntent::Anime, "🎨 Anime / Art", "Illustration & stylized art"),
         (SimpleIntent::Animate, "🎬 Animate Photo", "Turn any photo into video"),
         (SimpleIntent::AudioVideo, "🔊 Video + Sound", "Video with matching audio"),
-        (SimpleIntent::Talk, "🗣 Talking Friend", "Clone voice & lip-sync"),
+        (SimpleIntent::Talk, "🗣 Talking Friend", "Make any friend speak"),
+        (SimpleIntent::Music, "🎵 Song (Music)", "Full songs with vocals & lyrics"),
+        (SimpleIntent::Speech, "🎙 Speech / Voice", "Offline voiceovers & cloning"),
     ];
 
     let card_w = ((ui.available_width() - 8.0) / 2.0).max(150.0);
@@ -212,22 +215,22 @@ fn render_simple_talk_card(app: &mut ClipForgeApp, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
             ui.label(RichText::new("🗣 Make a Friend Talk").size(13.0).strong());
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                if ui.small_button("+ Add Friend & Voice").clicked() {
+                if ui.small_button("+ Add Friend").clicked() {
                     app.show_cast_modal = true;
                 }
             });
         });
         ui.label(
-            RichText::new("Clones your friend's saved voice offline and animates their face speaking your line.")
+            RichText::new("Uses your friend's cloned voice if saved, or an instant built-in offline voice — then animates their face speaking.")
                 .size(11.0)
                 .color(TEXT_MUTED),
         );
         ui.add_space(6.0);
 
-        let voice_cast: Vec<_> = app.gen_status.cast.iter().filter(|c| c.has_voice).cloned().collect();
-        if voice_cast.is_empty() {
+        let all_cast = app.gen_status.cast.clone();
+        if all_cast.is_empty() {
             ui.label(
-                RichText::new("Add a friend with a face photo and a short 5–12s voice clip first.")
+                RichText::new("Add a friend with a face photo first (voice clip is optional!).")
                     .size(11.5)
                     .color(ACCENT_AMBER),
             );
@@ -237,19 +240,31 @@ fn render_simple_talk_card(app: &mut ClipForgeApp, ui: &mut egui::Ui) {
             return;
         }
 
-        let sel_name = voice_cast
-            .iter()
-            .find(|c| c.id == app.voice_cast_id)
-            .map(|c| c.name.as_str())
-            .unwrap_or("Pick a friend");
+        let sel_member = all_cast.iter().find(|c| c.id == app.voice_cast_id).cloned();
+        let sel_label = sel_member
+            .as_ref()
+            .map(|c| {
+                if c.has_voice {
+                    format!("🎙 {} (Cloned Voice)", c.name)
+                } else {
+                    format!("🔊 {} (Built-in Voice)", c.name)
+                }
+            })
+            .unwrap_or_else(|| "Pick a friend".into());
         egui::ComboBox::from_id_salt("simple_talk_cast_cb")
-            .selected_text(format!("🎙 {sel_name}"))
+            .selected_text(sel_label)
             .width(ui.available_width() - 4.0)
             .show_ui(ui, |ui| {
-                for c in &voice_cast {
-                    ui.selectable_value(&mut app.voice_cast_id, c.id.clone(), format!("{} ({})", c.name, c.handle));
+                for c in &all_cast {
+                    let tag = if c.has_voice { "🎙 Cloned" } else { "🔊 Built-in" };
+                    ui.selectable_value(&mut app.voice_cast_id, c.id.clone(), format!("{} ({}) · {tag}", c.name, c.handle));
                 }
             });
+
+        if sel_member.as_ref().map(|c| !c.has_voice).unwrap_or(false) {
+            ui.add_space(4.0);
+            render_builtin_voice_picker(app, ui, "talk_builtin_voice_cb");
+        }
 
         ui.add_space(6.0);
         ui.label(RichText::new("What should they say?").size(11.5).strong());
@@ -280,6 +295,7 @@ fn render_simple_talk_card(app: &mut ClipForgeApp, ui: &mut egui::Ui) {
                     "text": txt,
                     "prompt": app.prompt_input.trim(),
                     "style_preset": app.preset_id,
+                    "voice_preset": app.speech_voice_preset,
                     "speed": app.voice_speed,
                     "add_to_timeline": false,
                 })));
@@ -288,11 +304,256 @@ fn render_simple_talk_card(app: &mut ClipForgeApp, ui: &mut egui::Ui) {
     });
 }
 
+fn render_builtin_voice_picker(app: &mut ClipForgeApp, ui: &mut egui::Ui, id_salt: &str) {
+    let presets = [
+        ("auto", "Default Narrator"),
+        ("male_deep", "Male Narrator (Deep)"),
+        ("female_clear", "Female Narrator (Clear)"),
+        ("hype_fast", "Fast Meme Announcer"),
+        ("dramatic_slow", "Dramatic Documentary"),
+    ];
+    let cur_lbl = presets
+        .iter()
+        .find(|(id, _)| *id == app.speech_voice_preset)
+        .map(|(_, l)| *l)
+        .unwrap_or("Default Narrator");
+    ui.horizontal(|ui| {
+        ui.label(RichText::new("Voice Style:").size(11.0).color(TEXT_MUTED));
+        egui::ComboBox::from_id_salt(id_salt)
+            .selected_text(cur_lbl)
+            .width((ui.available_width() - 80.0).max(150.0))
+            .show_ui(ui, |ui| {
+                for (pid, lbl) in presets {
+                    ui.selectable_value(&mut app.speech_voice_preset, pid.to_string(), lbl);
+                }
+            });
+    });
+}
+
+fn render_simple_music_card(app: &mut ClipForgeApp, ui: &mut egui::Ui) {
+    let music_model = app.gen_status.models.get("ace_step_music").cloned();
+    let is_ready = music_model.as_ref().map(|m| m.ready).unwrap_or(false);
+
+    card_frame().show(ui, |ui| {
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("🎵 Create a Full Song (Offline)").size(13.0).strong());
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                if is_ready {
+                    badge(ui, "● Music Ready", ACCENT_GREEN);
+                } else {
+                    badge(ui, "1-Click Setup", ACCENT_AMBER);
+                }
+            });
+        });
+        ui.label(
+            RichText::new("Generate full songs with singing vocals, custom lyrics, and studio beats completely offline — no Suno subscription needed.")
+                .size(11.0)
+                .color(TEXT_MUTED),
+        );
+        ui.add_space(6.0);
+
+        ui.label(RichText::new("Quick Genre / Vibe").size(11.0).strong().color(TEXT_MUTED));
+        let genres = [
+            ("Trap / Rap", "hard trap hip-hop banger, heavy 808 bass, crisp hi-hats, confident male rap vocals, 140 bpm"),
+            ("Pop", "catchy modern pop anthem, bright synths, punchy drums, expressive female vocals, radio mix"),
+            ("Rock", "high-energy modern rock anthem, distorted electric guitars, punchy live drums, powerful vocals"),
+            ("EDM", "euphoric festival EDM drop, massive supersaw synths, driving four-on-the-floor kick, energetic"),
+            ("Lo-Fi", "chill lo-fi hip-hop beat, dusty vinyl crackle, warm Rhodes piano, mellow boom-bap drums"),
+            ("Country", "upbeat modern country track, acoustic guitar, slide guitar, warm storytelling male vocals"),
+            ("Meme Jingle", "hilarious over-the-top dramatic 80s synth power ballad, huge drums, comedic epic chorus"),
+        ];
+        ui.horizontal_wrapped(|ui| {
+            for (lbl, tags) in genres {
+                let btn = egui::Button::new(RichText::new(lbl).size(10.5).color(TEXT_PRIMARY))
+                    .fill(BG_ELEVATED)
+                    .corner_radius(CornerRadius::same(12));
+                if ui.add(btn).clicked() {
+                    app.music_tags = tags.to_string();
+                }
+            }
+        });
+
+        ui.add_space(6.0);
+        ui.label(RichText::new("Song Style & Instruments").size(11.5).strong());
+        ui.add(
+            egui::TextEdit::multiline(&mut app.music_tags)
+                .desired_rows(2)
+                .desired_width(f32::INFINITY)
+                .hint_text("e.g. hype trap banger, heavy 808s, aggressive male rap vocals, dark synth melody..."),
+        );
+
+        ui.add_space(6.0);
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("Lyrics").size(11.5).strong());
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                ui.checkbox(&mut app.music_instrumental, "🎹 Instrumental only (no vocals)");
+            });
+        });
+        if !app.music_instrumental {
+            ui.add(
+                egui::TextEdit::multiline(&mut app.music_lyrics)
+                    .desired_rows(5)
+                    .desired_width(f32::INFINITY)
+                    .hint_text("[Verse]\nWoke up at 2AM outside the Waffle House...\n\n[Chorus]\nPut your hands up, we never going home..."),
+            );
+        }
+
+        ui.add_space(6.0);
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("Length:").size(11.0).color(TEXT_MUTED));
+            ui.add(egui::Slider::new(&mut app.music_duration_sec, 15.0..=150.0).step_by(5.0).suffix("s"));
+        });
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("Tempo (BPM):").size(11.0).color(TEXT_MUTED));
+            ui.add(egui::Slider::new(&mut app.music_bpm, 70..=180));
+        });
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("Title (optional):").size(11.0).color(TEXT_MUTED));
+            ui.add(
+                egui::TextEdit::singleline(&mut app.music_title)
+                    .desired_width(f32::INFINITY)
+                    .hint_text("My Banger Track"),
+            );
+        });
+
+        ui.add_space(8.0);
+        if let Some(m) = &music_model {
+            if !m.ready {
+                if let Some(d) = m.download.as_ref().filter(|d| d.status == "downloading") {
+                    ui.label(
+                        RichText::new(format!("⬇ Downloading Music Engine ({:.0}% · {:.1} MB/s)...", d.pct, d.speed_mbps))
+                            .size(11.0)
+                            .color(ACCENT_AMBER),
+                    );
+                    ui.add(egui::ProgressBar::new((d.pct as f32 / 100.0).clamp(0.0, 1.0)).show_percentage());
+                } else if ui
+                    .add(
+                        primary_button(&format!("⬇ Download Offline Music Engine ({:.1} GB)", m.missing_gb))
+                            .min_size(Vec2::new(ui.available_width(), 40.0)),
+                    )
+                    .clicked()
+                {
+                    app.api.send(ApiCommand::DownloadModel("ace_step_music".into()));
+                }
+                return;
+            }
+        }
+
+        if ui
+            .add_enabled(
+                is_ready,
+                primary_button("🎵 Create Song").min_size(Vec2::new(ui.available_width(), 42.0)),
+            )
+            .clicked()
+        {
+            let tags = app.music_tags.trim().to_string();
+            if tags.is_empty() {
+                app.push_toast("Pick a genre chip or describe the song style first.", ToastKind::Warning);
+            } else {
+                app.api.send(ApiCommand::GenerateMusic(json!({
+                    "tags": tags,
+                    "lyrics": app.music_lyrics.trim(),
+                    "title": app.music_title.trim(),
+                    "instrumental": app.music_instrumental,
+                    "duration_sec": app.music_duration_sec,
+                    "bpm": app.music_bpm,
+                    "add_to_timeline": false,
+                })));
+            }
+        }
+    });
+}
+
+fn render_simple_speech_card(app: &mut ClipForgeApp, ui: &mut egui::Ui) {
+    card_frame().show(ui, |ui| {
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("🎙 Create Offline Speech / Voiceover").size(13.0).strong());
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                if ui.small_button("+ Add Friend Voice").clicked() {
+                    app.show_cast_modal = true;
+                }
+            });
+        });
+        ui.label(
+            RichText::new("Generate crisp offline voiceovers instantly with built-in voices, or clone any saved friend's real voice.")
+                .size(11.0)
+                .color(TEXT_MUTED),
+        );
+        ui.add_space(6.0);
+
+        let voice_friends: Vec<_> = app.gen_status.cast.iter().filter(|c| c.has_voice).cloned().collect();
+        let selected_speaker_lbl = if app.voice_cast_id.is_empty() {
+            "🔊 Built-in Offline Narrator (Instant)".to_string()
+        } else {
+            voice_friends
+                .iter()
+                .find(|c| c.id == app.voice_cast_id)
+                .map(|c| format!("🎙 {}'s Cloned Voice", c.name))
+                .unwrap_or_else(|| "🔊 Built-in Offline Narrator (Instant)".to_string())
+        };
+        ui.label(RichText::new("Speaker").size(11.0).strong().color(TEXT_MUTED));
+        egui::ComboBox::from_id_salt("simple_speech_speaker_cb")
+            .selected_text(selected_speaker_lbl)
+            .width(ui.available_width() - 4.0)
+            .show_ui(ui, |ui| {
+                ui.selectable_value(&mut app.voice_cast_id, String::new(), "🔊 Built-in Offline Narrator (Instant)");
+                for c in &voice_friends {
+                    ui.selectable_value(&mut app.voice_cast_id, c.id.clone(), format!("🎙 {} ({}) · Cloned Voice", c.name, c.handle));
+                }
+            });
+
+        if app.voice_cast_id.is_empty() || !voice_friends.iter().any(|c| c.id == app.voice_cast_id) {
+            ui.add_space(4.0);
+            render_builtin_voice_picker(app, ui, "speech_builtin_voice_cb");
+        }
+
+        ui.add_space(6.0);
+        ui.label(RichText::new("What should the voice say?").size(11.5).strong());
+        ui.add(
+            egui::TextEdit::multiline(&mut app.voice_text)
+                .desired_rows(4)
+                .desired_width(f32::INFINITY)
+                .hint_text("Type any narration, meme intro, or dialogue line..."),
+        );
+
+        ui.add_space(4.0);
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("Speed:").size(11.0).color(TEXT_MUTED));
+            ui.add(egui::Slider::new(&mut app.voice_speed, 0.70..=1.50).step_by(0.05));
+        });
+
+        ui.add_space(8.0);
+        if ui
+            .add(primary_button("🎙 Create Speech").min_size(Vec2::new(ui.available_width(), 42.0)))
+            .clicked()
+        {
+            let txt = app.voice_text.trim().to_string();
+            if txt.is_empty() {
+                app.push_toast("Type what you want the voice to say first.", ToastKind::Warning);
+            } else {
+                let use_cast = voice_friends.iter().any(|c| c.id == app.voice_cast_id);
+                let mut body = json!({
+                    "text": txt,
+                    "voice_preset": app.speech_voice_preset,
+                    "speed": app.voice_speed,
+                    "add_to_timeline": false,
+                });
+                if use_cast {
+                    body["cast_id"] = json!(app.voice_cast_id);
+                }
+                app.api.send(ApiCommand::SpeakText(body));
+            }
+        }
+    });
+}
+
 fn render_simple_create_card(app: &mut ClipForgeApp, ui: &mut egui::Ui) {
     let is_video = app.simple_intent.is_video();
     let mode = if is_video { StudioMode::Video } else { StudioMode::Image };
-    let eff_intent = if !is_video && app.simple_intent == SimpleIntent::Photo && app.simple_unfiltered {
-        "uncensored"
+    let eff_intent = if !is_video && matches!(app.simple_intent, SimpleIntent::Photo | SimpleIntent::Friend) && app.simple_unfiltered {
+        if app.simple_intent == SimpleIntent::Friend { "uncensored_friend" } else { "uncensored" }
+    } else if app.simple_intent == SimpleIntent::Animate && app.simple_unfiltered_video {
+        "uncensored_video"
     } else {
         app.simple_intent.as_api_intent()
     };
@@ -443,7 +704,7 @@ fn render_simple_create_card(app: &mut ClipForgeApp, ui: &mut egui::Ui) {
                 SimpleIntent::Anime => "e.g. Cyberpunk swordsman standing on a rainy neon rooftop at midnight...",
                 SimpleIntent::Animate => "e.g. He slowly turns to the camera with a stunned expression while sparks fly...",
                 SimpleIntent::AudioVideo => "e.g. Breaking news anchor shouting dramatically with loud sirens in the background...",
-                SimpleIntent::Talk => "",
+                SimpleIntent::Talk | SimpleIntent::Music | SimpleIntent::Speech => "",
             }
         };
         ui.add(
@@ -561,49 +822,81 @@ fn render_simple_create_card(app: &mut ClipForgeApp, ui: &mut egui::Ui) {
 
         ui.add_space(6.0);
 
-        // Unfiltered Engine Toggle on Photo mode (makes installed Chroma1-HD 1-click reachable!)
-        if app.simple_intent == SimpleIntent::Photo {
-            let chroma_ready = app
+        // Unfiltered Engine Toggle on Photo AND Friend in Scene (with Automatic Face Lock!)
+        if matches!(app.simple_intent, SimpleIntent::Photo | SimpleIntent::Friend) {
+            let has_unfiltered_img = ["lustify_sdxl", "pony_realism", "chroma_hd"]
+                .iter()
+                .any(|id| app.gen_status.models.get(*id).map(|m| m.ready).unwrap_or(false));
+            let face_swap_ready = app
                 .gen_status
                 .models
-                .get("chroma_hd")
+                .get("face_swap")
                 .map(|m| m.ready)
                 .unwrap_or(false);
-            if chroma_ready {
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new("Generator:").size(11.0).color(TEXT_MUTED));
-                    let fast_btn = egui::Button::new(
-                        RichText::new("⚡ Fast Everyday")
-                            .size(11.0)
-                            .color(if !app.simple_unfiltered { Color32::WHITE } else { TEXT_MUTED }),
-                    )
-                    .fill(if !app.simple_unfiltered { ACCENT_BLUE } else { BG_ELEVATED })
-                    .corner_radius(CornerRadius::same(10));
-                    if ui.add(fast_btn).on_hover_text("Fastest for normal photos & visible text").clicked() {
-                        app.simple_unfiltered = false;
+            ui.horizontal(|ui| {
+                ui.label(RichText::new("Mode:").size(11.0).color(TEXT_MUTED));
+                let fast_lbl = if app.simple_intent == SimpleIntent::Friend {
+                    "⚡ Standard Edit"
+                } else {
+                    "⚡ Fast Everyday"
+                };
+                let fast_btn = egui::Button::new(
+                    RichText::new(fast_lbl)
+                        .size(11.0)
+                        .color(if !app.simple_unfiltered { Color32::WHITE } else { TEXT_MUTED }),
+                )
+                .fill(if !app.simple_unfiltered { ACCENT_BLUE } else { BG_ELEVATED })
+                .corner_radius(CornerRadius::same(10));
+                if ui.add(fast_btn).clicked() {
+                    app.simple_unfiltered = false;
+                }
+                let unf_lbl = if app.simple_intent == SimpleIntent::Friend {
+                    "🔥 Unfiltered + Face Lock"
+                } else {
+                    "🔥 Unfiltered (No Limits)"
+                };
+                let unf_btn = egui::Button::new(
+                    RichText::new(unf_lbl)
+                        .size(11.0)
+                        .color(if app.simple_unfiltered { Color32::WHITE } else { TEXT_MUTED }),
+                )
+                .fill(if app.simple_unfiltered { ACCENT_RED } else { BG_ELEVATED })
+                .corner_radius(CornerRadius::same(10));
+                if ui
+                    .add(unf_btn)
+                    .on_hover_text("Generates completely unfiltered scenes and automatically locks your real friend's face onto the result")
+                    .clicked()
+                {
+                    app.simple_unfiltered = true;
+                }
+            });
+            if app.simple_unfiltered {
+                ui.add_space(3.0);
+                ui.horizontal_wrapped(|ui| {
+                    if !has_unfiltered_img {
+                        if ui.small_button("⬇ Get Unfiltered Pack (7.2 GB)").clicked() {
+                            app.api.send(ApiCommand::DownloadStarterPack("uncensored_meme_pack".into()));
+                        }
+                    } else if app.simple_intent == SimpleIntent::Friend && !face_swap_ready {
+                        if ui.small_button("⬇ Get Auto Face Lock (0.7 GB)").clicked() {
+                            app.api.send(ApiCommand::DownloadModel("face_swap".into()));
+                        }
+                    } else if app.simple_intent == SimpleIntent::Friend && face_swap_ready {
+                        badge(ui, "✓ Auto Friend Face Lock ON", ACCENT_GREEN);
                     }
-                    let unf_btn = egui::Button::new(
-                        RichText::new("🔥 Unfiltered (No Limits)")
-                            .size(11.0)
-                            .color(if app.simple_unfiltered { Color32::WHITE } else { TEXT_MUTED }),
-                    )
-                    .fill(if app.simple_unfiltered { ACCENT_RED } else { BG_ELEVATED })
-                    .corner_radius(CornerRadius::same(10));
-                    if ui
-                        .add(unf_btn)
-                        .on_hover_text("Uses your installed open uncensored model (Chroma1-HD) — trained without content scrubbing")
-                        .clicked()
-                    {
-                        app.simple_unfiltered = true;
+                    if !app.gen_status.models.get("lustify_sdxl").map(|m| m.ready).unwrap_or(false) && has_unfiltered_img {
+                        if ui.small_button("⬇ Upgrade to Best Unfiltered Photo (6.5 GB)").clicked() {
+                            app.api.send(ApiCommand::DownloadModel("lustify_sdxl".into()));
+                        }
                     }
                 });
-                ui.add_space(4.0);
             }
+            ui.add_space(4.0);
         }
 
-        // Video Adherence Toggle (Fast 4-step vs Full-CFG Follow Prompt Closer!)
+        // Video Adherence & Unfiltered Motion Toggle
         if app.simple_intent == SimpleIntent::Animate {
-            ui.horizontal(|ui| {
+            ui.horizontal_wrapped(|ui| {
                 ui.label(RichText::new("Quality:").size(11.0).color(TEXT_MUTED));
                 let fast_v = egui::Button::new(
                     RichText::new("⚡ Fast (~35s)")
@@ -628,6 +921,19 @@ fn render_simple_create_card(app: &mut ClipForgeApp, ui: &mut egui::Ui) {
                     .clicked()
                 {
                     app.simple_high_adherence = true;
+                }
+            });
+            ui.add_space(3.0);
+            let unf_vid_ready = ["wan22_remix_i2v", "wan22_smoothmix_i2v"]
+                .iter()
+                .any(|id| app.gen_status.models.get(*id).map(|m| m.ready).unwrap_or(false));
+            ui.horizontal_wrapped(|ui| {
+                ui.checkbox(&mut app.simple_unfiltered_video, "🔥 Unfiltered Motion")
+                    .on_hover_text("Uses uncensored community video motion model (zero refusal, expressive action)");
+                if app.simple_unfiltered_video && !unf_vid_ready {
+                    if ui.small_button("⬇ Get Unfiltered Video (18 GB)").clicked() {
+                        app.api.send(ApiCommand::DownloadModel("wan22_remix_i2v".into()));
+                    }
                 }
             });
             ui.add_space(4.0);
@@ -670,6 +976,8 @@ fn render_simple_create_card(app: &mut ClipForgeApp, ui: &mut egui::Ui) {
                         SimpleIntent::Animate => "Video Animator",
                         SimpleIntent::AudioVideo => "Video + Sound Creator",
                         SimpleIntent::Talk => "Talking Video Creator",
+                        SimpleIntent::Music => "Offline Music Engine",
+                        SimpleIntent::Speech => "Offline Speech Engine",
                     };
                     if ui
                         .add(
@@ -712,12 +1020,15 @@ fn submit_simple_creation(app: &mut ClipForgeApp, is_video: bool) {
         app.push_toast("Type a quick description of what you want first.", ToastKind::Warning);
         return;
     }
-    let intent = if !is_video && app.simple_intent == SimpleIntent::Photo && app.simple_unfiltered {
-        "uncensored"
+    let intent = if !is_video && matches!(app.simple_intent, SimpleIntent::Photo | SimpleIntent::Friend) && app.simple_unfiltered {
+        if app.simple_intent == SimpleIntent::Friend { "uncensored_friend" } else { "uncensored" }
+    } else if app.simple_intent == SimpleIntent::Animate && app.simple_unfiltered_video {
+        "uncensored_video"
     } else {
         app.simple_intent.as_api_intent()
     };
     let loras = app.active_loras_json();
+    let auto_face_swap = !is_video && app.simple_intent == SimpleIntent::Friend && app.simple_unfiltered;
 
     if is_video {
         let mut body = json!({
@@ -752,6 +1063,7 @@ fn submit_simple_creation(app: &mut ClipForgeApp, is_video: bool) {
             "match_photo_aspect": true,
             "auto_enhance": app.simple_auto_enhance,
             "auto_polish": app.simple_auto_hd && !app.simple_four_grid,
+            "auto_face_swap": auto_face_swap,
             "batch_size": if app.simple_four_grid { 4 } else { 1 },
             "loras": loras,
             "add_to_timeline": false,
@@ -774,7 +1086,13 @@ fn render_simple_active_job(app: &mut ClipForgeApp, ui: &mut egui::Ui) {
         ui.add_space(8.0);
         card_frame().show(ui, |ui| {
             ui.horizontal(|ui| {
-                let kind_lbl = if j.kind == "video" { "Creating video..." } else { "Creating image..." };
+                let kind_lbl = if j.kind == "video" {
+                    "Creating video..."
+                } else if j.kind == "audio" {
+                    "Creating music / speech..."
+                } else {
+                    "Creating image..."
+                };
                 ui.label(RichText::new(format!("⚡ {kind_lbl}")).strong().size(12.0));
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     if ui.small_button("✕ Stop").clicked() {
@@ -809,6 +1127,7 @@ fn build_video_chain(videos: &[VaultVideo], current: &VaultVideo) -> Vec<String>
 enum ResolvedSimpleItem {
     Image(GalleryImage),
     Video(VaultVideo),
+    Audio(AudioTrack),
 }
 
 fn resolve_selected_item(app: &ClipForgeApp) -> Option<ResolvedSimpleItem> {
@@ -827,23 +1146,36 @@ fn resolve_selected_item(app: &ClipForgeApp) -> Option<ResolvedSimpleItem> {
             .find(|v| &v.filename == fnm)
             .cloned()
             .map(ResolvedSimpleItem::Video),
+        Some(SimpleAsset::Audio(fnm)) => app
+            .gen_status
+            .audio_tracks
+            .iter()
+            .find(|a| &a.filename == fnm)
+            .cloned()
+            .map(ResolvedSimpleItem::Audio),
         None => None,
     }
     .or_else(|| {
-        let g = app.gen_status.gallery.first();
-        let v = app.gen_status.videos.first();
-        match (g, v) {
-            (Some(img), Some(vid)) => {
-                if vid.mtime > img.mtime {
-                    Some(ResolvedSimpleItem::Video(vid.clone()))
-                } else {
-                    Some(ResolvedSimpleItem::Image(img.clone()))
-                }
+        let mut best_mtime = -1.0_f64;
+        let mut best: Option<ResolvedSimpleItem> = None;
+        if let Some(img) = app.gen_status.gallery.first() {
+            if img.mtime > best_mtime {
+                best_mtime = img.mtime;
+                best = Some(ResolvedSimpleItem::Image(img.clone()));
             }
-            (Some(img), None) => Some(ResolvedSimpleItem::Image(img.clone())),
-            (None, Some(vid)) => Some(ResolvedSimpleItem::Video(vid.clone())),
-            (None, None) => None,
         }
+        if let Some(vid) = app.gen_status.videos.first() {
+            if vid.mtime > best_mtime {
+                best_mtime = vid.mtime;
+                best = Some(ResolvedSimpleItem::Video(vid.clone()));
+            }
+        }
+        if let Some(aud) = app.gen_status.audio_tracks.first() {
+            if aud.mtime > best_mtime {
+                best = Some(ResolvedSimpleItem::Audio(aud.clone()));
+            }
+        }
+        best
     })
 }
 
@@ -856,10 +1188,10 @@ fn render_simple_result_canvas(app: &mut ClipForgeApp, ui: &mut egui::Ui, ctx: &
         .cloned();
 
     let selected = resolve_selected_item(app);
-    let is_video_selected = matches!(selected, Some(ResolvedSimpleItem::Video(_)));
+    let has_transport = matches!(selected, Some(ResolvedSimpleItem::Video(_)) | Some(ResolvedSimpleItem::Audio(_)));
 
     let strip_h = 84.0;
-    let transport_h = if is_video_selected { 38.0 } else { 0.0 };
+    let transport_h = if has_transport { 38.0 } else { 0.0 };
     let chips_h = 46.0;
     let stage_h = (ui.available_height() - strip_h - chips_h - transport_h - 28.0).max(220.0);
 
@@ -905,6 +1237,104 @@ fn render_simple_result_canvas(app: &mut ClipForgeApp, ui: &mut egui::Ui, ctx: &
         }
         // Subtle badge showing it's a playable video
         let _ = vid;
+    } else if let Some(ResolvedSimpleItem::Audio(aud)) = &selected {
+        let meta = aud.meta.as_ref();
+        let is_song = meta.and_then(|m| m.subtype.as_deref()) == Some("song");
+        let title = meta
+            .and_then(|m| m.title.as_deref())
+            .filter(|s| !s.is_empty())
+            .unwrap_or(&aud.filename);
+        let subtitle = if is_song {
+            meta.and_then(|m| m.tags.as_deref()).unwrap_or("Offline Studio Track")
+        } else {
+            meta.and_then(|m| m.speaker.as_deref()).unwrap_or("Offline Voiceover")
+        };
+
+        // Sleek Album / Waveform Card drawn natively with egui::Painter
+        let cx = stage_rect.center().x;
+        let cy = stage_rect.center().y;
+        let accent = if is_song { ACCENT_PURPLE } else { ACCENT_BLUE };
+        let badge_r = Rect::from_center_size(Pos2::new(cx, cy - 86.0), Vec2::splat(78.0));
+        painter.rect_filled(badge_r, 18.0, accent);
+        painter.text(
+            badge_r.center(),
+            egui::Align2::CENTER_CENTER,
+            if is_song { "🎵" } else { "🎙" },
+            egui::FontId::proportional(36.0),
+            Color32::WHITE,
+        );
+        painter.text(
+            Pos2::new(cx, cy - 28.0),
+            egui::Align2::CENTER_CENTER,
+            title,
+            egui::FontId::proportional(19.0),
+            Color32::WHITE,
+        );
+        let sub_short: String = subtitle.chars().take(72).collect();
+        painter.text(
+            Pos2::new(cx, cy - 4.0),
+            egui::Align2::CENTER_CENTER,
+            sub_short,
+            egui::FontId::proportional(12.0),
+            TEXT_MUTED,
+        );
+
+        // Animated live equalizer bars synced to playhead
+        let bar_count = 28usize;
+        let total_w = (stage_rect.width() * 0.62).clamp(180.0, 420.0);
+        let bar_step = total_w / bar_count as f32;
+        let base_y = cy + 68.0;
+        let t_phase = app.player.playhead_sec as f32 * 7.5;
+        let dur = app.player.single_video_dur.max(0.5) as f32;
+        let progress = (app.player.playhead_sec as f32 / dur).clamp(0.0, 1.0);
+        for i in 0..bar_count {
+            let frac = i as f32 / bar_count as f32;
+            let wave = if app.player.is_playing {
+                ((t_phase + i as f32 * 0.65).sin().abs() * 0.65
+                    + (t_phase * 1.7 - i as f32 * 0.4).cos().abs() * 0.35)
+            } else {
+                0.25 + ((i as f32 * 0.9).sin().abs() * 0.45)
+            };
+            let bh = (10.0 + wave * 42.0).clamp(8.0, 56.0);
+            let bx = cx - total_w * 0.5 + i as f32 * bar_step + 2.0;
+            let bar_rect = Rect::from_min_max(
+                Pos2::new(bx, base_y - bh),
+                Pos2::new(bx + (bar_step - 4.0).max(3.0), base_y),
+            );
+            let col = if frac <= progress { accent } else { Color32::from_rgb(54, 64, 88) };
+            painter.rect_filled(bar_rect, 3.0, col);
+        }
+
+        // Lyrics or spoken script snippet below equalizer
+        let body_txt = if is_song {
+            meta.and_then(|m| m.lyrics.as_deref()).unwrap_or("")
+        } else {
+            meta.and_then(|m| m.text.as_deref()).unwrap_or("")
+        };
+        if !body_txt.trim().is_empty() {
+            let preview_lines: String = body_txt
+                .lines()
+                .filter(|l| !l.trim().is_empty())
+                .take(4)
+                .collect::<Vec<_>>()
+                .join("  ·  ")
+                .chars()
+                .take(150)
+                .collect();
+            painter.text(
+                Pos2::new(cx, base_y + 26.0),
+                egui::Align2::CENTER_CENTER,
+                preview_lines,
+                egui::FontId::proportional(11.5),
+                TEXT_MUTED,
+            );
+        }
+
+        let click_r = ui.interact(stage_rect, ui.id().with("simple_aud_click"), Sense::click());
+        if click_r.clicked() {
+            let d = app.player.single_video_dur.max(0.5);
+            app.player.toggle_play(d);
+        }
     } else if let Some(ResolvedSimpleItem::Image(item)) = &selected {
         let key = format!("simple_full_{}", item.filename);
         if let Some(tex) = app.api.get_or_load_image(&key, &item.image_path, 1536).cloned() {
@@ -943,8 +1373,8 @@ fn render_simple_result_canvas(app: &mut ClipForgeApp, ui: &mut egui::Ui, ctx: &
         );
     }
 
-    // 1b. Native Video Play/Pause & Scrub Bar (right under video inside Simple Mode!)
-    if let Some(ResolvedSimpleItem::Video(_)) = &selected {
+    // 1b. Native Video / Audio Play/Pause & Scrub Bar (right under video/song/speech inside Simple Mode!)
+    if matches!(selected, Some(ResolvedSimpleItem::Video(_)) | Some(ResolvedSimpleItem::Audio(_))) {
         ui.add_space(4.0);
         Frame::new()
             .fill(BG_PANEL)
@@ -1044,6 +1474,36 @@ fn render_simple_result_canvas(app: &mut ClipForgeApp, ui: &mut egui::Ui, ctx: &
                         app.ui_mode = UiMode::Pro;
                     }
                 }
+                Some(ResolvedSimpleItem::Audio(aud)) => {
+                    if ui.add(primary_button(if app.player.is_playing { "⏸ Pause" } else { "▶ Play Track" })).clicked() {
+                        let dur = app.player.single_video_dur.max(0.5);
+                        app.player.toggle_play(dur);
+                    }
+                    if ui.button("🎬 Use as Video Soundtrack").on_hover_text("Adds this track onto your Pro Editor timeline audio layer").clicked() {
+                        let lbl = aud
+                            .meta
+                            .as_ref()
+                            .and_then(|m| m.title.clone())
+                            .unwrap_or_else(|| aud.filename.clone());
+                        app.api.send(ApiCommand::AddAudioOverlay(json!({
+                            "audio_path": aud.audio_path,
+                            "start_sec": 0.0,
+                            "volume": 0.9,
+                            "duck_main_audio": false,
+                            "label": lbl,
+                        })));
+                        app.player.stop_playback();
+                        app.ui_mode = UiMode::Pro;
+                    }
+                    if ui.button("📂 Show File").on_hover_text("Open folder containing this audio file").clicked() {
+                        reveal_in_os(&aud.audio_path);
+                    }
+                    if ui.button("🗑 Delete").clicked() {
+                        app.player.stop_playback();
+                        app.api.send(ApiCommand::DeleteAudioTrack(aud.filename.clone()));
+                        app.simple_selected = None;
+                    }
+                }
                 Some(ResolvedSimpleItem::Image(item)) => {
                     if ui.add(primary_button("🎬 Turn into Video")).clicked() {
                         app.simple_intent = SimpleIntent::Animate;
@@ -1054,6 +1514,33 @@ fn render_simple_result_canvas(app: &mut ClipForgeApp, ui: &mut egui::Ui, ctx: &
                             filename: item.filename.clone(),
                         });
                         app.push_toast("Photo loaded! Describe the motion and click Create Video.", ToastKind::Success);
+                    }
+
+                    // 1-Click Friend Face Lock onto any generated photo!
+                    let face_lock_ready = app.gen_status.models.get("face_swap").map(|m| m.ready).unwrap_or(false);
+                    if !app.gen_status.cast.is_empty() {
+                        let swapping = app.busy_flags.contains("face_swap");
+                        if face_lock_ready {
+                            ui.menu_button(if swapping { "Locking Face..." } else { "👥 Lock Friend Face" }, |ui| {
+                                let cast = app.gen_status.cast.clone();
+                                for c in &cast {
+                                    if ui.button(format!("Lock {} ({})", c.name, c.handle)).clicked() {
+                                        app.busy_flags.insert("face_swap".into());
+                                        app.api.send(ApiCommand::SwapFaces {
+                                            filename: item.filename.clone(),
+                                            body: json!({ "cast_ids": [c.id] }),
+                                        });
+                                        ui.close_menu();
+                                    }
+                                }
+                            });
+                        } else if ui
+                            .button("⬇ Get Face Lock (0.7 GB)")
+                            .on_hover_text("Downloads pure-ONNX Friend Face Lock so you can stamp any friend's face onto any photo in 1 second")
+                            .clicked()
+                        {
+                            app.api.send(ApiCommand::DownloadModel("face_swap".into()));
+                        }
                     }
 
                     if ui.button("👤 Fix Face").on_hover_text("Detects and sharpens faces automatically").clicked() {
@@ -1148,16 +1635,18 @@ fn render_simple_result_canvas(app: &mut ClipForgeApp, ui: &mut egui::Ui, ctx: &
 
     ui.add_space(8.0);
 
-    // 3. Unified Chronological Recent Creations Filmstrip (BOTH Photos AND Videos together!)
+    // 3. Unified Chronological Recent Creations Filmstrip (Photos, Videos, AND Songs/Speech!)
     enum StripEntry {
         Img(GalleryImage),
         Vid(VaultVideo),
+        Aud(AudioTrack),
     }
     impl StripEntry {
         fn mtime(&self) -> f64 {
             match self {
                 StripEntry::Img(g) => g.mtime,
                 StripEntry::Vid(v) => v.mtime,
+                StripEntry::Aud(a) => a.mtime,
             }
         }
     }
@@ -1168,8 +1657,11 @@ fn render_simple_result_canvas(app: &mut ClipForgeApp, ui: &mut egui::Ui, ctx: &
     for v in app.gen_status.videos.iter().take(20) {
         entries.push(StripEntry::Vid(v.clone()));
     }
+    for a in app.gen_status.audio_tracks.iter().take(20) {
+        entries.push(StripEntry::Aud(a.clone()));
+    }
     entries.sort_by(|a, b| b.mtime().partial_cmp(&a.mtime()).unwrap_or(std::cmp::Ordering::Equal));
-    entries.truncate(24);
+    entries.truncate(28);
 
     Frame::new()
         .fill(BG_PANEL)
@@ -1248,6 +1740,40 @@ fn render_simple_result_canvas(app: &mut ClipForgeApp, ui: &mut egui::Ui, ctx: &
                                     );
                                     if click.clicked() {
                                         app.simple_selected = Some(SimpleAsset::Video(v.filename.clone()));
+                                    }
+                                }
+                                StripEntry::Aud(a) => {
+                                    let is_sel = matches!(&selected, Some(ResolvedSimpleItem::Audio(s)) if s.filename == a.filename);
+                                    let is_song = a.meta.as_ref().and_then(|m| m.subtype.as_deref()) == Some("song");
+                                    let snippet: String = a
+                                        .meta
+                                        .as_ref()
+                                        .and_then(|m| m.title.as_deref())
+                                        .unwrap_or(&a.filename)
+                                        .chars()
+                                        .take(14)
+                                        .collect();
+                                    let badge_txt = if is_song { "🎵 Song" } else { "🎙 Speech" };
+                                    let fr = Frame::new()
+                                        .fill(if is_sel { Color32::from_rgb(56, 30, 96) } else { BG_ELEVATED })
+                                        .stroke(Stroke::new(
+                                            if is_sel { 2.0_f32 } else { 1.0_f32 },
+                                            if is_sel { ACCENT_PURPLE } else { BORDER_SUBTLE },
+                                        ))
+                                        .corner_radius(CornerRadius::same(6))
+                                        .inner_margin(Margin::symmetric(8, 6))
+                                        .show(ui, |ui| {
+                                            ui.set_min_size(Vec2::new(82.0, 48.0));
+                                            ui.label(RichText::new(badge_txt).size(11.0).strong().color(Color32::WHITE));
+                                            ui.label(RichText::new(snippet).size(10.0).color(TEXT_MUTED));
+                                        });
+                                    let click = ui.interact(
+                                        fr.response.rect,
+                                        ui.id().with(("aud_tile", &a.filename)),
+                                        Sense::click(),
+                                    );
+                                    if click.clicked() {
+                                        app.simple_selected = Some(SimpleAsset::Audio(a.filename.clone()));
                                     }
                                 }
                             }

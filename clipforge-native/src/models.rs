@@ -308,6 +308,8 @@ pub struct GeneratorStatus {
     #[serde(default)]
     pub videos: Vec<VaultVideo>,
     #[serde(default)]
+    pub audio_tracks: Vec<AudioTrack>,
+    #[serde(default)]
     pub ref_images: Vec<RefImageItem>,
     #[serde(default)]
     pub cast: Vec<CastMember>,
@@ -706,6 +708,60 @@ pub struct VaultVideo {
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
+pub struct AudioMeta {
+    #[serde(default)]
+    pub subtype: Option<String>,
+    #[serde(default)]
+    pub model: Option<String>,
+    #[serde(default)]
+    pub title: Option<String>,
+    #[serde(default)]
+    pub tags: Option<String>,
+    #[serde(default)]
+    pub lyrics: Option<String>,
+    #[serde(default)]
+    pub text: Option<String>,
+    #[serde(default)]
+    pub speaker: Option<String>,
+    #[serde(default)]
+    pub instrumental: Option<bool>,
+    #[serde(default)]
+    pub duration_sec: Option<f64>,
+    #[serde(default)]
+    pub bpm: Option<u32>,
+    #[serde(default)]
+    pub keyscale: Option<String>,
+    #[serde(default)]
+    pub seed: Option<i64>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct AudioTrack {
+    #[serde(default)]
+    pub filename: String,
+    #[serde(default)]
+    pub audio_path: String,
+    #[serde(default)]
+    pub url: String,
+    #[serde(default)]
+    pub size_bytes: u64,
+    #[serde(default)]
+    pub mtime: f64,
+    #[serde(default)]
+    pub meta: Option<AudioMeta>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct BuiltinVoice {
+    #[serde(default)]
+    pub id: String,
+    #[serde(default)]
+    pub label: String,
+    #[serde(default)]
+    pub hint: String,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
 pub struct RefImageItem {
     #[serde(default)]
     pub filename: String,
@@ -741,6 +797,10 @@ pub struct CastMember {
 pub struct VoiceStatus {
     #[serde(default)]
     pub ready: bool,
+    #[serde(default)]
+    pub builtin_tts_ready: bool,
+    #[serde(default)]
+    pub builtin_voices: Vec<BuiltinVoice>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]

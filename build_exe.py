@@ -131,6 +131,7 @@ def main() -> None:
         "clipforge.cast",
         "clipforge.civitai",
         "clipforge.director",
+        "clipforge.face_swapper",
         "clipforge.generator",
         "clipforge.renderer",
         "clipforge.sfx",

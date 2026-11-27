@@ -41,6 +41,7 @@ from .director import (
     plan_storyboard_beats_local,
 )
 from .engine import ProjectEngine
+from .face_swapper import swap_faces_in_image
 from .generator import (
     CAMERA_PRESETS,
     COMFYUI_DIR,
@@ -53,6 +54,7 @@ from .generator import (
     download_manager,
     ensure_comfyui_running,
     generate_image_via_comfyui,
+    generate_music_via_comfyui,
     generate_video_via_comfyui,
     get_model_availability,
     get_starter_packs,
@@ -65,12 +67,15 @@ from .generator import (
     read_asset_metadata,
     resolve_auto_model,
     save_lora_trigger,
+    write_asset_metadata,
 )
 from .media import IMAGE_EXTENSIONS, MEDIA_EXTENSIONS, VIDEO_EXTENSIONS
 from .models import MemeTemplateType, TransitionType
 from .platform_utils import detect_gpu_info
 from .sfx import ensure_builtin_sfx_file, list_builtin_sfx
-from .voice import clone_voice_offline, get_voice_cloner_status
+from .voice import clone_voice_offline, get_voice_cloner_status, synthesize_speech_offline
+
+AUDIO_EXTENSIONS = {".mp3", ".wav", ".flac", ".ogg", ".opus", ".m4a"}
 
 
 def _resolve_static_dir() -> Path:
@@ -444,6 +449,7 @@ class GenerateImageRequest(BaseModel):
     match_photo_aspect: bool = False
     auto_enhance: bool = False
     auto_polish: bool = False
+    auto_face_swap: bool = False
     steps: int | None = None
     cfg: float | None = None
     denoise: float = 1.0
@@ -502,8 +508,42 @@ class TalkVideoRequest(BaseModel):
     text: str
     prompt: str = ""
     style_preset: str | None = None
+    voice_preset: str = "auto"
     speed: float = 1.0
     add_to_timeline: bool = True
+
+
+class FaceSwapRequest(BaseModel):
+    cast_ids: list[str] = []
+    face_paths: list[str] = []
+
+
+class GenerateMusicRequest(BaseModel):
+    tags: str
+    lyrics: str = ""
+    title: str = ""
+    instrumental: bool = False
+    duration_sec: float = 45.0
+    bpm: int = 120
+    keyscale: str = "C major"
+    language: str = "en"
+    steps: int = 8
+    cfg: float = 1.0
+    seed: int = -1
+    add_to_timeline: bool = False
+    volume: float = 0.85
+
+
+class SpeakTextRequest(BaseModel):
+    text: str
+    cast_id: str | None = None
+    voice_preset: str = "auto"
+    speed: float = 1.0
+    title: str = ""
+    add_to_timeline: bool = False
+    start_sec: float = 0.0
+    volume: float = 1.15
+    duck_main_audio: bool = True
 
 
 class StoryboardPlanRequest(BaseModel):
@@ -1017,32 +1057,133 @@ async def api_clone_voice(req: CloneVoiceRequest) -> dict[str, Any]:
     return {"job_id": job.id, "status": "queued", "jobs": job_manager.list_jobs()}
 
 
+@app.post("/api/voice/speak")
+async def api_speak_text(req: SpeakTextRequest) -> dict[str, Any]:
+    """Generate offline speech/voiceover using either a friend's cloned voice (F5-TTS) or instant built-in offline voices."""
+    clean_text = (req.text or "").strip()
+    if not clean_text:
+        raise HTTPException(status_code=400, detail="Speech text cannot be empty.")
+
+    member = None
+    if req.cast_id:
+        member = await asyncio.to_thread(get_cast_manager().get_member, req.cast_id)
+        if not member:
+            raise HTTPException(status_code=404, detail="Cast member not found.")
+
+    use_clone = bool(member and member.get("voice_path"))
+    speaker_name = member["name"] if member else (req.voice_preset or "Narrator")
+    job_model = "f5_tts" if use_clone else "offline_tts"
+    job = job_manager.create(kind="audio", model=job_model, prompt=f"🎙 {speaker_name}: {clean_text[:60]}")
+
+    async def _run_speak_job() -> None:
+        out_dir = engine.workspace_dir / "generated_audio"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            if use_clone and member:
+                job_manager.update(job.id, status="running", progress_pct=25, message=f"Cloning {member['name']}'s voice (F5-TTS)...")
+                res = await asyncio.to_thread(
+                    clone_voice_offline,
+                    text=clean_text,
+                    ref_audio_path=member["voice_path"],
+                    output_dir=out_dir,
+                    ref_text=member.get("voice_ref_text", ""),
+                    speed=req.speed,
+                )
+            else:
+                job_manager.update(job.id, status="running", progress_pct=35, message="Synthesizing offline voiceover...")
+                res = await asyncio.to_thread(
+                    synthesize_speech_offline,
+                    text=clean_text,
+                    output_dir=out_dir,
+                    voice_preset=req.voice_preset,
+                    speed=req.speed,
+                )
+
+            out_file = Path(res["audio_path"])
+            clean_title = (req.title or "").strip() or f"{speaker_name}: {clean_text[:32]}"
+            write_asset_metadata(
+                out_file,
+                {
+                    "kind": "audio",
+                    "subtype": "speech",
+                    "model": res.get("engine", job_model),
+                    "title": clean_title,
+                    "text": clean_text,
+                    "speaker": speaker_name,
+                    "voice_preset": req.voice_preset,
+                    "speed": req.speed,
+                    "duration_sec": res.get("duration_sec", 0.0),
+                    "generation_time_sec": res.get("generation_time_sec", 0.0),
+                },
+            )
+            overlay_id = None
+            if req.add_to_timeline:
+                ov = await asyncio.to_thread(
+                    engine.add_audio_overlay,
+                    None,
+                    str(out_file),
+                    req.start_sec,
+                    req.volume,
+                    req.duck_main_audio,
+                    f"🎙 {clean_title[:28]}",
+                )
+                overlay_id = ov.id
+            job_manager.update(
+                job.id,
+                status="completed",
+                progress_pct=100,
+                message=f"Speech ready ({res['duration_sec']}s)",
+                result={
+                    **res,
+                    "title": clean_title,
+                    "audio_url": f"/api/generate/audio/{out_file.name}",
+                    "overlay_id": overlay_id,
+                },
+            )
+        except Exception as exc:
+            job_manager.update(job.id, status="failed", message=str(exc), error=str(exc))
+
+    asyncio.create_task(_run_speak_job())
+    return {"job_id": job.id, "status": "queued", "jobs": job_manager.list_jobs()}
+
+
 @app.post("/api/voice/talk-video")
 async def api_talking_friend_video(req: TalkVideoRequest) -> dict[str, Any]:
-    """1-click offline pipeline: clone friend's voice with F5-TTS -> animate lip-synced talking video (Wan 2.2 S2V or I2V+mux)."""
+    """1-click offline pipeline: clone friend's voice (or built-in offline TTS) -> animate lip-synced talking video."""
     clean_text = (req.text or "").strip()
     if not clean_text:
         raise HTTPException(status_code=400, detail="Dialogue text cannot be empty.")
     member = await asyncio.to_thread(get_cast_manager().get_member, req.cast_id)
     if not member:
         raise HTTPException(status_code=404, detail="Cast member not found.")
-    if not member.get("voice_path"):
-        raise HTTPException(status_code=400, detail=f"Attach a 5-12s voice sample to '{member['name']}' first.")
 
+    has_cloned_voice = bool(member.get("voice_path") and Path(member["voice_path"]).exists())
     job = job_manager.create(kind="video", model="talk_sync", prompt=f"🎙 {member['name']}: {clean_text}")
 
     async def _run_talk_job() -> None:
         gpu_label = detect_gpu_info().get("short_name") or "local GPU"
-        job_manager.update(job.id, status="running", progress_pct=10, message=f"Step 1/2: Cloning {member['name']}'s voice on {gpu_label}...")
+        if has_cloned_voice:
+            job_manager.update(job.id, status="running", progress_pct=10, message=f"Step 1/2: Cloning {member['name']}'s voice on {gpu_label}...")
+        else:
+            job_manager.update(job.id, status="running", progress_pct=10, message=f"Step 1/2: Synthesizing offline voice for {member['name']}...")
         try:
-            voice_res = await asyncio.to_thread(
-                clone_voice_offline,
-                text=clean_text,
-                ref_audio_path=member["voice_path"],
-                output_dir=engine.workspace_dir / "cloned_voices",
-                ref_text=member.get("voice_ref_text", ""),
-                speed=req.speed,
-            )
+            if has_cloned_voice:
+                voice_res = await asyncio.to_thread(
+                    clone_voice_offline,
+                    text=clean_text,
+                    ref_audio_path=member["voice_path"],
+                    output_dir=engine.workspace_dir / "cloned_voices",
+                    ref_text=member.get("voice_ref_text", ""),
+                    speed=req.speed,
+                )
+            else:
+                voice_res = await asyncio.to_thread(
+                    synthesize_speech_offline,
+                    text=clean_text,
+                    output_dir=engine.workspace_dir / "cloned_voices",
+                    voice_preset=req.voice_preset,
+                    speed=req.speed,
+                )
             wav_path = Path(voice_res["audio_path"])
             dur_sec = max(1.5, float(voice_res.get("duration_sec") or 3.5))
 
@@ -1530,6 +1671,26 @@ def _list_video_gallery(limit: int = 36) -> list[dict[str, Any]]:
     ]
 
 
+def _list_audio_gallery(limit: int = 36) -> list[dict[str, Any]]:
+    aud_dir = engine.workspace_dir / "generated_audio"
+    if not aud_dir.exists():
+        return []
+    files = [p for p in aud_dir.iterdir() if p.is_file() and p.suffix.lower() in AUDIO_EXTENSIONS]
+    files.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+    return [
+        {
+            "kind": "audio",
+            "filename": p.name,
+            "audio_path": str(p.resolve()),
+            "url": f"/api/generate/audio/{p.name}",
+            "size_bytes": p.stat().st_size,
+            "mtime": p.stat().st_mtime,
+            "meta": read_asset_metadata(p),
+        }
+        for p in files[:limit]
+    ]
+
+
 def _lora_triggers_file() -> Path:
     return engine.workspace_dir / "lora_triggers.json"
 
@@ -1675,6 +1836,7 @@ async def api_generate_status() -> dict[str, Any]:
     models = await asyncio.to_thread(get_model_availability)
     gallery = await asyncio.to_thread(_list_image_gallery)
     videos = await asyncio.to_thread(_list_video_gallery)
+    audio_tracks = await asyncio.to_thread(_list_audio_gallery)
     ref_images = await asyncio.to_thread(_list_ref_images)
     gpu = await asyncio.to_thread(detect_gpu_info)
     cast = await asyncio.to_thread(get_cast_manager().list_members)
@@ -1699,6 +1861,7 @@ async def api_generate_status() -> dict[str, Any]:
         "camera_presets": CAMERA_PRESETS,
         "gallery": gallery,
         "videos": videos,
+        "audio_tracks": audio_tracks,
         "ref_images": ref_images,
         "cast": cast,
         "voice": voice_st,
@@ -1790,6 +1953,148 @@ async def api_detail_faces_image(filename: str, req: FaceDetailRequest | None = 
 
     asyncio.create_task(_run_face_job())
     return {"job_id": job.id, "status": "queued", "jobs": job_manager.list_jobs()}
+
+
+@app.post("/api/generate/image/{filename}/swap-faces")
+async def api_swap_faces_image(filename: str, req: FaceSwapRequest) -> dict[str, Any]:
+    """1-click pure-ONNX Face Lock: swap 1-2 real friend faces onto any generated image."""
+    target = _resolve_safe_dir_file(engine.workspace_dir / "generated_images", filename, IMAGE_EXTENSIONS)
+    face_paths: list[str] = []
+    cm = get_cast_manager()
+    for cid in (req.cast_ids or [])[:2]:
+        m = await asyncio.to_thread(cm.get_member, cid)
+        if m and m.get("photo_path") and Path(m["photo_path"]).exists():
+            face_paths.append(m["photo_path"])
+    for fp in (req.face_paths or [])[:2]:
+        if fp and Path(fp).exists() and len(face_paths) < 2:
+            face_paths.append(fp)
+    if not face_paths:
+        raise HTTPException(status_code=400, detail="Select 1 or 2 friends (or face photos) to lock onto this image.")
+
+    try:
+        res = await asyncio.to_thread(
+            swap_faces_in_image,
+            target,
+            face_paths,
+            engine.workspace_dir / "generated_images",
+            COMFYUI_DIR,
+        )
+        orig_meta = read_asset_metadata(target) or {}
+        write_asset_metadata(
+            Path(res["image_path"]),
+            {
+                **orig_meta,
+                "parent_image": target.name,
+                "face_swapped": True,
+                "faces_swapped": res["faces_swapped"],
+            },
+        )
+        return {
+            **res,
+            "url": f"/api/generate/image/{res['filename']}",
+            "gallery": await asyncio.to_thread(_list_image_gallery),
+        }
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+
+@app.get("/api/generate/audio/{filename}")
+async def api_get_generated_audio(filename: str) -> FileResponse:
+    target = _resolve_safe_dir_file(engine.workspace_dir / "generated_audio", filename, AUDIO_EXTENSIONS)
+    ext = target.suffix.lower()
+    mt = "audio/mpeg" if ext == ".mp3" else ("audio/wav" if ext == ".wav" else "audio/flac")
+    return FileResponse(str(target), media_type=mt, filename=target.name)
+
+
+@app.delete("/api/generate/audio/{filename}")
+async def api_delete_generated_audio(filename: str) -> dict[str, Any]:
+    target = _resolve_safe_dir_file(engine.workspace_dir / "generated_audio", filename, AUDIO_EXTENSIONS)
+    target.unlink(missing_ok=True)
+    target.with_suffix(target.suffix + ".meta.json").unlink(missing_ok=True)
+    return {"deleted": filename, "audio_tracks": await asyncio.to_thread(_list_audio_gallery)}
+
+
+@app.post("/api/generate/music")
+async def api_generate_music(req: GenerateMusicRequest) -> dict[str, Any]:
+    """Generate a full offline Suno-style song (vocals + lyrics or instrumental) via native ComfyUI ACE-Step 1.5."""
+    tags_clean = (req.tags or "").strip()
+    if not tags_clean:
+        raise HTTPException(status_code=400, detail="Describe a music style/genre first (e.g. 'trap banger, heavy 808s, male vocals').")
+
+    avail = await asyncio.to_thread(get_model_availability)
+    if not avail.get("ace_step_music", {}).get("ready"):
+        miss = avail.get("ace_step_music", {}).get("missing_gb", 10.0)
+        raise HTTPException(
+            status_code=400,
+            detail=f"Offline Music Engine needs {miss} GB downloaded first (click Download Music Engine).",
+        )
+
+    job = job_manager.create(kind="audio", model="ace_step_music", prompt=f"🎵 {req.title.strip() or tags_clean[:50]}")
+
+    async def _run_music_job() -> None:
+        job_manager.update(job.id, status="running", progress_pct=5, message="Starting offline music studio (ACE-Step 1.5)...")
+        try:
+            def _prog(msg: str, pct: int | None = None) -> None:
+                upd: dict[str, Any] = {"message": msg}
+                if pct is not None:
+                    upd["progress_pct"] = pct
+                job_manager.update(job.id, **upd)
+
+            def _pid(pid: str) -> None:
+                job_manager.update(job.id, prompt_id=pid)
+
+            out_dir = engine.workspace_dir / "generated_audio"
+            res = await asyncio.to_thread(
+                generate_music_via_comfyui,
+                tags=tags_clean,
+                output_dir=out_dir,
+                lyrics=req.lyrics,
+                title=req.title,
+                instrumental=req.instrumental,
+                duration_sec=req.duration_sec,
+                bpm=req.bpm,
+                keyscale=req.keyscale,
+                language=req.language,
+                steps=req.steps,
+                cfg=req.cfg,
+                seed=req.seed,
+                base_url=COMFYUI_URL,
+                comfy_dir=COMFYUI_DIR,
+                auto_start=True,
+                on_progress=_prog,
+                on_prompt_id=_pid,
+                cancel_event=job.cancel_event,
+            )
+            overlay_id = None
+            if req.add_to_timeline:
+                ov = await asyncio.to_thread(
+                    engine.add_audio_overlay,
+                    None,
+                    res["audio_path"],
+                    0.0,
+                    req.volume,
+                    False,
+                    f"🎵 {res['title'][:28]}",
+                )
+                overlay_id = ov.id
+            job_manager.update(
+                job.id,
+                status="completed",
+                progress_pct=100,
+                message=f"Song ready ({res['duration_sec']}s in {res['generation_time_sec']}s)",
+                result={
+                    **res,
+                    "audio_url": f"/api/generate/audio/{res['filename']}",
+                    "overlay_id": overlay_id,
+                },
+            )
+        except GenerationCanceledError:
+            job_manager.update(job.id, status="canceled", message="Canceled by user")
+        except Exception as exc:
+            job_manager.update(job.id, status="failed", message=str(exc), error=str(exc))
+
+    asyncio.create_task(_run_music_job())
+    return {"job_id": job.id, "model": "ace_step_music", "status": "queued", "jobs": job_manager.list_jobs()}
 
 
 @app.get("/api/generate/video/{filename}")
@@ -2182,6 +2487,26 @@ async def api_generate_image(req: GenerateImageRequest) -> dict[str, Any]:
                 on_prompt_id=_on_pid,
                 cancel_event=job.cancel_event,
             )
+
+            if req.auto_face_swap and (img1 or img2) and avail.get("face_swap", {}).get("ready"):
+                _progress("Locking real friend face(s) onto scene...", 92)
+                face_srcs = [p for p in (img1, img2) if p and Path(p).exists()]
+                if face_srcs:
+                    for item in res.get("images", []):
+                        try:
+                            ip = Path(item["image_path"])
+                            await asyncio.to_thread(
+                                swap_faces_in_image,
+                                ip,
+                                face_srcs,
+                                out_dir,
+                                COMFYUI_DIR,
+                                ip,
+                            )
+                            orig_m = read_asset_metadata(ip) or {}
+                            write_asset_metadata(ip, {**orig_m, "face_swapped": True})
+                        except Exception:
+                            pass
 
             if req.auto_polish and int(res.get("batch_size", 1)) == 1:
                 _progress("Running 2× AI UltraSharp HD Polish...", 95)

@@ -1203,6 +1203,114 @@ def install_civitai_model(
     return {"download": dl, "downloads": civitai_download_manager.list_downloads()}
 
 
+@mcp.tool()
+def generate_music(
+    tags: str,
+    lyrics: str = "",
+    title: str = "",
+    instrumental: bool = False,
+    duration_sec: float = 45.0,
+    bpm: int = 120,
+    keyscale: str = "C major",
+    language: str = "en",
+    add_to_timeline: bool = False,
+) -> dict[str, Any]:
+    """Generate a full offline Suno-style song (vocals + lyrics or pure instrumental) using native ComfyUI ACE-Step 1.5 Turbo."""
+    from .generator import generate_music_via_comfyui
+
+    eng = get_engine()
+    with contextlib.redirect_stdout(sys.stderr):
+        res = generate_music_via_comfyui(
+            tags=tags,
+            output_dir=eng.workspace_dir / "generated_audio",
+            lyrics=lyrics,
+            title=title,
+            instrumental=instrumental,
+            duration_sec=duration_sec,
+            bpm=bpm,
+            keyscale=keyscale,
+            language=language,
+            auto_start=True,
+        )
+        overlay = None
+        if add_to_timeline:
+            overlay = eng.add_audio_overlay(
+                audio_path=res["audio_path"],
+                start_sec=0.0,
+                volume=0.85,
+                duck_main_audio=False,
+                label=f"🎵 {res['title'][:28]}",
+            )
+    return {**res, "overlay": overlay.model_dump() if overlay else None}
+
+
+@mcp.tool()
+def generate_speech(
+    text: str,
+    cast_id: str | None = None,
+    voice_preset: str = "auto",
+    speed: float = 1.0,
+    add_to_timeline: bool = False,
+) -> dict[str, Any]:
+    """Generate offline speech/voiceover using a saved friend's cloned voice (F5-TTS) or instant built-in offline voices (Windows SAPI / espeak-ng)."""
+    from .voice import synthesize_speech_offline
+
+    eng = get_engine()
+    out_dir = eng.workspace_dir / "generated_audio"
+    with contextlib.redirect_stdout(sys.stderr):
+        member = CastManager(eng.workspace_dir).get_member(cast_id) if cast_id else None
+        if member and member.get("voice_path"):
+            res = clone_voice_offline(
+                text=text,
+                ref_audio_path=member["voice_path"],
+                output_dir=out_dir,
+                ref_text=member.get("voice_ref_text", ""),
+                speed=speed,
+            )
+        else:
+            res = synthesize_speech_offline(
+                text=text,
+                output_dir=out_dir,
+                voice_preset=voice_preset,
+                speed=speed,
+            )
+        overlay = None
+        if add_to_timeline:
+            overlay = eng.add_audio_overlay(
+                audio_path=res["audio_path"],
+                start_sec=0.0,
+                volume=1.15,
+                duck_main_audio=True,
+                label=f"🎙 {text[:26]}",
+            )
+    return {**res, "overlay": overlay.model_dump() if overlay else None}
+
+
+@mcp.tool()
+def swap_friend_faces(
+    image_path: str,
+    cast_ids: list[str] | None = None,
+    face_paths: list[str] | None = None,
+) -> dict[str, Any]:
+    """Lock 1-2 real friend faces onto any generated image offline using pure-ONNX inswapper_128."""
+    from .face_swapper import swap_faces_in_image
+
+    eng = get_engine()
+    cm = CastManager(eng.workspace_dir)
+    srcs: list[str] = []
+    for cid in (cast_ids or [])[:2]:
+        m = cm.get_member(cid)
+        if m and m.get("photo_path"):
+            srcs.append(m["photo_path"])
+    for fp in (face_paths or [])[:2]:
+        if fp and len(srcs) < 2:
+            srcs.append(fp)
+    raw_p = Path(image_path).expanduser()
+    src_img = raw_p if raw_p.is_absolute() else (eng.workspace_dir / raw_p)
+    with contextlib.redirect_stdout(sys.stderr):
+        return swap_faces_in_image(src_img, srcs, eng.workspace_dir / "generated_images", COMFYUI_DIR)
+
+
 def main() -> None:
     mcp.run(transport="stdio")
 

@@ -206,6 +206,54 @@ impl NativeVideoPlayer {
         }
     }
 
+    pub fn tick_single_audio(&mut self, ctx: &Context, path: &str, duration_sec: f64) {
+        let dur = duration_sec.max(0.5);
+        if self.single_video_path != path {
+            self.select_single_video(path, dur, true);
+        } else {
+            self.single_video_dur = dur;
+        }
+
+        let now = Instant::now();
+        let dt = now.duration_since(self.last_tick).as_secs_f64().min(0.1);
+        self.last_tick = now;
+
+        if self.is_playing {
+            self.playhead_sec += dt;
+            if self.playhead_sec >= dur {
+                self.playhead_sec = dur;
+                self.stop_playback();
+            } else {
+                ctx.request_repaint();
+            }
+        }
+
+        let source_sec = self.playhead_sec.clamp(0.0, dur);
+        if self.is_playing {
+            let clip_key = format!("audio::{path}");
+            let need_new = match &self.active_stream {
+                Some(st) => st.clip_id != clip_key || st.stop_flag.load(Ordering::Relaxed),
+                None => true,
+            };
+            if need_new {
+                if let Some(st) = self.active_stream.take() {
+                    st.stop_flag.store(true, Ordering::SeqCst);
+                }
+                let stop_flag = Arc::new(AtomicBool::new(false));
+                spawn_audio_only_stream(
+                    path.to_string(),
+                    source_sec,
+                    (dur - source_sec).max(0.1),
+                    Arc::clone(&stop_flag),
+                );
+                self.active_stream = Some(ActiveStream {
+                    clip_id: clip_key,
+                    stop_flag,
+                });
+            }
+        }
+    }
+
     pub fn paint_single_frame(&self, painter: &egui::Painter, rect: Rect) -> bool {
         if let Some(tex) = &self.current_tex {
             let tsz = tex.size_vec2();
@@ -534,6 +582,55 @@ fn decode_single_video_frame(path: &str, sec: f64, w: u32, h: u32) -> Option<Col
         [w as usize, h as usize],
         &out.stdout[..expected],
     ))
+}
+
+fn spawn_audio_only_stream(path_a: String, start_sec: f64, remaining_sec: f64, stop_a: Arc<AtomicBool>) {
+    std::thread::spawn(move || {
+        let mut cmd = Command::new("ffmpeg");
+        cmd.args([
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-ss",
+            &format!("{start_sec:.3}"),
+            "-t",
+            &format!("{remaining_sec:.3}"),
+            "-i",
+            &path_a,
+            "-vn",
+            "-ar",
+            "44100",
+            "-ac",
+            "2",
+            "-f",
+            "wav",
+            "-",
+        ])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null());
+        #[cfg(windows)]
+        cmd.creation_flags(0x0800_0000);
+
+        if let Ok(out) = cmd.output() {
+            if stop_a.load(Ordering::Relaxed) || out.stdout.len() < 64 {
+                return;
+            }
+            if let Ok((_stream, handle)) = rodio::OutputStream::try_default() {
+                if let Ok(sink) = rodio::Sink::try_new(&handle) {
+                    sink.set_volume(1.0);
+                    if let Ok(src) = rodio::Decoder::new_wav(std::io::Cursor::new(out.stdout)) {
+                        sink.append(src);
+                        while !sink.empty() && !stop_a.load(Ordering::Relaxed) {
+                            std::thread::sleep(Duration::from_millis(25));
+                        }
+                        sink.stop();
+                    }
+                }
+            }
+        }
+        stop_a.store(true, Ordering::SeqCst);
+    });
 }
 
 #[allow(clippy::too_many_arguments)]

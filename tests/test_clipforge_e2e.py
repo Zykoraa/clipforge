@@ -438,6 +438,8 @@ def test_offline_generator_workflows_and_ref_upload_security(tmp_path: Path, mon
     status_json = r_status.json()
     assert set(status_json["models"].keys()) == {
         "wan22_i2v",
+        "wan22_remix_i2v",
+        "wan22_smoothmix_i2v",
         "wan22_t2v",
         "wan22_s2v",
         "wan22_5b",
@@ -447,9 +449,13 @@ def test_offline_generator_workflows_and_ref_upload_security(tmp_path: Path, mon
         "z_image_turbo",
         "krea2_turbo",
         "chroma_hd",
+        "lustify_sdxl",
+        "pony_realism",
         "illustrious_xl",
         "qwen_edit",
         "qwen_edit_2511",
+        "ace_step_music",
+        "face_swap",
         "upscale_ultrasharp",
         "rife_vfi",
     }
@@ -1105,7 +1111,7 @@ def test_civitai_new_architectures_starter_packs_and_checkpoints(tmp_path: Path,
     assert resolve_auto_model("image", intent="anime", comfy_dir=fake_comfy) == "illustrious_xl"
 
     packs = get_starter_packs(fake_comfy)
-    assert {p["id"] for p in packs} == {"fast_8gb", "hq_16gb", "anime_civitai"}
+    assert {p["id"] for p in packs} == {"fast_8gb", "hq_16gb", "uncensored_meme_pack", "music_pack", "anime_civitai"}
     assert any(p["recommended"] for p in packs)
 
     # 7. CivitAI URL parser, SSRF validation, folder routing, and secret store
@@ -1141,8 +1147,8 @@ def test_civitai_new_architectures_starter_packs_and_checkpoints(tmp_path: Path,
 
     r_st = client.get("/api/generate/status", headers=hdrs).json()
     assert r_st["civitai"]["has_api_key"] is True
-    assert len(r_st["civitai"]["curated"]) >= 10
-    assert len(r_st["starter_packs"]) == 3
+    assert len(r_st["civitai"]["curated"]) >= 16
+    assert len(r_st["starter_packs"]) == 5
     assert len(r_st["checkpoints"]) == 2
 
     # 9. Simple Mode direct video Continue (end-frame) + Stitch Chain endpoints
@@ -1163,6 +1169,104 @@ def test_civitai_new_architectures_starter_packs_and_checkpoints(tmp_path: Path,
     assert stch_json["parts"] == 2
     assert Path(stch_json["video_path"]).exists()
     assert stch_json["duration_sec"] >= 2.5
+
+
+def test_uncensored_facelock_music_and_offline_speech(tmp_path: Path, monkeypatch) -> None:
+    """Verify ACE-Step 1.5 music workflow, pure-ONNX emap parser, uncensored routing, and instant offline TTS speech."""
+    import shutil
+    import sys
+    import numpy as np
+    from clipforge import generator as gen_mod
+    from clipforge.face_swapper import extract_inswapper_emap
+    from clipforge.generator import build_ace_step_music_workflow, resolve_auto_model
+    from clipforge.voice import synthesize_speech_offline
+
+    # 1. Verify ACE-Step 1.5 Turbo AIO full-song workflow (vocals + lyrics AND instrumental mode)
+    wf_song = build_ace_step_music_workflow(
+        tags="hard trap banger, heavy 808s, male vocals",
+        lyrics="[Verse]\nLate night code\n[Chorus]\nShip it now",
+        duration_sec=45.0,
+        bpm=140,
+        seed=42,
+    )
+    assert wf_song["1"]["class_type"] == "CheckpointLoaderSimple"
+    assert wf_song["1"]["inputs"]["ckpt_name"] == "ace_step_1.5_turbo_aio.safetensors"
+    assert wf_song["3"]["class_type"] == "TextEncodeAceStepAudio1.5"
+    assert wf_song["3"]["inputs"]["bpm"] == 140
+    assert wf_song["5"]["class_type"] == "EmptyAceStep1.5LatentAudio"
+    assert wf_song["6"]["inputs"]["steps"] == 8
+    assert wf_song["7"]["class_type"] == "VAEDecodeAudio"
+    assert wf_song["8"]["class_type"] == "SaveAudioMP3"
+
+    wf_inst = build_ace_step_music_workflow(tags="chill lo-fi beat", lyrics="ignored", instrumental=True)
+    assert wf_inst["3"]["inputs"]["lyrics"] == "[Instrumental]"
+    assert "instrumental" in wf_inst["3"]["inputs"]["tags"].lower()
+
+    # 2. Verify pure-Python ONNX protobuf parser extracts exact (512, 512) float32 emap with zero `onnx` dependency
+    def _varint(v: int) -> bytes:
+        out = bytearray()
+        while True:
+            b = v & 0x7F
+            v >>= 7
+            if v:
+                out.append(b | 0x80)
+            else:
+                out.append(b)
+                break
+        return bytes(out)
+
+    def _ld(field_num: int, payload: bytes) -> bytes:
+        return _varint((field_num << 3) | 2) + _varint(len(payload)) + payload
+
+    rng = np.random.default_rng(123)
+    expected_emap = rng.standard_normal((512, 512)).astype(np.float32)
+    dims_payload = _varint(512) + _varint(512)
+    tensor_proto = (
+        _ld(1, dims_payload)
+        + _varint((2 << 3) | 0) + _varint(1)  # FLOAT
+        + _ld(9, expected_emap.tobytes())
+    )
+    graph_proto = _ld(5, tensor_proto)
+    model_proto = _ld(7, graph_proto)
+    fake_onnx = tmp_path / "inswapper_128.onnx"
+    fake_onnx.write_bytes(model_proto)
+    parsed_emap = extract_inswapper_emap(fake_onnx)
+    assert parsed_emap.shape == (512, 512)
+    assert np.allclose(parsed_emap, expected_emap)
+
+    # 3. Verify uncensored image & video auto-routing
+    fake_comfy = tmp_path / "comfy_unf"
+    (fake_comfy / "models" / "checkpoints").mkdir(parents=True)
+    ckpt = fake_comfy / "models" / "checkpoints" / "lustifySDXLNSFWSFW_v20.safetensors"
+    with open(ckpt, "wb") as fh:
+        fh.seek(110 * 1024 * 1024)
+        fh.write(b"\0")
+    assert resolve_auto_model("image", intent="uncensored", comfy_dir=fake_comfy) == "lustify_sdxl"
+    assert resolve_auto_model("audio", comfy_dir=fake_comfy) == "ace_step_music"
+
+    # 4. Verify instant offline TTS speech synthesis + HTTP /api/voice/speak + audio gallery serving
+    ws = tmp_path / "ws_aud"
+    eng = ProjectEngine(workspace_dir=ws)
+    monkeypatch.setattr(web_server, "engine", eng)
+    monkeypatch.setattr(web_server, "COMFYUI_DIR", fake_comfy)
+    monkeypatch.setattr(gen_mod, "COMFYUI_DIR", fake_comfy)
+
+    if sys.platform == "win32" or shutil.which("espeak-ng") or shutil.which("espeak"):
+        tts_res = synthesize_speech_offline("ClipForge offline speech check.", ws / "generated_audio", voice_preset="auto")
+        assert Path(tts_res["audio_path"]).exists()
+        assert tts_res["duration_sec"] > 0.2
+
+        client = TestClient(web_server.app)
+        token = re.search(r'<meta name="clipforge-token" content="([^"]+)"', client.get("/").text).group(1)
+        hdrs = {"X-ClipForge-Token": token}
+        r_st = client.get("/api/generate/status", headers=hdrs)
+        assert r_st.status_code == 200
+        tracks = r_st.json()["audio_tracks"]
+        assert len(tracks) >= 1
+        r_aud = client.get(tracks[0]["url"], headers=hdrs)
+        assert r_aud.status_code == 200
+        assert len(r_aud.content) > 256
+
 
 
 
