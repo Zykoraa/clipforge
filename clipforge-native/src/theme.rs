@@ -17,6 +17,7 @@ pub const ACCENT_RED: Color32 = Color32::from_rgb(239, 68, 68);
 
 pub fn apply_studio_theme(ctx: &egui::Context) {
     let mut style = Style::default();
+    style.animation_time = 0.16;
     let mut visuals = Visuals::dark();
 
     visuals.dark_mode = true;
@@ -67,6 +68,26 @@ pub fn apply_studio_theme(ctx: &egui::Context) {
     ctx.set_style(style);
 }
 
+/// Frame-rate-independent VSync-locked exponential ease-out interpolator (silky 60/120Hz while moving, 0 idle CPU once settled).
+pub fn smooth_value(ctx: &egui::Context, id: egui::Id, target: f32, speed: f32) -> f32 {
+    let dt = ctx.input(|i| i.unstable_dt).clamp(0.001, 0.05);
+    let mut cur = ctx.data_mut(|d| d.get_temp::<f32>(id)).unwrap_or(target);
+    let diff = target - cur;
+    if diff.abs() > 0.0015 {
+        let factor = 1.0 - (-speed * dt).exp();
+        cur += diff * factor;
+        ctx.request_repaint();
+    } else {
+        cur = target;
+    }
+    ctx.data_mut(|d| d.insert_temp(id, cur));
+    cur
+}
+
+pub fn smooth_bool(ctx: &egui::Context, id: egui::Id, flag: bool, speed: f32) -> f32 {
+    smooth_value(ctx, id, if flag { 1.0 } else { 0.0 }, speed)
+}
+
 pub fn lerp_color(a: Color32, b: Color32, t: f32) -> Color32 {
     let k = t.clamp(0.0, 1.0);
     let mix = |x: u8, y: u8| -> u8 { ((x as f32) + ((y as f32) - (x as f32)) * k).round().clamp(0.0, 255.0) as u8 };
@@ -101,7 +122,7 @@ pub fn badge(ui: &mut egui::Ui, text: &str, color: Color32) {
         });
 }
 
-/// Animated gently pulsing live status pill (uses 60fps breathing opacity when active).
+/// Animated gently pulsing live status pill locked to 60/120Hz VSync when pulsing.
 pub fn pulsing_status_pill(ui: &mut egui::Ui, text: &str, color: Color32, pulse: bool) {
     let bg = Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), 28);
     egui::Frame::new()
@@ -115,14 +136,14 @@ pub fn pulsing_status_pill(ui: &mut egui::Ui, text: &str, color: Color32, pulse:
                 let (dot_r, _) = ui.allocate_exact_size(Vec2::splat(8.0), Sense::hover());
                 let alpha = if pulse {
                     let t = ui.ctx().input(|i| i.time);
-                    ui.ctx().request_repaint_after(std::time::Duration::from_millis(50));
+                    ui.ctx().request_repaint();
                     (0.50 + 0.50 * (t * 3.2).sin() as f32).clamp(0.35, 1.0)
                 } else {
                     1.0
                 };
                 if pulse {
-                    let halo = Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), (70.0 * alpha) as u8);
-                    ui.painter().circle_filled(dot_r.center(), 4.8, halo);
+                    let halo = Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), (76.0 * alpha) as u8);
+                    ui.painter().circle_filled(dot_r.center(), 4.9, halo);
                 }
                 let core = Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), (255.0 * alpha) as u8);
                 ui.painter().circle_filled(dot_r.center(), 3.0, core);
@@ -131,7 +152,7 @@ pub fn pulsing_status_pill(ui: &mut egui::Ui, text: &str, color: Color32, pulse:
         });
 }
 
-/// Smooth GPU-animated sliding segmented control (pill indicator slides effortlessly between tabs).
+/// Smooth GPU-animated sliding segmented control using exponential ease-out interpolation.
 pub fn animated_segmented_bar(
     ui: &mut egui::Ui,
     id_salt: &str,
@@ -154,13 +175,16 @@ pub fn animated_segmented_bar(
 
     let inner = rect.shrink(3.0);
     let seg_w = inner.width() / (count as f32);
-    let target_x = inner.left() + seg_w * (active as f32);
-    let anim_x = ui
-        .ctx()
-        .animate_value_with_time(ui.id().with(("seg_slide", id_salt)), target_x, 0.18);
+    let anim_frac = smooth_value(
+        ui.ctx(),
+        ui.id().with(("seg_slide_f", id_salt)),
+        active as f32,
+        18.0,
+    );
+    let anim_x = inner.left() + seg_w * anim_frac;
 
     let pill_rect = Rect::from_min_size(Pos2::new(anim_x, inner.top()), Vec2::new(seg_w, inner.height()));
-    let glow = Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), 55);
+    let glow = Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), 60);
     painter.rect_filled(pill_rect.expand(1.5), 9.0, glow);
     painter.rect_filled(pill_rect, 8.0, accent);
 
@@ -172,9 +196,7 @@ pub fn animated_segmented_bar(
         );
         let resp = ui.interact(item_rect, ui.id().with(("seg_btn", id_salt, idx)), Sense::click());
         let is_act = idx == active;
-        let hover_t = ui
-            .ctx()
-            .animate_bool_with_time(ui.id().with(("seg_hov", id_salt, idx)), resp.hovered(), 0.14);
+        let hover_t = smooth_bool(ui.ctx(), ui.id().with(("seg_hov", id_salt, idx)), resp.hovered(), 16.0);
         if !is_act && hover_t > 0.01 {
             painter.rect_filled(
                 item_rect.shrink(1.0),
@@ -185,7 +207,7 @@ pub fn animated_segmented_bar(
         let txt_col = if is_act {
             Color32::WHITE
         } else {
-            lerp_color(TEXT_MUTED, Color32::WHITE, hover_t * 0.75)
+            lerp_color(TEXT_MUTED, Color32::WHITE, hover_t * 0.78)
         };
         painter.text(
             item_rect.center(),
@@ -201,7 +223,7 @@ pub fn animated_segmented_bar(
     clicked_idx
 }
 
-/// Smooth hover-lifted CTA button with subtle glow & animated tint.
+/// Smooth hover-lifted CTA button with exponential glow & tactile press spring.
 pub fn animated_cta_button(
     ui: &mut egui::Ui,
     id_salt: &str,
@@ -214,20 +236,21 @@ pub fn animated_cta_button(
     let (rect, resp) = ui.allocate_exact_size(Vec2::new(w, height), if enabled { Sense::click() } else { Sense::hover() });
     let painter = ui.painter_at(rect);
 
-    let hover_t = ui
-        .ctx()
-        .animate_bool_with_time(ui.id().with(("cta_hov", id_salt)), enabled && resp.hovered(), 0.16);
-    let press_t = ui
-        .ctx()
-        .animate_bool_with_time(ui.id().with(("cta_prs", id_salt)), enabled && resp.is_pointer_button_down_on(), 0.08);
+    let hover_t = smooth_bool(ui.ctx(), ui.id().with(("cta_hov", id_salt)), enabled && resp.hovered(), 16.0);
+    let press_t = smooth_bool(
+        ui.ctx(),
+        ui.id().with(("cta_prs", id_salt)),
+        enabled && resp.is_pointer_button_down_on(),
+        28.0,
+    );
 
-    let draw_rect = rect.translate(Vec2::new(0.0, press_t * 1.2 - hover_t * 0.8));
+    let draw_rect = rect.translate(Vec2::new(0.0, press_t * 1.4 - hover_t * 0.9));
     if enabled && hover_t > 0.02 {
-        let halo = Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), (65.0 * hover_t) as u8);
+        let halo = Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), (68.0 * hover_t) as u8);
         painter.rect_filled(draw_rect.expand(2.5), 12.0, halo);
     }
 
-    let bright = lerp_color(accent, Color32::WHITE, 0.14);
+    let bright = lerp_color(accent, Color32::WHITE, 0.15);
     let fill = if !enabled {
         BG_ELEVATED
     } else {
@@ -241,7 +264,7 @@ pub fn animated_cta_button(
     painter.rect_stroke(
         draw_rect,
         10.0,
-        Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, if enabled { 45 } else { 18 })),
+        Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, if enabled { 48 } else { 18 })),
         egui::StrokeKind::Inside,
     );
     painter.text(
@@ -254,12 +277,10 @@ pub fn animated_cta_button(
     resp
 }
 
-/// Smoothly interpolated progress bar with subtle animated shimmer sweep.
+/// Smooth VSync-locked 60/120Hz progress bar with layered soft luminous shimmer sweep.
 pub fn animated_progress_bar(ui: &mut egui::Ui, id_salt: &str, pct_0_1: f32, label: &str, accent: Color32) {
     let target = pct_0_1.clamp(0.02, 1.0);
-    let anim = ui
-        .ctx()
-        .animate_value_with_time(ui.id().with(("prog_val", id_salt)), target, 0.25);
+    let anim = smooth_value(ui.ctx(), ui.id().with(("prog_val", id_salt)), target, 10.0);
 
     let w = ui.available_width().max(120.0);
     let (rect, _) = ui.allocate_exact_size(Vec2::new(w, 16.0), Sense::hover());
@@ -272,16 +293,21 @@ pub fn animated_progress_bar(ui: &mut egui::Ui, id_salt: &str, pct_0_1: f32, lab
     let fill_rect = Rect::from_min_size(rect.min, Vec2::new(fill_w, rect.height()));
     painter.rect_filled(fill_rect, 8.0, accent);
 
-    // Subtle moving shimmer highlight inside active bar
+    // Continuous VSync shimmer highlight across the filled bar
     let t = ui.ctx().input(|i| i.time) as f32;
-    ui.ctx().request_repaint_after(std::time::Duration::from_millis(45));
-    let phase = (t * 0.75) % 1.0;
+    ui.ctx().request_repaint();
+    let phase = (t * 0.80) % 1.2 - 0.1;
     let shim_x = fill_rect.left() + phase * fill_w;
-    let shim_w = (fill_w * 0.28).clamp(16.0, 56.0);
-    let shim_rect = Rect::from_center_size(Pos2::new(shim_x, fill_rect.center().y), Vec2::new(shim_w, fill_rect.height()))
+    for (width_mul, alpha) in [(1.0_f32, 18u8), (0.55_f32, 30u8)] {
+        let shim_w = (fill_w * 0.34 * width_mul).clamp(14.0, 68.0);
+        let shim_rect = Rect::from_center_size(
+            Pos2::new(shim_x, fill_rect.center().y),
+            Vec2::new(shim_w, fill_rect.height()),
+        )
         .intersect(fill_rect);
-    if shim_rect.width() > 2.0 {
-        painter.rect_filled(shim_rect, 8.0, Color32::from_rgba_unmultiplied(255, 255, 255, 38));
+        if shim_rect.width() > 2.0 {
+            painter.rect_filled(shim_rect, 8.0, Color32::from_rgba_unmultiplied(255, 255, 255, alpha));
+        }
     }
 
     if !label.is_empty() {

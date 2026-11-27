@@ -401,7 +401,7 @@ pub fn render_main_layout(app: &mut ClipForgeApp, ctx: &egui::Context) {
                 });
         }
         if needs_toast_anim {
-            ctx.request_repaint_after(std::time::Duration::from_millis(16));
+            ctx.request_repaint();
         }
     }
 }

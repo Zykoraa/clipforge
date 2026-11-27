@@ -26,12 +26,27 @@ pub fn render_simple_workspace(app: &mut ClipForgeApp, ctx: &egui::Context) {
                     render_starter_pack_banner(app, ui);
                     render_intent_cards(app, ui);
                     ui.add_space(8.0);
+
+                    // Silky 60/120Hz exponential reveal when switching sub-studio tabs
+                    let prev_id = egui::Id::new("simple_prev_intent");
+                    let rev_id = egui::Id::new("simple_card_reveal");
+                    let prev_idx = ctx.data_mut(|d| d.get_temp::<u8>(prev_id));
+                    let cur_idx = app.simple_intent as u8;
+                    if prev_idx.map(|p| p != cur_idx).unwrap_or(false) {
+                        ctx.data_mut(|d| d.insert_temp(rev_id, 0.0_f32));
+                    }
+                    ctx.data_mut(|d| d.insert_temp(prev_id, cur_idx));
+                    let reveal = smooth_value(ctx, rev_id, 1.0, 14.0);
+                    ui.add_space((1.0 - reveal) * 8.0);
+                    ui.set_opacity(reveal.clamp(0.15, 1.0));
+
                     match app.simple_intent {
                         SimpleIntent::Talk => render_simple_talk_card(app, ui),
                         SimpleIntent::Music => render_simple_music_card(app, ui),
                         SimpleIntent::Speech => render_simple_speech_card(app, ui),
                         _ => render_simple_create_card(app, ui),
                     }
+                    ui.set_opacity(1.0);
                     render_simple_active_job(app, ui);
                 });
         });
@@ -206,9 +221,12 @@ fn render_intent_cards(app: &mut ClipForgeApp, ui: &mut egui::Ui) {
         for (idx, (intent, title, tip)) in sub_choices.iter().enumerate() {
             let active = app.simple_intent == *intent;
             let (rect, resp) = ui.allocate_exact_size(Vec2::new(pill_w, 30.0), Sense::click());
-            let hov = ui
-                .ctx()
-                .animate_bool_with_time(ui.id().with(("sub_pill_hov", idx, studio_idx)), resp.hovered(), 0.14);
+            let hov = smooth_bool(
+                ui.ctx(),
+                ui.id().with(("sub_pill_hov", idx, studio_idx)),
+                resp.hovered(),
+                16.0,
+            );
             let painter = ui.painter_at(rect);
             let bg = if active {
                 lerp_color(BG_CARD, studio_accent, 0.24)
@@ -1849,22 +1867,22 @@ fn render_simple_result_canvas(app: &mut ClipForgeApp, ui: &mut egui::Ui, ctx: &
             }
         }
     } else if let Some(j) = active_job.as_ref() {
-        // Animated pulsing AI generation status overlay (e.g. while composing audio or warming models)
+        // Silky VSync 60/120Hz pulsing AI generation status overlay
         let cx = stage_rect.center().x;
         let cy = stage_rect.center().y;
         let t = ctx.input(|i| i.time) as f32;
-        ctx.request_repaint_after(std::time::Duration::from_millis(32));
+        ctx.request_repaint();
         let accent = if j.kind == "audio" { ACCENT_PURPLE } else if j.kind == "video" { ACCENT_CYAN } else { ACCENT_BLUE };
         let pulse = 0.5 + 0.5 * (t * 3.0).sin();
         painter.circle_filled(
             Pos2::new(cx, cy - 42.0),
             36.0 + pulse * 10.0,
-            Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), 28),
+            Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), 26),
         );
         painter.circle_filled(
             Pos2::new(cx, cy - 42.0),
-            24.0 + pulse * 4.0,
-            Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), 65),
+            24.0 + pulse * 4.5,
+            Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), 64),
         );
         let icon = if j.kind == "audio" { "🎵" } else if j.kind == "video" { "🎬" } else { "✨" };
         painter.text(
@@ -1881,15 +1899,17 @@ fn render_simple_result_canvas(app: &mut ClipForgeApp, ui: &mut egui::Ui, ctx: &
             egui::FontId::proportional(13.5),
             Color32::WHITE,
         );
-        // Animated orbit dots
-        for k in 0..8 {
-            let ang = t * 2.4 + (k as f32) * std::f32::consts::TAU / 8.0;
+        // Smooth fading orbit trail at full monitor refresh rate
+        for k in 0..10 {
+            let ang = t * 2.6 - (k as f32) * 0.45;
             let dx = ang.cos() * 48.0;
             let dy = ang.sin() * 48.0;
-            let dot_a = (((k as f32 / 8.0) + (t * 0.6)) % 1.0 * 180.0 + 40.0) as u8;
+            let tail = 1.0 - (k as f32 / 10.0);
+            let dot_a = (tail * tail * 220.0 + 20.0) as u8;
+            let rad = 1.5 + tail * 2.0;
             painter.circle_filled(
                 Pos2::new(cx + dx, cy - 42.0 + dy),
-                2.5,
+                rad,
                 Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), dot_a),
             );
         }
@@ -1963,23 +1983,27 @@ fn render_simple_result_canvas(app: &mut ClipForgeApp, ui: &mut egui::Ui, ctx: &
             TEXT_MUTED,
         );
 
-        // Animated live equalizer bars synced to playhead
+        // Smoothly damped 60fps live equalizer bars synced to playhead
         let bar_count = 28usize;
         let total_w = (stage_rect.width() * 0.62).clamp(180.0, 420.0);
         let bar_step = total_w / bar_count as f32;
         let base_y = cy + 68.0;
-        let t_phase = app.player.playhead_sec as f32 * 7.5;
+        let t_phase = (ctx.input(|i| i.time) as f32) * 7.5;
         let dur = app.player.single_video_dur.max(0.5) as f32;
         let progress = (app.player.playhead_sec as f32 / dur).clamp(0.0, 1.0);
+        if app.player.is_playing {
+            ctx.request_repaint();
+        }
         for i in 0..bar_count {
             let frac = i as f32 / bar_count as f32;
-            let wave = if app.player.is_playing {
-                ((t_phase + i as f32 * 0.65).sin().abs() * 0.65
-                    + (t_phase * 1.7 - i as f32 * 0.4).cos().abs() * 0.35)
+            let target_wave = if app.player.is_playing {
+                (t_phase + i as f32 * 0.65).sin().abs() * 0.65
+                    + (t_phase * 1.7 - i as f32 * 0.4).cos().abs() * 0.35
             } else {
-                0.25 + ((i as f32 * 0.9).sin().abs() * 0.45)
+                0.22 + ((i as f32 * 0.9).sin().abs() * 0.38)
             };
-            let bh = (10.0 + wave * 42.0).clamp(8.0, 56.0);
+            let target_bh = (10.0 + target_wave * 44.0).clamp(8.0, 56.0);
+            let bh = smooth_value(ctx, ui.id().with(("eq_bar", i)), target_bh, 14.0);
             let bx = cx - total_w * 0.5 + i as f32 * bar_step + 2.0;
             let bar_rect = Rect::from_min_max(
                 Pos2::new(bx, base_y - bh),
@@ -2364,13 +2388,14 @@ fn render_simple_result_canvas(app: &mut ClipForgeApp, ui: &mut egui::Ui, ctx: &
                                     let is_sel = matches!(&selected, Some(ResolvedSimpleItem::Image(s)) if s.filename == g.filename);
                                     let key = format!("gal_{}", g.filename);
                                     let tex = app.api.get_or_load_image(&key, &g.image_path, 160).cloned();
-                                    Frame::new()
+                                    let tile_id = ui.id().with(("img_tile", &g.filename));
+                                    let fr = Frame::new()
                                         .fill(BG_ELEVATED)
                                         .stroke(Stroke::new(
                                             if is_sel { 2.0_f32 } else { 1.0_f32 },
                                             if is_sel { ACCENT_BLUE } else { BORDER_SUBTLE },
                                         ))
-                                        .corner_radius(CornerRadius::same(6))
+                                        .corner_radius(CornerRadius::same(8))
                                         .inner_margin(Margin::same(2))
                                         .show(ui, |ui| {
                                             if let Some(t) = tex {
@@ -2378,10 +2403,19 @@ fn render_simple_result_canvas(app: &mut ClipForgeApp, ui: &mut egui::Ui, ctx: &
                                                     .add(
                                                         Image::new(&t)
                                                             .fit_to_exact_size(Vec2::splat(56.0))
-                                                            .corner_radius(CornerRadius::same(4))
+                                                            .corner_radius(CornerRadius::same(6))
                                                             .sense(Sense::click()),
                                                     )
                                                     .on_hover_text("Photo — click to view");
+                                                let hov_t = smooth_bool(ctx, tile_id.with("h"), r.hovered(), 16.0);
+                                                if hov_t > 0.02 && !is_sel {
+                                                    ui.painter().rect_stroke(
+                                                        r.rect.expand(2.0),
+                                                        8.0,
+                                                        Stroke::new(1.5_f32, lerp_color(BORDER_SUBTLE, ACCENT_BLUE, hov_t)),
+                                                        egui::StrokeKind::Inside,
+                                                    );
+                                                }
                                                 if r.clicked() {
                                                     app.player.stop_playback();
                                                     app.simple_selected = Some(SimpleAsset::Image(g.filename.clone()));
@@ -2391,6 +2425,7 @@ fn render_simple_result_canvas(app: &mut ClipForgeApp, ui: &mut egui::Ui, ctx: &
                                                 app.simple_selected = Some(SimpleAsset::Image(g.filename.clone()));
                                             }
                                         });
+                                    let _ = fr;
                                 }
                                 StripEntry::Vid(v) => {
                                     let is_sel = matches!(&selected, Some(ResolvedSimpleItem::Video(s)) if s.filename == v.filename);
@@ -2421,7 +2456,7 @@ fn render_simple_result_canvas(app: &mut ClipForgeApp, ui: &mut egui::Ui, ctx: &
                                             ui.label(RichText::new(snippet).size(10.0).color(TEXT_MUTED));
                                         });
                                     let click = ui.interact(fr.response.rect, tile_id, Sense::click());
-                                    let hov_t = ctx.animate_bool_with_time(tile_id.with("h"), click.hovered(), 0.14);
+                                    let hov_t = smooth_bool(ctx, tile_id.with("h"), click.hovered(), 16.0);
                                     if hov_t > 0.02 && !is_sel {
                                         ui.painter().rect_stroke(
                                             fr.response.rect,
@@ -2468,7 +2503,7 @@ fn render_simple_result_canvas(app: &mut ClipForgeApp, ui: &mut egui::Ui, ctx: &
                                             ui.label(RichText::new(snippet).size(10.0).color(TEXT_MUTED));
                                         });
                                     let click = ui.interact(fr.response.rect, tile_id, Sense::click());
-                                    let hov_t = ctx.animate_bool_with_time(tile_id.with("h"), click.hovered(), 0.14);
+                                    let hov_t = smooth_bool(ctx, tile_id.with("h"), click.hovered(), 16.0);
                                     if hov_t > 0.02 && !is_sel {
                                         ui.painter().rect_stroke(
                                             fr.response.rect,
