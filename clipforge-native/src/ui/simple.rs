@@ -336,7 +336,7 @@ fn render_simple_music_card(app: &mut ClipForgeApp, ui: &mut egui::Ui) {
 
     card_frame().show(ui, |ui| {
         ui.horizontal(|ui| {
-            ui.label(RichText::new("🎵 Create a Full Song (Offline)").size(13.0).strong());
+            ui.label(RichText::new("🎵 Create Songs Offline").size(13.0).strong());
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 if is_ready {
                     badge(ui, "● Music Ready", ACCENT_GREEN);
@@ -345,76 +345,158 @@ fn render_simple_music_card(app: &mut ClipForgeApp, ui: &mut egui::Ui) {
                 }
             });
         });
-        ui.label(
-            RichText::new("Generate full songs with singing vocals, custom lyrics, and studio beats completely offline — no Suno subscription needed.")
-                .size(11.0)
-                .color(TEXT_MUTED),
-        );
-        ui.add_space(6.0);
 
-        ui.label(RichText::new("Quick Genre / Vibe").size(11.0).strong().color(TEXT_MUTED));
-        let genres = [
-            ("Trap / Rap", "hard trap hip-hop banger, heavy 808 bass, crisp hi-hats, confident male rap vocals, 140 bpm"),
-            ("Pop", "catchy modern pop anthem, bright synths, punchy drums, expressive female vocals, radio mix"),
-            ("Rock", "high-energy modern rock anthem, distorted electric guitars, punchy live drums, powerful vocals"),
-            ("EDM", "euphoric festival EDM drop, massive supersaw synths, driving four-on-the-floor kick, energetic"),
-            ("Lo-Fi", "chill lo-fi hip-hop beat, dusty vinyl crackle, warm Rhodes piano, mellow boom-bap drums"),
-            ("Country", "upbeat modern country track, acoustic guitar, slide guitar, warm storytelling male vocals"),
-            ("Meme Jingle", "hilarious over-the-top dramatic 80s synth power ballad, huge drums, comedic epic chorus"),
-        ];
-        ui.horizontal_wrapped(|ui| {
-            for (lbl, tags) in genres {
-                let btn = egui::Button::new(RichText::new(lbl).size(10.5).color(TEXT_PRIMARY))
-                    .fill(BG_ELEVATED)
-                    .corner_radius(CornerRadius::same(12));
-                if ui.add(btn).clicked() {
-                    app.music_tags = tags.to_string();
-                }
+        // Suno-style Simple vs Custom toggle
+        ui.add_space(4.0);
+        ui.horizontal(|ui| {
+            let simple_btn = egui::Button::new(
+                RichText::new("✨ Simple (Just an Idea)")
+                    .size(11.0)
+                    .color(if !app.music_custom_mode { Color32::WHITE } else { TEXT_MUTED }),
+            )
+            .fill(if !app.music_custom_mode { ACCENT_PURPLE } else { BG_ELEVATED })
+            .corner_radius(CornerRadius::same(10));
+            if ui.add(simple_btn).clicked() {
+                app.music_custom_mode = false;
+            }
+            let custom_btn = egui::Button::new(
+                RichText::new("🎛 Custom (Lyrics & Style)")
+                    .size(11.0)
+                    .color(if app.music_custom_mode { Color32::WHITE } else { TEXT_MUTED }),
+            )
+            .fill(if app.music_custom_mode { ACCENT_BLUE } else { BG_ELEVATED })
+            .corner_radius(CornerRadius::same(10));
+            if ui.add(custom_btn).clicked() {
+                app.music_custom_mode = true;
             }
         });
-
         ui.add_space(6.0);
-        ui.label(RichText::new("Song Style & Instruments").size(11.5).strong());
-        ui.add(
-            egui::TextEdit::multiline(&mut app.music_tags)
-                .desired_rows(2)
-                .desired_width(f32::INFINITY)
-                .hint_text("e.g. hype trap banger, heavy 808s, aggressive male rap vocals, dark synth melody..."),
-        );
 
-        ui.add_space(6.0);
-        ui.horizontal(|ui| {
-            ui.label(RichText::new("Lyrics").size(11.5).strong());
-            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                ui.checkbox(&mut app.music_instrumental, "🎹 Instrumental only (no vocals)");
+        if !app.music_custom_mode {
+            // SUNO SIMPLE MODE: 1 single idea box -> auto-writes lyrics, picks beat/style, generates 2 different versions!
+            ui.horizontal(|ui| {
+                ui.label(RichText::new("Song Idea").size(11.5).strong());
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    if ui.small_button("🎲 Random Idea").clicked() {
+                        let ideas = [
+                            "a hype diss track about my friend stealing my phone charger at 2am",
+                            "a dramatic 80s power ballad about getting Taco Bell at midnight",
+                            "an emotional rainy night song about losing my ranked promo match",
+                            "an aggressive gym workout phonk banger for hitting a new PR",
+                            "a chill lo-fi midnight car drive through neon city lights",
+                            "an upbeat pop anthem about skipping Monday morning work",
+                        ];
+                        let idx = (rand::random::<usize>()) % ideas.len();
+                        app.music_idea = ideas[idx].to_string();
+                    }
+                });
             });
-        });
-        if !app.music_instrumental {
             ui.add(
-                egui::TextEdit::multiline(&mut app.music_lyrics)
-                    .desired_rows(5)
+                egui::TextEdit::multiline(&mut app.music_idea)
+                    .desired_rows(4)
                     .desired_width(f32::INFINITY)
-                    .hint_text("[Verse]\nWoke up at 2AM outside the Waffle House...\n\n[Chorus]\nPut your hands up, we never going home..."),
+                    .hint_text("Throw in any rough idea — e.g. 'a diss track about Jake stealing my charger at 2am' or 'sad rainy drive song'..."),
             );
-        }
+            ui.label(
+                RichText::new("Automatically writes lyrics, picks matching beats & vocals, and creates different takes for you to compare.")
+                    .size(10.5)
+                    .color(TEXT_MUTED),
+            );
+            ui.add_space(6.0);
+            ui.horizontal_wrapped(|ui| {
+                ui.checkbox(&mut app.music_two_takes, "🎲 Make 2 different versions")
+                    .on_hover_text("Generates 2 distinct songs with different beats & arrangements just like Suno");
+                ui.checkbox(&mut app.music_instrumental, "🎹 Instrumental only");
+            });
+            ui.add_space(4.0);
+            ui.horizontal(|ui| {
+                let planning = app.busy_flags.contains("plan_song");
+                if ui
+                    .add_enabled(!planning, egui::Button::new(if planning { "Writing..." } else { "✨ Preview / Edit Auto-Lyrics" }))
+                    .on_hover_text("Generate lyrics & style first so you can tweak them in Custom mode")
+                    .clicked()
+                {
+                    let idea = app.music_idea.trim().to_string();
+                    if idea.is_empty() {
+                        app.push_toast("Type a rough song idea first.", ToastKind::Warning);
+                    } else {
+                        app.busy_flags.insert("plan_song".into());
+                        app.api.send(ApiCommand::PlanSong(json!({
+                            "idea": idea,
+                            "instrumental": app.music_instrumental,
+                            "variations": 2,
+                            "duration_sec": app.music_duration_sec,
+                        })));
+                    }
+                }
+            });
+        } else {
+            // CUSTOM MODE: Full lyrics, style, genre chips, length, BPM
+            ui.label(RichText::new("Quick Genre / Vibe").size(11.0).strong().color(TEXT_MUTED));
+            let genres = [
+                ("Trap / Rap", "hard trap hip-hop banger, heavy 808 bass, crisp hi-hats, confident male rap vocals, 140 bpm"),
+                ("Pop", "catchy modern pop anthem, bright synths, punchy drums, expressive female vocals, radio mix"),
+                ("Rock", "high-energy modern rock anthem, distorted electric guitars, punchy live drums, powerful vocals"),
+                ("EDM", "euphoric festival EDM drop, massive supersaw synths, driving four-on-the-floor kick, energetic"),
+                ("Lo-Fi", "chill lo-fi hip-hop beat, dusty vinyl crackle, warm Rhodes piano, mellow boom-bap drums"),
+                ("Country", "upbeat modern country track, acoustic guitar, slide guitar, warm storytelling male vocals"),
+                ("Meme Jingle", "hilarious over-the-top dramatic 80s synth power ballad, huge drums, comedic epic chorus"),
+            ];
+            ui.horizontal_wrapped(|ui| {
+                for (lbl, tags) in genres {
+                    let btn = egui::Button::new(RichText::new(lbl).size(10.5).color(TEXT_PRIMARY))
+                        .fill(BG_ELEVATED)
+                        .corner_radius(CornerRadius::same(12));
+                    if ui.add(btn).clicked() {
+                        app.music_tags = tags.to_string();
+                    }
+                }
+            });
 
-        ui.add_space(6.0);
-        ui.horizontal(|ui| {
-            ui.label(RichText::new("Length:").size(11.0).color(TEXT_MUTED));
-            ui.add(egui::Slider::new(&mut app.music_duration_sec, 15.0..=150.0).step_by(5.0).suffix("s"));
-        });
-        ui.horizontal(|ui| {
-            ui.label(RichText::new("Tempo (BPM):").size(11.0).color(TEXT_MUTED));
-            ui.add(egui::Slider::new(&mut app.music_bpm, 70..=180));
-        });
-        ui.horizontal(|ui| {
-            ui.label(RichText::new("Title (optional):").size(11.0).color(TEXT_MUTED));
+            ui.add_space(6.0);
+            ui.label(RichText::new("Style & Instruments (optional)").size(11.5).strong());
             ui.add(
-                egui::TextEdit::singleline(&mut app.music_title)
+                egui::TextEdit::multiline(&mut app.music_tags)
+                    .desired_rows(2)
                     .desired_width(f32::INFINITY)
-                    .hint_text("My Banger Track"),
+                    .hint_text("e.g. hype trap banger, heavy 808s, male rap vocals... (leave blank to auto-pick)"),
             );
-        });
+
+            ui.add_space(6.0);
+            ui.horizontal(|ui| {
+                ui.label(RichText::new("Lyrics").size(11.5).strong());
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    ui.checkbox(&mut app.music_instrumental, "🎹 Instrumental");
+                });
+            });
+            if !app.music_instrumental {
+                ui.add(
+                    egui::TextEdit::multiline(&mut app.music_lyrics)
+                        .desired_rows(5)
+                        .desired_width(f32::INFINITY)
+                        .hint_text("[Verse]\n...\n\n[Chorus]\n... (or leave blank to auto-write from your idea)"),
+                );
+            }
+
+            ui.add_space(6.0);
+            ui.horizontal(|ui| {
+                ui.label(RichText::new("Length:").size(11.0).color(TEXT_MUTED));
+                ui.add(egui::Slider::new(&mut app.music_duration_sec, 15.0..=150.0).step_by(5.0).suffix("s"));
+            });
+            ui.horizontal(|ui| {
+                ui.label(RichText::new("Tempo (BPM):").size(11.0).color(TEXT_MUTED));
+                ui.add(egui::Slider::new(&mut app.music_bpm, 70..=180));
+            });
+            ui.horizontal(|ui| {
+                ui.label(RichText::new("Title (optional):").size(11.0).color(TEXT_MUTED));
+                ui.add(
+                    egui::TextEdit::singleline(&mut app.music_title)
+                        .desired_width(f32::INFINITY)
+                        .hint_text("Auto-titled if blank"),
+                );
+            });
+            ui.checkbox(&mut app.music_two_takes, "🎲 Make 2 different versions");
+        }
 
         ui.add_space(8.0);
         if let Some(m) = &music_model {
@@ -439,26 +521,46 @@ fn render_simple_music_card(app: &mut ClipForgeApp, ui: &mut egui::Ui) {
             }
         }
 
+        let create_btn_lbl = if app.music_two_takes { "🎵 Create 2 Songs" } else { "🎵 Create Song" };
         if ui
             .add_enabled(
                 is_ready,
-                primary_button("🎵 Create Song").min_size(Vec2::new(ui.available_width(), 42.0)),
+                primary_button(create_btn_lbl).min_size(Vec2::new(ui.available_width(), 42.0)),
             )
             .clicked()
         {
-            let tags = app.music_tags.trim().to_string();
-            if tags.is_empty() {
-                app.push_toast("Pick a genre chip or describe the song style first.", ToastKind::Warning);
+            let variations = if app.music_two_takes { 2 } else { 1 };
+            if !app.music_custom_mode {
+                let idea = app.music_idea.trim().to_string();
+                if idea.is_empty() {
+                    app.push_toast("Type a rough song idea (or click 🎲 Random Idea) first.", ToastKind::Warning);
+                } else {
+                    app.api.send(ApiCommand::GenerateMusic(json!({
+                        "idea": idea,
+                        "instrumental": app.music_instrumental,
+                        "variations": variations,
+                        "duration_sec": app.music_duration_sec,
+                        "add_to_timeline": false,
+                    })));
+                }
             } else {
-                app.api.send(ApiCommand::GenerateMusic(json!({
-                    "tags": tags,
-                    "lyrics": app.music_lyrics.trim(),
-                    "title": app.music_title.trim(),
-                    "instrumental": app.music_instrumental,
-                    "duration_sec": app.music_duration_sec,
-                    "bpm": app.music_bpm,
-                    "add_to_timeline": false,
-                })));
+                let tags = app.music_tags.trim().to_string();
+                let idea = app.music_idea.trim().to_string();
+                if tags.is_empty() && idea.is_empty() && app.music_lyrics.trim().is_empty() {
+                    app.push_toast("Enter a style, lyrics, or song idea first.", ToastKind::Warning);
+                } else {
+                    app.api.send(ApiCommand::GenerateMusic(json!({
+                        "idea": idea,
+                        "tags": tags,
+                        "lyrics": app.music_lyrics.trim(),
+                        "title": app.music_title.trim(),
+                        "instrumental": app.music_instrumental,
+                        "variations": variations,
+                        "duration_sec": app.music_duration_sec,
+                        "bpm": app.music_bpm,
+                        "add_to_timeline": false,
+                    })));
+                }
             }
         }
     });

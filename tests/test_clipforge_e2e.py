@@ -1267,6 +1267,30 @@ def test_uncensored_facelock_music_and_offline_speech(tmp_path: Path, monkeypatc
         assert r_aud.status_code == 200
         assert len(r_aud.content) > 256
 
+    # 5. Verify Suno-style rough-idea multi-take Songwriter (`plan_song_from_idea` + `/api/music/plan`)
+    from clipforge.director import plan_song_from_idea
+
+    song_plan = plan_song_from_idea("a diss track about Jake stealing my phone charger at 2am", variations=2)
+    assert len(song_plan["takes"]) == 2
+    assert song_plan["takes"][0]["tags"] != song_plan["takes"][1]["tags"]
+    assert "[Chorus]" in song_plan["takes"][0]["lyrics"]
+    assert "jake" in song_plan["takes"][0]["lyrics"].lower()
+
+    inst_plan = plan_song_from_idea("chill midnight drive in the rain", instrumental=True, variations=2)
+    assert all(tk["lyrics"] == "[Instrumental]" for tk in inst_plan["takes"])
+
+    client2 = TestClient(web_server.app)
+    token2 = re.search(r'<meta name="clipforge-token" content="([^"]+)"', client2.get("/").text).group(1)
+    r_plan = client2.post(
+        "/api/music/plan",
+        headers={"X-ClipForge-Token": token2},
+        json={"idea": "epic rock anthem about surviving monday morning", "variations": 2},
+    )
+    assert r_plan.status_code == 200
+    pj = r_plan.json()
+    assert len(pj["takes"]) == 2
+    assert pj["title"]
+
 
 
 

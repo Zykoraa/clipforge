@@ -870,3 +870,421 @@ def plan_storyboard_beats_local(
             }
         )
     return {"source": "builtin_planner", "beats": beats}
+
+
+# ---------------------------------------------------------------------------
+# Offline Suno-Style Songwriter & Multi-Take Arranger (Idea -> Lyrics + Beats)
+# ---------------------------------------------------------------------------
+_SONG_ARCHETYPES: list[dict[str, Any]] = [
+    {
+        "id": "diss_trap",
+        "keywords": ("diss", "roast", "trap", "rap", "hip hop", "hip-hop", "808", "bar", "bars", "beef", "flex", "ops", "bro", "stole"),
+        "takes": [
+            ("hard-hitting modern trap banger, booming 808 sub-bass, crisp hi-hat rolls, dark piano loop, aggressive confident male rap vocals, clean studio mix", 142, "F minor"),
+            ("west coast hyphy hip-hop beat, bouncy synth bassline, snappy claps, cheeky rhythmic male rap flow, punchy drums", 104, "G minor"),
+            ("boom-bap comedic rap track, gritty vinyl drums, brass stabs, energetic fast-spitting vocals, studio hip-hop", 96, "C minor"),
+        ],
+    },
+    {
+        "id": "phonk_hype",
+        "keywords": ("phonk", "drift", "gym", "workout", "pr", "lift", "car", "race", "fast", "sigma", "hype", "adrenaline", "beast"),
+        "takes": [
+            ("aggressive Brazilian drift phonk, distorted 808 cowbell melody, slammed kick drum, dark pitched vocal chops, high-energy club master", 136, "D minor"),
+            ("hardstyle gym anthem, relentless driving kick, euphoric rave supersaw lead, hype shouted vocal hook, festival mix", 150, "E minor"),
+            ("dark trap metal phonk hybrid, distorted bass, rapid hi-hats, intense gritty vocal delivery, massive drop", 144, "A minor"),
+        ],
+    },
+    {
+        "id": "sad_ballad",
+        "keywords": ("sad", "cry", "heartbreak", "breakup", "lonely", "miss", "rain", "tears", "lost", "depressed", "gone", "sorry", "goodbye", "pain"),
+        "takes": [
+            ("emotional indie piano ballad, warm felt piano, soft ambient cello swell, intimate breathy vocals, cinematic reverb, heartfelt", 76, "A minor"),
+            ("melancholic acoustic folk-pop song, fingerpicked acoustic guitar, subtle warm pads, raw vulnerable vocals, late-night bedroom mix", 84, "D minor"),
+            ("dreamy sad synth-pop ballad, shimmering nostalgic synths, slow punchy snare, aching expressive vocal hook", 92, "E minor"),
+        ],
+    },
+    {
+        "id": "rock_punk",
+        "keywords": ("rock", "metal", "punk", "guitar", "rage", "scream", "band", "mosh", "rebel", "chaos", "fight", "heavy"),
+        "takes": [
+            ("high-energy modern pop-punk anthem, crunching distorted electric guitars, driving live drums, catchy anthemic male vocals, huge chorus", 164, "E major"),
+            ("gritty alternative arena rock track, heavy fuzz guitar riff, thunderous drums, powerful raspy rock vocals, stadium reverb", 128, "D minor"),
+            ("melodic nu-metal rock banger, drop-tuned guitars, tight groove, dynamic whispered-to-belted vocals, punchy mix", 138, "C minor"),
+        ],
+    },
+    {
+        "id": "country",
+        "keywords": ("country", "truck", "whiskey", "beer", "farm", "cowboy", "rode", "boots", "southern", "dirt road", "honky"),
+        "takes": [
+            ("upbeat modern country anthem, twangy acoustic guitar, pedal steel, stomping kick drum, warm storytelling male vocals", 112, "G major"),
+            ("classic outlaw country blues, gritty slide guitar, upright bass, dusty honky-tonk snare, soulful raspy vocals", 98, "E major"),
+            ("heartland country-pop singalong, bright banjo accents, big chorus harmonies, clean Nashville studio mix", 118, "D major"),
+        ],
+    },
+    {
+        "id": "edm_party",
+        "keywords": ("edm", "club", "party", "rave", "dance", "drop", "dj", "festival", "house", "techno", "friday", "weekend", "drink"),
+        "takes": [
+            ("euphoric festival EDM dance anthem, soaring supersaw synth drop, four-on-the-floor kick, energetic catchy vocals, radio master", 128, "F major"),
+            ("groovy UK tech-house club track, rubbery rolling bassline, crisp shakers, hypnotic vocal hook, late-night dancefloor mix", 126, "A minor"),
+            ("hyperpop electro-party banger, sparkling glitchy synths, punchy distorted bass, upbeat playful vocals", 148, "C major"),
+        ],
+    },
+    {
+        "id": "lofi_chill",
+        "keywords": ("lofi", "lo-fi", "chill", "study", "sleep", "coffee", "vibe", "relax", "midnight", "drive", "cruising", "night", "ambient"),
+        "takes": [
+            ("warm lo-fi hip-hop groove, dusty vinyl crackle, jazzy Rhodes electric piano chords, mellow boom-bap beat, relaxed smooth vocal texture", 82, "F major"),
+            ("late-night synthwave chillwave track, glowing retro analog pads, steady pulsing bassline, dreamy reverberant vocals", 102, "A minor"),
+            ("smooth jazz-hop neo-soul vibe, warm upright bass, brushed snare, silky Rhodes keys, laid-back intimate vocals", 88, "Eb major"),
+        ],
+    },
+    {
+        "id": "rnb_soul",
+        "keywords": ("r&b", "rnb", "soul", "love", "romantic", "crush", "kiss", "date", "sexy", "smooth", "slow jam", "baby"),
+        "takes": [
+            ("lush modern R&B slow jam, silky Rhodes keys, deep warm sub-bass, crisp finger snaps, velvety soulful vocals with layered harmonies", 90, "Bb minor"),
+            ("groovy neo-soul funk track, warm slap bassline, crisp live drums, expressive smoky vocals, vintage analog warmth", 104, "E minor"),
+            ("dreamy alt-R&B pop groove, atmospheric synth pads, trap-influenced hi-hats, smooth falsetto hook", 96, "C# minor"),
+        ],
+    },
+    {
+        "id": "anime_epic",
+        "keywords": ("anime", "boss", "battle", "sword", "hero", "epic", "dragon", "villain", "opening", "shonen", "cyberpunk", "gaming", "ranked"),
+        "takes": [
+            ("explosive anime opening J-rock anthem, blazing lead guitar melodies, fast double-time drums, soaring passionate vocals, dramatic strings", 172, "E minor"),
+            ("cinematic orchestral electronic boss theme, pounding war drums, heroic brass fanfare, soaring choir and synth arpeggios", 140, "D minor"),
+            ("cyberpunk synth-rock adrenaline track, neon bass arpeggios, distorted guitar hooks, intense futuristic vocal chorus", 134, "F# minor"),
+        ],
+    },
+    {
+        "id": "meme_comedy",
+        "keywords": ("meme", "funny", "goofy", "cursed", "stupid", "taco", "waffle", "mcdonalds", "walmart", "cat", "dog", "weird", "2am", "3am", "pizza", "toilet"),
+        "takes": [
+            ("over-the-top dramatic 80s synth-rock power ballad, soaring arena chorus, gated reverb drums, hilariously dead-serious emotional vocals", 118, "C major"),
+            ("bouncy funky disco-pop banger, slap bass, brass horns, infectious clap beat, playful theatrical vocals", 122, "G major"),
+            ("catchy upbeat pop-rap comedy banger, bouncy 808s, playful synth flute, charismatic tongue-in-cheek vocals", 132, "Bb major"),
+        ],
+    },
+    {
+        "id": "pop_default",
+        "keywords": (),
+        "takes": [
+            ("catchy modern radio pop anthem, sparkling synths, punchy crisp drums, infectious melodic hook, expressive clean vocals, polished studio mix", 120, "C major"),
+            ("upbeat indie pop-rock track, jangly electric guitars, driving bassline, warm charismatic vocals, feel-good singalong chorus", 126, "G major"),
+            ("slick electro-pop groove, deep synth bass, snappy claps, airy stacked vocal harmonies, modern chart production", 114, "A minor"),
+        ],
+    },
+]
+
+_STOPWORDS = {
+    "a", "an", "the", "about", "song", "track", "music", "beat", "make", "me", "my", "our", "of", "for",
+    "in", "on", "at", "to", "with", "that", "this", "is", "are", "was", "and", "or", "but", "just",
+    "like", "some", "really", "very", "super", "funny", "cool", "good", "best", "new", "write", "create",
+}
+
+
+def _extract_song_topic(idea: str) -> tuple[str, str]:
+    """Extract a clean short title and topic phrase from a user's rough 1-line song idea."""
+    clean = re.sub(r"\s+", " ", (idea or "").strip()).strip("\"'")
+    # Remove leading meta phrases like "make a diss track about" or "a sad song about"
+    topic = re.sub(
+        r"^(?:make|write|create|give me|generate)?\s*(?:a|an|some)?\s*"
+        r"(?:funny|sad|hype|epic|chill|angry|weird|cursed|happy|crazy|fast|slow|dark|romantic)?\s*"
+        r"(?:diss\s+track|rap\s+song|trap\s+song|rock\s+song|pop\s+song|country\s+song|love\s+song|"
+        r"anime\s+opening|power\s+ballad|song|track|banger|anthem|jingle|beat|ballad|tune)\s*"
+        r"(?:about|for|where|when|of)?\s*",
+        "",
+        clean,
+        flags=re.IGNORECASE,
+    ).strip(" ,.-")
+    if len(topic) < 3:
+        topic = clean
+
+    words = [w.strip(".,!?\"'") for w in topic.split() if w.strip(".,!?\"'")]
+    sig = [w for w in words if w.lower() not in _STOPWORDS]
+    title_words = (sig[:4] if len(sig) >= 2 else words[:4]) or ["Midnight", "Signal"]
+    title = " ".join(w.capitalize() if w.islower() else w for w in title_words)[:42]
+    return title, topic
+
+
+def _compose_builtin_lyrics(topic: str, archetype_id: str, take_idx: int) -> str:
+    """Compose structured, singable, topic-anchored [Verse]/[Chorus] lyrics completely offline."""
+    import random as _rnd
+    import time as _time
+
+    short_topic = topic[:58].rstrip(".!?")
+    low = short_topic.lower()
+    rng = _rnd.Random(hash((low, archetype_id, take_idx, int(_time.time() // 2))) & 0xFFFFFFFF)
+
+    if archetype_id == "diss_trap":
+        patterns = [
+            (
+                f"[Intro]\nYeah, turn the bass up\nListen close\n\n"
+                f"[Verse 1]\nEverybody talking about {short_topic}\n"
+                f"Acting real bold till the lights turn on\n"
+                f"Thought you had a plan when you pulled that stunt\n"
+                f"Now the whole group chat got you on the front\n\n"
+                f"[Chorus]\nNo cap, look at {short_topic}\n"
+                f"You really thought nobody was gonna know\n"
+                f"Caught in 4K, yeah we running the show\n"
+                f"Say it loud one time, let the whole block know\n\n"
+                f"[Verse 2]\nTwo in the morning and the receipts don't lie\n"
+                f"Every single excuse looking weak on the sly\n"
+                f"We level up fast while you stuck in the past\n"
+                f"Next time think twice before moving too fast\n\n"
+                f"[Outro]\nYeah, case closed\nDon't test us again"
+            ),
+            (
+                f"[Verse 1]\nHold up, pause the beat for a second\n"
+                f"Let's talk real facts about {short_topic}\n"
+                f"Thought you could slide right out of the frame\n"
+                f"Now everybody laughing when they hear your name\n\n"
+                f"[Chorus]\nOh no, here we go — {short_topic}\n"
+                f"Caught red handed in the neon glow\n"
+                f"Can't hide now when the bass hits low\n"
+                f"Turn it all the way up, yeah we steal the show\n\n"
+                f"[Verse 2]\nLook at the clock, yeah the verdict is in\n"
+                f"Talked all that noise and you still couldn't win\n"
+                f"Hands in the air while the 808s shake\n"
+                f"Lesson learned hard, that's a classic mistake\n\n"
+                f"[Outro]\nMic drop, we out"
+            ),
+        ]
+    elif archetype_id == "sad_ballad":
+        patterns = [
+            (
+                f"[Verse 1]\nStaring at the ceiling in the quiet dark\n"
+                f"Still thinking about {short_topic}\n"
+                f"Every little echo hanging in the air\n"
+                f"Reaching for a moment that is no longer there\n\n"
+                f"[Chorus]\nAnd it hurts so slow, {short_topic}\n"
+                f"Like rain on the glass when the streetlights glow\n"
+                f"I tried to hold on, I tried to let go\n"
+                f"Some nights stay heavy and nobody knows\n\n"
+                f"[Verse 2]\nEmpty coffee cup sitting by the door\n"
+                f"Nothing feels the same like it did before\n"
+                f"Time keeps moving even when we stand still\n"
+                f"Chasing a shadow on a quiet hill\n\n"
+                f"[Outro]\nStill fading out softly\nIn the midnight rain"
+            ),
+            (
+                f"[Verse 1]\nCold wind blowing through an open street\n"
+                f"All I remember is {short_topic}\n"
+                f"Tried to laugh it off in the afternoon light\n"
+                f"Still hits harder in the middle of the night\n\n"
+                f"[Chorus]\nOh I wish we could rewind {short_topic}\n"
+                f"Leave all the heartbreak far behind\n"
+                f"Singing out loud to an empty room\n"
+                f"Waiting for the morning to clear the gloom\n\n"
+                f"[Outro]\nJust breathing slow\nLetting it go"
+            ),
+        ]
+    elif archetype_id in ("rock_punk", "anime_epic", "phonk_hype"):
+        patterns = [
+            (
+                f"[Intro]\nThree, two, one — go!\n\n"
+                f"[Verse 1]\nSparks in the air and the engine roars\n"
+                f"No backing down from {short_topic}\n"
+                f"Heartbeat pounding like a thunder drum\n"
+                f"This is the moment that we overcome\n\n"
+                f"[Chorus]\nTurn it louder now — {short_topic}!\n"
+                f"Breaking every wall till the ground gives way\n"
+                f"Hands to the sky, yeah we own today\n"
+                f"Nothing gonna stop us, we're here to stay!\n\n"
+                f"[Verse 2]\nFull speed ahead, never hitting the brakes\n"
+                f"Rising up higher with every risk we take\n"
+                f"Lights flashing bright in the stadium haze\n"
+                f"Burning our name in a legendary blaze\n\n"
+                f"[Outro]\nAll the way to the top!\nNever stop!"
+            ),
+            (
+                f"[Verse 1]\nZero fear when the sirens blare\n"
+                f"Charging straight into {short_topic}\n"
+                f"Adrenaline rushing through every vein\n"
+                f"Dancing right through the hurricane\n\n"
+                f"[Chorus]\nUnstoppable! {short_topic}!\n"
+                f"Feel the shockwave hit the floor\n"
+                f"Kick the door down, give me more\n"
+                f"Loud enough to shake the core!\n\n"
+                f"[Outro]\nLet it echo out!"
+            ),
+        ]
+    else:
+        patterns = [
+            (
+                f"[Verse 1]\nLate night lights and a crazy spark\n"
+                f"Everything started with {short_topic}\n"
+                f"Nobody expected how the night would go\n"
+                f"Now we're front row at the wildest show\n\n"
+                f"[Chorus]\nOh yeah, feel the vibe of {short_topic}\n"
+                f"Turn the volume up and let the good times roll\n"
+                f"Every single beat hits straight to the soul\n"
+                f"Dancing like we never gonna lose control\n\n"
+                f"[Verse 2]\nLaughing with the crew till the sun comes up\n"
+                f"Raising every glass, yeah we fill the cup\n"
+                f"Memories glowing in the neon light\n"
+                f"We're gonna remember this forever tonight\n\n"
+                f"[Outro]\nYeah, keep the rhythm alive\nAll through the night"
+            ),
+            (
+                f"[Verse 1]\nPull up fast, windows down in the breeze\n"
+                f"Whole night spinning round {short_topic}\n"
+                f"One wild story turning into a hit\n"
+                f"Everybody singing every word of it\n\n"
+                f"[Chorus]\nSing it back to me — {short_topic}!\n"
+                f"Hands up high under city lights\n"
+                f"Chasing the magic of these reckless nights\n"
+                f"Everything about this feels so right\n\n"
+                f"[Verse 2]\nNo script needed, yeah we make our own lane\n"
+                f"Turning pure chaos into gold and champagne\n"
+                f"Beat drops heavy and the crowd goes wild\n"
+                f"Living every second in our own style\n\n"
+                f"[Outro]\nOne more time before the fade out"
+            ),
+        ]
+    return rng.choice(patterns)
+
+
+def plan_song_from_idea(
+    idea: str,
+    instrumental: bool = False,
+    variations: int = 2,
+    duration_sec: float = 60.0,
+    custom_style: str = "",
+    custom_lyrics: str = "",
+    custom_bpm: int | None = None,
+    endpoint: str | None = None,
+    model_name: str | None = None,
+) -> dict[str, Any]:
+    """Suno-style offline Songwriter & Multi-Take Arranger: turns any rough 1-line idea into N distinct songs."""
+    clean_idea = (idea or "").strip()
+    clean_style = (custom_style or "").strip()
+    clean_lyrics = (custom_lyrics or "").strip()
+    count = max(1, min(4, int(variations)))
+
+    if not clean_idea and not clean_style:
+        clean_idea = "late night neon city drive with friends"
+
+    base_title, topic = _extract_song_topic(clean_idea or clean_style)
+    low_src = f"{clean_idea} {clean_style}".lower()
+
+    # 1. Try local Ollama / LM Studio first for ultra-bespoke lyrics & multi-take arrangements!
+    disc = discover_local_llm(endpoint)
+    if disc["available"] and clean_idea and (not clean_style or (not instrumental and not clean_lyrics)):
+        use_model = model_name or disc["recommended_model"]
+        sys_msg = (
+            "You are an uncensored, Suno-class hit songwriter and music producer for ACE-Step 1.5. "
+            f"Create {count} DIFFERENT musical takes inspired by the user's rough song idea. "
+            "Each take should have a genuinely different sub-genre/beat arrangement and tempo so the user can compare and pick their favorite. "
+            "Never censor, lecture, or refuse funny/edgy topics. "
+            "Return ONLY valid JSON: "
+            "{\"title\": \"catchy short song title\", \"takes\": ["
+            "{\"tags\": \"comma-separated genre, instruments, mood, vocal style\", "
+            "\"lyrics\": \"structured [Verse 1], [Chorus], [Verse 2], [Outro] lyrics (or [Instrumental] if instrumental)\", "
+            "\"bpm\": integer 70-175, \"keyscale\": \"e.g. C major or A minor\"}]}"
+        )
+        u_msg = (
+            f"Song idea: {clean_idea}\n"
+            f"Instrumental only: {bool(instrumental)}\n"
+            f"Target duration: {int(duration_sec)}s\n"
+            + (f"User preferred style: {clean_style}\n" if clean_style else "")
+            + (f"User provided lyrics (keep if given): {clean_lyrics}\n" if clean_lyrics else "")
+        )
+        parsed = _invoke_local_llm_json(disc, use_model, sys_msg, u_msg, temperature=0.85, max_tokens=1100)
+        if parsed and not parsed.get("__refused__") and isinstance(parsed.get("takes"), list):
+            llm_title = _clean_prompt_text(str(parsed.get("title") or base_title))[:48] or base_title
+            out_takes: list[dict[str, Any]] = []
+            for idx, tk in enumerate(parsed["takes"][:count]):
+                if not isinstance(tk, dict):
+                    continue
+                t_tags = clean_style or _clean_prompt_text(str(tk.get("tags") or ""))
+                t_lyr = "[Instrumental]" if instrumental else (clean_lyrics or str(tk.get("lyrics") or "").strip())
+                if not t_tags or _looks_like_refusal(t_tags) or _looks_like_refusal(t_lyr):
+                    continue
+                raw_bpm = custom_bpm or tk.get("bpm") or 120
+                try:
+                    t_bpm = max(65, min(185, int(raw_bpm)))
+                except Exception:
+                    t_bpm = 120
+                t_key = str(tk.get("keyscale") or "C major").strip() or "C major"
+                out_takes.append(
+                    {
+                        "take_index": idx + 1,
+                        "title": f"{llm_title} (Take {idx + 1})" if count > 1 else llm_title,
+                        "tags": t_tags,
+                        "lyrics": t_lyr if t_lyr else "[Instrumental]",
+                        "bpm": t_bpm,
+                        "keyscale": t_key,
+                    }
+                )
+            if out_takes:
+                # Pad if LLM returned fewer takes than requested
+                while len(out_takes) < count:
+                    base_tk = dict(out_takes[0])
+                    base_tk["take_index"] = len(out_takes) + 1
+                    base_tk["title"] = f"{llm_title} (Take {len(out_takes) + 1})"
+                    out_takes.append(base_tk)
+                return {"source": f"local_llm:{use_model}", "title": llm_title, "takes": out_takes[:count]}
+
+    # 2. Smart 100% Offline Built-In Suno Arranger & Songwriter (zero LLM needed!)
+    import random as _rnd
+
+    matched_arch = None
+    best_hits = 0
+    for arch in _SONG_ARCHETYPES:
+        hits = sum(1 for kw in arch["keywords"] if kw in low_src)
+        if hits > best_hits:
+            best_hits = hits
+            matched_arch = arch
+    if matched_arch is None:
+        # Pick a lively random archetype if no explicit genre keyword was mentioned
+        non_default = [a for a in _SONG_ARCHETYPES if a["id"] in ("pop_default", "diss_trap", "edm_party", "rock_punk", "rnb_soul")]
+        matched_arch = _rnd.choice(non_default)
+
+    pool = list(matched_arch["takes"])
+    _rnd.shuffle(pool)
+
+    # Also grab a contrasting flavor from another archetype for extra Suno-like variety when custom_style is empty
+    alt_flavors = [
+        ("upbeat synth-pop remix", 124, "G major"),
+        ("acoustic stripped-back live session version", 98, "D major"),
+        ("heavy bass club anthem remix", 132, "F minor"),
+    ]
+
+    takes: list[dict[str, Any]] = []
+    for idx in range(count):
+        if clean_style:
+            if idx == 0:
+                t_tags = clean_style
+                t_bpm = custom_bpm or pool[0][1]
+                t_key = pool[0][2]
+            else:
+                twist, fb_bpm, fb_key = alt_flavors[(idx - 1) % len(alt_flavors)]
+                t_tags = f"{clean_style}, {twist}"
+                t_bpm = custom_bpm or fb_bpm
+                t_key = fb_key
+        else:
+            t_tags, def_bpm, t_key = pool[idx % len(pool)]
+            t_bpm = custom_bpm or def_bpm
+
+        if instrumental:
+            t_lyrics = "[Instrumental]"
+        elif clean_lyrics:
+            t_lyrics = clean_lyrics
+        else:
+            t_lyrics = _compose_builtin_lyrics(topic, matched_arch["id"], idx)
+
+        takes.append(
+            {
+                "take_index": idx + 1,
+                "title": f"{base_title} (Take {idx + 1})" if count > 1 else base_title,
+                "tags": t_tags,
+                "lyrics": t_lyrics,
+                "bpm": max(65, min(185, int(t_bpm))),
+                "keyscale": t_key,
+            }
+        )
+
+    return {"source": "builtin_songwriter", "title": base_title, "takes": takes}
+

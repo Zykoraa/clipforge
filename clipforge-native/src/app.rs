@@ -183,10 +183,13 @@ pub struct ClipForgeApp {
     pub last_audio_head: String,
     pub continue_parent_video: Option<String>,
     // Offline Music (Suno-style) & Speech Studio state
+    pub music_custom_mode: bool,
+    pub music_idea: String,
     pub music_title: String,
     pub music_tags: String,
     pub music_lyrics: String,
     pub music_instrumental: bool,
+    pub music_two_takes: bool,
     pub music_duration_sec: f32,
     pub music_bpm: u32,
     pub speech_voice_preset: String,
@@ -346,11 +349,14 @@ impl ClipForgeApp {
             last_video_head: String::new(),
             last_audio_head: String::new(),
             continue_parent_video: None,
+            music_custom_mode: false,
+            music_idea: String::new(),
             music_title: String::new(),
             music_tags: String::new(),
             music_lyrics: String::new(),
             music_instrumental: false,
-            music_duration_sec: 45.0,
+            music_two_takes: true,
+            music_duration_sec: 60.0,
             music_bpm: 120,
             speech_voice_preset: "auto".into(),
             left_tab: LeftTab::Studio,
@@ -904,6 +910,21 @@ impl ClipForgeApp {
                 }
                 ApiEvent::StoryboardPlanned { beats, .. } => {
                     self.sb_beats = beats;
+                }
+                ApiEvent::SongPlanned { title, tags, lyrics, bpm } => {
+                    if !title.is_empty() {
+                        self.music_title = title;
+                    }
+                    if !tags.is_empty() {
+                        self.music_tags = tags;
+                    }
+                    if !lyrics.is_empty() {
+                        self.music_lyrics = lyrics;
+                    }
+                    if bpm >= 65 && bpm <= 185 {
+                        self.music_bpm = bpm;
+                    }
+                    self.music_custom_mode = true;
                 }
                 ApiEvent::RenderCompleted(rep) => {
                     self.last_render_report = Some(rep);

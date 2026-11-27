@@ -38,6 +38,7 @@ from .director import (
     discover_local_llm,
     expand_meme_prompt_local,
     ollama_pull_manager,
+    plan_song_from_idea,
     plan_storyboard_beats_local,
 )
 from .engine import ProjectEngine
@@ -518,14 +519,26 @@ class FaceSwapRequest(BaseModel):
     face_paths: list[str] = []
 
 
+class PlanSongRequest(BaseModel):
+    idea: str
+    instrumental: bool = False
+    variations: int = 2
+    duration_sec: float = 60.0
+    custom_style: str = ""
+    custom_lyrics: str = ""
+    custom_bpm: int | None = None
+
+
 class GenerateMusicRequest(BaseModel):
-    tags: str
+    idea: str = ""
+    tags: str = ""
     lyrics: str = ""
     title: str = ""
     instrumental: bool = False
-    duration_sec: float = 45.0
-    bpm: int = 120
-    keyscale: str = "C major"
+    variations: int = 2
+    duration_sec: float = 60.0
+    bpm: int | None = None
+    keyscale: str = ""
     language: str = "en"
     steps: int = 8
     cfg: float = 1.0
@@ -2014,77 +2027,136 @@ async def api_delete_generated_audio(filename: str) -> dict[str, Any]:
     return {"deleted": filename, "audio_tracks": await asyncio.to_thread(_list_audio_gallery)}
 
 
+@app.post("/api/music/plan")
+async def api_plan_song(req: PlanSongRequest) -> dict[str, Any]:
+    """Turn a rough 1-line song idea into ready-to-edit title, style tags, BPM, and structured lyrics (Suno-style)."""
+    if not (req.idea or "").strip() and not (req.custom_style or "").strip():
+        raise HTTPException(status_code=400, detail="Enter a rough song idea first.")
+    return await asyncio.to_thread(
+        plan_song_from_idea,
+        idea=req.idea,
+        instrumental=req.instrumental,
+        variations=req.variations,
+        duration_sec=req.duration_sec,
+        custom_style=req.custom_style,
+        custom_lyrics=req.custom_lyrics,
+        custom_bpm=req.custom_bpm,
+    )
+
+
 @app.post("/api/generate/music")
 async def api_generate_music(req: GenerateMusicRequest) -> dict[str, Any]:
-    """Generate a full offline Suno-style song (vocals + lyrics or instrumental) via native ComfyUI ACE-Step 1.5."""
+    """Suno-style offline music generator: pass EITHER a rough 1-line `idea` OR custom `tags`/`lyrics` and get 1-4 distinct full songs."""
+    idea_clean = (req.idea or "").strip()
     tags_clean = (req.tags or "").strip()
-    if not tags_clean:
-        raise HTTPException(status_code=400, detail="Describe a music style/genre first (e.g. 'trap banger, heavy 808s, male vocals').")
+    if not idea_clean and not tags_clean:
+        raise HTTPException(status_code=400, detail="Describe a song idea (or music style) first.")
 
     avail = await asyncio.to_thread(get_model_availability)
     if not avail.get("ace_step_music", {}).get("ready"):
         miss = avail.get("ace_step_music", {}).get("missing_gb", 10.0)
         raise HTTPException(
             status_code=400,
-            detail=f"Offline Music Engine needs {miss} GB downloaded first (click Download Music Engine).",
+            detail=f"Offline Music Engine needs {miss} GB downloaded first (click Download Offline Music Engine).",
         )
 
-    job = job_manager.create(kind="audio", model="ace_step_music", prompt=f"🎵 {req.title.strip() or tags_clean[:50]}")
+    num_takes = max(1, min(4, int(req.variations or 1)))
+    display_label = (req.title or "").strip() or (idea_clean or tags_clean)[:50]
+    job = job_manager.create(kind="audio", model="ace_step_music", prompt=f"🎵 {display_label}")
 
     async def _run_music_job() -> None:
-        job_manager.update(job.id, status="running", progress_pct=5, message="Starting offline music studio (ACE-Step 1.5)...")
+        job_manager.update(
+            job.id,
+            status="running",
+            progress_pct=4,
+            message=f"Writing lyrics & planning {num_takes} song take(s)...",
+        )
         try:
-            def _prog(msg: str, pct: int | None = None) -> None:
-                upd: dict[str, Any] = {"message": msg}
-                if pct is not None:
-                    upd["progress_pct"] = pct
-                job_manager.update(job.id, **upd)
-
-            def _pid(pid: str) -> None:
-                job_manager.update(job.id, prompt_id=pid)
-
-            out_dir = engine.workspace_dir / "generated_audio"
-            res = await asyncio.to_thread(
-                generate_music_via_comfyui,
-                tags=tags_clean,
-                output_dir=out_dir,
-                lyrics=req.lyrics,
-                title=req.title,
+            plan = await asyncio.to_thread(
+                plan_song_from_idea,
+                idea=idea_clean or tags_clean,
                 instrumental=req.instrumental,
+                variations=num_takes,
                 duration_sec=req.duration_sec,
-                bpm=req.bpm,
-                keyscale=req.keyscale,
-                language=req.language,
-                steps=req.steps,
-                cfg=req.cfg,
-                seed=req.seed,
-                base_url=COMFYUI_URL,
-                comfy_dir=COMFYUI_DIR,
-                auto_start=True,
-                on_progress=_prog,
-                on_prompt_id=_pid,
-                cancel_event=job.cancel_event,
+                custom_style=tags_clean,
+                custom_lyrics=req.lyrics,
+                custom_bpm=req.bpm,
             )
+            takes = plan.get("takes") or []
+            out_dir = engine.workspace_dir / "generated_audio"
+            created_tracks: list[dict[str, Any]] = []
+
+            for idx, tk in enumerate(takes):
+                if job.cancel_event.is_set():
+                    raise GenerationCanceledError("Canceled by user.")
+                take_title = (
+                    (f"{req.title.strip()} (Take {idx + 1})" if len(takes) > 1 else req.title.strip())
+                    if req.title.strip()
+                    else tk["title"]
+                )
+                take_seed = (req.seed + idx) if req.seed >= 0 else -1
+
+                def _prog(msg: str, pct: int | None = None, i_take: int = idx, total_t: int = len(takes)) -> None:
+                    local_p = (pct if pct is not None else 50) / 100.0
+                    overall = min(98, max(8, int(((i_take + local_p) / max(1, total_t)) * 92) + 6))
+                    prefix = f"Song {i_take + 1}/{total_t}: " if total_t > 1 else ""
+                    job_manager.update(job.id, progress_pct=overall, message=f"{prefix}{msg}")
+
+                def _pid(pid: str) -> None:
+                    job_manager.update(job.id, prompt_id=pid)
+
+                res = await asyncio.to_thread(
+                    generate_music_via_comfyui,
+                    tags=tk["tags"],
+                    output_dir=out_dir,
+                    lyrics=tk["lyrics"],
+                    title=take_title,
+                    instrumental=req.instrumental,
+                    duration_sec=req.duration_sec,
+                    bpm=int(tk["bpm"]),
+                    keyscale=req.keyscale.strip() or tk.get("keyscale", "C major"),
+                    language=req.language,
+                    steps=req.steps,
+                    cfg=req.cfg,
+                    seed=take_seed,
+                    base_url=COMFYUI_URL,
+                    comfy_dir=COMFYUI_DIR,
+                    auto_start=True,
+                    on_progress=_prog,
+                    on_prompt_id=_pid,
+                    cancel_event=job.cancel_event,
+                )
+                created_tracks.append({**res, "audio_url": f"/api/generate/audio/{res['filename']}"})
+
+            first = created_tracks[-1]
             overlay_id = None
-            if req.add_to_timeline:
+            if req.add_to_timeline and created_tracks:
                 ov = await asyncio.to_thread(
                     engine.add_audio_overlay,
                     None,
-                    res["audio_path"],
+                    created_tracks[0]["audio_path"],
                     0.0,
                     req.volume,
                     False,
-                    f"🎵 {res['title'][:28]}",
+                    f"🎵 {created_tracks[0]['title'][:28]}",
                 )
                 overlay_id = ov.id
+
+            done_msg = (
+                f"Created {len(created_tracks)} song versions!"
+                if len(created_tracks) > 1
+                else f"Song ready ({first['duration_sec']}s in {first['generation_time_sec']}s)"
+            )
             job_manager.update(
                 job.id,
                 status="completed",
                 progress_pct=100,
-                message=f"Song ready ({res['duration_sec']}s in {res['generation_time_sec']}s)",
+                message=done_msg,
                 result={
-                    **res,
-                    "audio_url": f"/api/generate/audio/{res['filename']}",
+                    **first,
+                    "tracks": created_tracks,
+                    "variations": len(created_tracks),
+                    "planner_source": plan.get("source"),
                     "overlay_id": overlay_id,
                 },
             )
@@ -2094,7 +2166,7 @@ async def api_generate_music(req: GenerateMusicRequest) -> dict[str, Any]:
             job_manager.update(job.id, status="failed", message=str(exc), error=str(exc))
 
     asyncio.create_task(_run_music_job())
-    return {"job_id": job.id, "model": "ace_step_music", "status": "queued", "jobs": job_manager.list_jobs()}
+    return {"job_id": job.id, "model": "ace_step_music", "variations": num_takes, "status": "queued", "jobs": job_manager.list_jobs()}
 
 
 @app.get("/api/generate/video/{filename}")

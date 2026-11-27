@@ -1205,43 +1205,58 @@ def install_civitai_model(
 
 @mcp.tool()
 def generate_music(
-    tags: str,
+    idea: str = "",
+    tags: str = "",
     lyrics: str = "",
     title: str = "",
     instrumental: bool = False,
-    duration_sec: float = 45.0,
-    bpm: int = 120,
-    keyscale: str = "C major",
+    variations: int = 2,
+    duration_sec: float = 60.0,
+    bpm: int | None = None,
+    keyscale: str = "",
     language: str = "en",
     add_to_timeline: bool = False,
 ) -> dict[str, Any]:
-    """Generate a full offline Suno-style song (vocals + lyrics or pure instrumental) using native ComfyUI ACE-Step 1.5 Turbo."""
+    """Suno-style offline song generator: pass a rough 1-line `idea` (auto-writes lyrics, style & multiple takes!) OR custom `tags`/`lyrics`."""
+    from .director import plan_song_from_idea
     from .generator import generate_music_via_comfyui
 
     eng = get_engine()
     with contextlib.redirect_stdout(sys.stderr):
-        res = generate_music_via_comfyui(
-            tags=tags,
-            output_dir=eng.workspace_dir / "generated_audio",
-            lyrics=lyrics,
-            title=title,
+        plan = plan_song_from_idea(
+            idea=idea or tags,
             instrumental=instrumental,
+            variations=variations,
             duration_sec=duration_sec,
-            bpm=bpm,
-            keyscale=keyscale,
-            language=language,
-            auto_start=True,
+            custom_style=tags,
+            custom_lyrics=lyrics,
+            custom_bpm=bpm,
         )
+        tracks = []
+        for tk in plan["takes"]:
+            res = generate_music_via_comfyui(
+                tags=tk["tags"],
+                output_dir=eng.workspace_dir / "generated_audio",
+                lyrics=tk["lyrics"],
+                title=title.strip() or tk["title"],
+                instrumental=instrumental,
+                duration_sec=duration_sec,
+                bpm=int(tk["bpm"]),
+                keyscale=keyscale or tk["keyscale"],
+                language=language,
+                auto_start=True,
+            )
+            tracks.append(res)
         overlay = None
-        if add_to_timeline:
+        if add_to_timeline and tracks:
             overlay = eng.add_audio_overlay(
-                audio_path=res["audio_path"],
+                audio_path=tracks[0]["audio_path"],
                 start_sec=0.0,
                 volume=0.85,
                 duck_main_audio=False,
-                label=f"🎵 {res['title'][:28]}",
+                label=f"🎵 {tracks[0]['title'][:28]}",
             )
-    return {**res, "overlay": overlay.model_dump() if overlay else None}
+    return {**tracks[0], "tracks": tracks, "planner_source": plan["source"], "overlay": overlay.model_dump() if overlay else None}
 
 
 @mcp.tool()

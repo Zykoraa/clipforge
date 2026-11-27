@@ -63,6 +63,7 @@ pub enum ApiCommand {
     UploadRef { slot: RefSlot, path: PathBuf },
     GenerateImage(Value),
     GenerateVideo(Value),
+    PlanSong(Value),
     GenerateMusic(Value),
     SpeakText(Value),
     DeleteAudioTrack(String),
@@ -109,6 +110,7 @@ pub enum ApiEvent {
     VaultVideoCreated { filename: String },
     DirectorExpanded(DirectorExpandResponse),
     StoryboardPlanned { beats: Vec<StoryboardBeat>, source: String },
+    SongPlanned { title: String, tags: String, lyrics: String, bpm: u32 },
     RenderCompleted(RenderReport),
     StitchCompleted(StitchReport),
     ImagePolished { filename: String, engine: String, width: u32, height: u32 },
@@ -835,11 +837,31 @@ fn execute_command(base: &str, tok: &str, cmd: ApiCommand, tx: &Sender<ApiEvent>
             }
             let _ = tx.send(ApiEvent::ActionDone("generate".into()));
         }
+        ApiCommand::PlanSong(body) => {
+            match post_json_val(base, tok, "/api/music/plan", &body, 45) {
+                Ok(v) => {
+                    let title = v.get("title").and_then(|x| x.as_str()).unwrap_or("").to_string();
+                    let first = v.get("takes").and_then(|t| t.as_array()).and_then(|a| a.first());
+                    let tags = first.and_then(|f| f.get("tags")).and_then(|x| x.as_str()).unwrap_or("").to_string();
+                    let lyrics = first.and_then(|f| f.get("lyrics")).and_then(|x| x.as_str()).unwrap_or("").to_string();
+                    let bpm = first.and_then(|f| f.get("bpm")).and_then(|x| x.as_u64()).unwrap_or(120) as u32;
+                    let _ = tx.send(ApiEvent::SongPlanned { title, tags, lyrics, bpm });
+                    emit_ok(tx, "Wrote lyrics & style — tweak anything or click Create!");
+                }
+                Err(e) => emit_err(tx, e),
+            }
+            let _ = tx.send(ApiEvent::ActionDone("plan_song".into()));
+        }
         ApiCommand::GenerateMusic(body) => {
             match post_json_val(base, tok, "/api/generate/music", &body, 60) {
                 Ok(v) => {
-                    let jid = v.get("job_id").and_then(|x| x.as_str()).unwrap_or("");
-                    emit_ok(tx, format!("Composing song offline ({jid})..."));
+                    let vars = v.get("variations").and_then(|x| x.as_u64()).unwrap_or(1);
+                    let msg = if vars > 1 {
+                        format!("Composing {vars} different song versions offline...")
+                    } else {
+                        "Composing song offline...".into()
+                    };
+                    emit_ok(tx, msg);
                     execute_command(base, tok, ApiCommand::RefreshGenStatus, tx);
                 }
                 Err(e) => emit_err(tx, e),
