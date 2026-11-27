@@ -1270,15 +1270,16 @@ def test_uncensored_facelock_music_and_offline_speech(tmp_path: Path, monkeypatc
         assert len(r_aud.content) > 256
 
     # 5. Verify Suno-style rough-idea multi-take Songwriter (`plan_song_from_idea` + `/api/music/plan`)
-    from clipforge.director import plan_song_from_idea
+    from clipforge import director as dir_mod
 
-    song_plan = plan_song_from_idea("a diss track about Jake stealing my phone charger at 2am", variations=2)
+    monkeypatch.setattr(dir_mod, "discover_local_llm", lambda *_a, **_k: {"available": False, "models": []})
+    song_plan = dir_mod.plan_song_from_idea("a diss track about Jake stealing my phone charger at 2am", variations=2)
     assert len(song_plan["takes"]) == 2
     assert song_plan["takes"][0]["tags"] != song_plan["takes"][1]["tags"]
     assert "[Chorus]" in song_plan["takes"][0]["lyrics"]
     assert "jake" in song_plan["takes"][0]["lyrics"].lower()
 
-    inst_plan = plan_song_from_idea("chill midnight drive in the rain", instrumental=True, variations=2)
+    inst_plan = dir_mod.plan_song_from_idea("chill midnight drive in the rain", instrumental=True, variations=2)
     assert all(tk["lyrics"] == "[Instrumental]" for tk in inst_plan["takes"])
 
     client2 = TestClient(web_server.app)
@@ -1357,6 +1358,98 @@ def test_director_llm_scoring_and_model_prompt_guides(monkeypatch) -> None:
     assert st["can_auto_start_lms"] is True
     assert st["has_uncensored"] is True
     assert st["recommended_model"] == "gemma-4-12b-uncensored-heretic"
+
+
+def test_suno_speech_workflow_and_music_mix(tmp_path: Path, monkeypatch) -> None:
+    """Verify Suno-style Speech planner, delivery voice/EQ matching, procedural score, and FFmpeg sidechain mix."""
+    import shutil
+    import sys
+
+    from fastapi.testclient import TestClient
+
+    from clipforge import director, web_server
+    from clipforge.engine import ProjectEngine
+    from clipforge.media import probe_media_file
+    from clipforge.voice import (
+        mix_speech_with_background_music,
+        pick_kokoro_voice_for_style,
+        synthesize_procedural_score,
+        synthesize_speech_offline,
+    )
+
+    # 1. Style -> Kokoro voice + cadence + acoustic EQ routing
+    v1, sp1, fx1 = pick_kokoro_voice_for_style("1940s vintage radio announcer", gender="male", take_idx=0)
+    assert fx1 == "vintage_radio" and v1.startswith(("am_", "bm_"))
+    v2, sp2, fx2 = pick_kokoro_voice_for_style("calm guided meditation whisper", gender="female", take_idx=0)
+    assert fx2 == "intimate_whisper" and sp2 < 1.0 and v2.startswith(("af_", "bf_"))
+
+    # 2. Speech Planner fallback & HTTP /api/speech/plan
+    monkeypatch.setattr(director, "discover_local_llm", lambda *_a, **_k: {"available": False, "models": []})
+    plan = director.plan_speech_from_idea(
+        "a dramatic movie trailer about Friday night",
+        background_music=True,
+        explicit=True,
+        variations=2,
+        auto_start_llm=False,
+    )
+    assert len(plan["takes"]) == 2
+    assert plan["takes"][0]["script"] != plan["takes"][1]["script"]
+    assert plan["takes"][0]["music_style"]
+
+    # 3. Procedural ambient underscore + FFmpeg sidechain-ducked Speech mix
+    ws = tmp_path / "ws_speech"
+    eng = ProjectEngine(workspace_dir=ws)
+    monkeypatch.setattr(web_server, "engine", eng)
+    client = TestClient(web_server.app)
+    token = re.search(r'<meta name="clipforge-token" content="([^"]+)"', client.get("/").text).group(1)
+    hdrs = {"X-ClipForge-Token": token}
+
+    r_plan = client.post(
+        "/api/speech/plan",
+        headers=hdrs,
+        json={"idea": "creepy late night true crime story", "background_music": True, "variations": 2},
+    )
+    assert r_plan.status_code == 200
+    assert len(r_plan.json()["takes"]) == 2
+
+    if sys.platform == "win32" or shutil.which("espeak-ng") or shutil.which("espeak"):
+        tts = synthesize_speech_offline(
+            "In a city that never sleeps, somebody took the last slice of pizza.",
+            tmp_path / "tts_out",
+            voice_preset=v1,
+            speed=sp1,
+            acoustic_fx="cinematic",
+        )
+        score = synthesize_procedural_score(tmp_path / "score.wav", duration_sec=6.0, mood_prompt="dramatic cinema brass")
+        assert score.exists() and score.stat().st_size > 1024
+        mixed = mix_speech_with_background_music(
+            Path(tts["audio_path"]),
+            score,
+            tmp_path / "mixed_speech.mp3",
+            music_volume=0.35,
+        )
+        assert Path(mixed["audio_path"]).exists()
+        assert mixed["duration_sec"] > tts["duration_sec"]
+        probed = probe_media_file(mixed["audio_path"], assets_dir=None)
+        assert probed.has_audio and probed.duration_sec > tts["duration_sec"]
+
+        # Verify POST /api/voice/speak queues cleanly with Suno prompt + background music params
+        r_spk = client.post(
+            "/api/voice/speak",
+            headers=hdrs,
+            json={
+                "idea": "quick news alert about coffee running out",
+                "speech_style": "hype broadcast announcer",
+                "background_music": True,
+                "music_style": "upbeat electronic bed",
+                "use_ai_score": False,
+                "variations": 1,
+            },
+        )
+        assert r_spk.status_code == 200
+        assert r_spk.json()["variations"] == 1
+        assert r_spk.json()["job_id"]
+
 
 
 

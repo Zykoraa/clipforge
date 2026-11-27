@@ -43,6 +43,108 @@ _LEGACY_PRESET_MAP: dict[str, str] = {
     "dramatic_slow": "am_fenrir",
 }
 
+SPEECH_ACOUSTIC_FX: dict[str, str] = {
+    "studio": "highpass=f=65,loudnorm=I=-16:TP=-1.5:LRA=11",
+    "cinematic": (
+        "highpass=f=55,equalizer=f=110:t=q:w=1.2:g=3.5,"
+        "equalizer=f=3200:t=q:w=1.4:g=2.0,aecho=0.8:0.88:45:0.18,"
+        "loudnorm=I=-15:TP=-1.5:LRA=10"
+    ),
+    "vintage_radio": (
+        "highpass=f=320,lowpass=f=3400,"
+        "acompressor=threshold=-20dB:ratio=4:attack=5:release=60,"
+        "equalizer=f=1400:t=q:w=1.5:g=4.0,loudnorm=I=-16:TP=-1.5:LRA=9"
+    ),
+    "intimate_whisper": (
+        "highpass=f=80,equalizer=f=220:t=q:w=1.2:g=2.5,"
+        "equalizer=f=6500:t=q:w=1.5:g=3.0,"
+        "acompressor=threshold=-24dB:ratio=3:attack=8:release=120,"
+        "loudnorm=I=-16:TP=-1.5:LRA=10"
+    ),
+    "hype_broadcast": (
+        "highpass=f=75,equalizer=f=140:t=q:w=1.1:g=3.0,"
+        "equalizer=f=4200:t=q:w=1.2:g=3.5,"
+        "acompressor=threshold=-16dB:ratio=4.5:attack=4:release=50,"
+        "loudnorm=I=-14:TP=-1.2:LRA=8"
+    ),
+    "spooky_hall": (
+        "highpass=f=70,lowpass=f=7500,aecho=0.8:0.85:90|160:0.32|0.22,"
+        "loudnorm=I=-16:TP=-1.5:LRA=11"
+    ),
+}
+
+
+def pick_kokoro_voice_for_style(
+    speech_style: str = "",
+    gender: str = "auto",
+    requested_preset: str = "auto",
+    take_idx: int = 0,
+) -> tuple[str, float, str]:
+    """Match a Kokoro-82M voice, natural cadence speed, and acoustic EQ chain to Suno-style delivery prompts."""
+    low = (speech_style or "").lower()
+    req = (requested_preset or "auto").strip().lower()
+    g = (gender or "auto").strip().lower()
+
+    if any(k in low for k in ("radio", "1920", "1940", "vintage", "old-time", "telephone", "walkie")):
+        fx_key = "vintage_radio"
+    elif any(k in low for k in ("trailer", "cinematic", "epic", "movie", "dramatic", "gravitas")):
+        fx_key = "cinematic"
+    elif any(k in low for k in ("whisper", "asmr", "intimate", "calm", "bedtime", "soothing", "soft", "meditat")):
+        fx_key = "intimate_whisper"
+    elif any(k in low for k in ("hype", "announcer", "commercial", "ad ", "ad,", "sports", "breaking", "urgent")):
+        fx_key = "hype_broadcast"
+    elif any(k in low for k in ("spooky", "horror", "creepy", "ghost", "haunted", "dark story", "chilling")):
+        fx_key = "spooky_hall"
+    else:
+        fx_key = "studio"
+
+    # Respect an explicit Kokoro voice ID if the user chose one directly
+    if req and req not in ("auto", "default") and any(v["id"] == req for v in KOKORO_VOICES):
+        chosen = req
+    else:
+        is_uk = any(k in low for k in ("british", "uk", "london", "bbc", "documentary", "transatlantic", "museum"))
+        if g == "female":
+            if is_uk:
+                pool = ["bf_emma", "af_heart"]
+            elif fx_key == "intimate_whisper":
+                pool = ["af_nicole", "af_sky", "af_heart"]
+            else:
+                pool = ["af_heart", "af_bella", "af_sky", "bf_emma"]
+        elif g == "male":
+            if is_uk:
+                pool = ["bm_george", "bm_lewis", "am_michael"]
+            elif fx_key in ("cinematic", "spooky_hall"):
+                pool = ["am_fenrir", "am_michael", "am_onyx"]
+            elif fx_key == "hype_broadcast":
+                pool = ["am_puck", "am_adam", "am_michael"]
+            else:
+                pool = ["am_michael", "am_adam", "am_onyx", "am_fenrir"]
+        else:
+            if is_uk:
+                pool = ["bm_george", "bf_emma", "bm_lewis"]
+            elif fx_key == "cinematic":
+                pool = ["am_fenrir", "am_michael", "am_onyx"]
+            elif fx_key == "intimate_whisper":
+                pool = ["af_heart", "af_nicole", "bm_lewis"]
+            elif fx_key == "hype_broadcast":
+                pool = ["am_puck", "af_bella", "am_adam"]
+            elif fx_key == "spooky_hall":
+                pool = ["am_onyx", "af_nicole", "bm_george"]
+            else:
+                pool = ["am_michael", "af_heart", "am_adam", "af_bella"]
+        chosen = pool[take_idx % len(pool)]
+
+    if fx_key in ("cinematic", "spooky_hall") or any(k in low for k in ("slow", "dramatic", "pauses")):
+        sug_speed = 0.90
+    elif fx_key == "intimate_whisper" or any(k in low for k in ("calm", "meditat", "soothing", "bedtime")):
+        sug_speed = 0.92
+    elif fx_key == "hype_broadcast" or any(k in low for k in ("fast", "urgent", "hype", "excited")):
+        sug_speed = 1.12
+    else:
+        sug_speed = 1.0
+
+    return chosen, sug_speed, fx_key
+
 _KOKORO_LOCK = threading.Lock()
 _KOKORO_INSTANCE: Any = None
 _KOKORO_DIR_KEY: str = ""
@@ -177,6 +279,7 @@ def synthesize_speech_offline(
     voice_preset: str = "am_michael",
     speed: float = 1.0,
     comfy_dir: Path = COMFYUI_DIR,
+    acoustic_fx: str = "studio",
 ) -> dict[str, Any]:
     """Synthesize realistic human speech completely offline using Kokoro-82M neural voices (with OS TTS fallback)."""
     clean_text = (text or "").strip()
@@ -287,13 +390,14 @@ def synthesize_speech_offline(
                     raise RuntimeError(f"espeak offline TTS failed: {(res.stderr or '')[-400:]}")
                 engine_name = "espeak_ng"
 
-        # Clean studio broadcast polish (-16 LUFS vocal loudness + de-rumble)
+        # Clean studio broadcast polish + delivery-matched acoustic EQ chain
+        af_chain = SPEECH_ACOUSTIC_FX.get((acoustic_fx or "studio").strip().lower(), SPEECH_ACOUSTIC_FX["studio"])
         ff = subprocess.run(
             [
                 "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
                 "-i", str(raw_wav),
                 "-ar", "24000", "-ac", "1",
-                "-af", "highpass=f=65,loudnorm=I=-16:TP=-1.5:LRA=11",
+                "-af", af_chain,
                 "-c:a", "pcm_s16le",
                 str(out_wav),
             ],
@@ -318,6 +422,152 @@ def synthesize_speech_offline(
         }
     finally:
         raw_wav.unlink(missing_ok=True)
+
+
+def synthesize_procedural_score(
+    output_path: Path,
+    duration_sec: float,
+    mood_prompt: str = "",
+    seed: int = -1,
+) -> Path:
+    """Fast (<0.3s) zero-dependency stereo harmonic ambient underscore tuned to mood keywords."""
+    sr = 44100
+    dur = max(3.0, float(duration_sec))
+    n = int(round(sr * dur))
+    t = np.linspace(0.0, dur, n, endpoint=False, dtype=np.float32)
+
+    low = (mood_prompt or "").lower()
+    if any(k in low for k in ("dramatic", "cinema", "epic", "trailer", "orchestr", "brass", "hero")):
+        # D minor dramatic progression: Dm -> Bb -> Gm -> A
+        chords = [(146.83, 220.00, 261.63), (116.54, 174.61, 233.08), (130.81, 196.00, 233.08), (110.00, 164.81, 220.00)]
+        warmth_lpf = 0.35
+        pulse_hz = 1.6
+    elif any(k in low for k in ("dark", "suspense", "horror", "creepy", "crime", "mystery", "noir")):
+        # E minor brooding tension drone
+        chords = [(82.41, 123.47, 155.56), (82.41, 116.54, 155.56), (73.42, 110.00, 146.83), (82.41, 123.47, 146.83)]
+        warmth_lpf = 0.20
+        pulse_hz = 0.85
+    elif any(k in low for k in ("sad", "piano", "rain", "melanchol", "heartbreak")):
+        # A minor felt ballad: Am -> F -> C -> Em
+        chords = [(110.00, 220.00, 261.63), (87.31, 174.61, 220.00), (130.81, 261.63, 329.63), (98.00, 196.00, 246.94)]
+        warmth_lpf = 0.40
+        pulse_hz = 0.65
+    elif any(k in low for k in ("upbeat", "happy", "ad", "commercial", "fun", "funk", "pop", "synth")):
+        # C major bright uplifting groove: C -> G -> Am -> F
+        chords = [(130.81, 261.63, 329.63), (98.00, 196.00, 246.94), (110.00, 220.00, 261.63), (87.31, 174.61, 220.00)]
+        warmth_lpf = 0.55
+        pulse_hz = 2.0
+    else:
+        # Smooth lo-fi / midnight podcast Rhodes: Fmaj7 -> Em7 -> Dm7 -> Cmaj7
+        chords = [(174.61, 220.00, 261.63), (164.81, 196.00, 246.94), (146.83, 174.61, 220.00), (130.81, 164.81, 246.94)]
+        warmth_lpf = 0.45
+        pulse_hz = 1.25
+
+    chord_len = dur / max(1, len(chords) * 2)
+    phase_idx = np.clip((t / max(0.5, chord_len)).astype(np.int32) % len(chords), 0, len(chords) - 1)
+    # Soft boundary crossfade envelope per chord cell
+    cell_pos = (t % max(0.5, chord_len)) / max(0.5, chord_len)
+    cell_env = np.sin(np.pi * cell_pos) ** 0.35
+
+    f_root = np.array([chords[i][0] for i in range(len(chords))], dtype=np.float32)[phase_idx]
+    f_third = np.array([chords[i][1] for i in range(len(chords))], dtype=np.float32)[phase_idx]
+    f_fifth = np.array([chords[i][2] for i in range(len(chords))], dtype=np.float32)[phase_idx]
+
+    sub = 0.42 * np.sin(2.0 * np.pi * f_root * 0.5 * t)
+    pad_l = (
+        0.24 * np.sin(2.0 * np.pi * f_root * t)
+        + 0.20 * np.sin(2.0 * np.pi * f_third * 1.002 * t)
+        + 0.16 * np.sin(2.0 * np.pi * f_fifth * 0.998 * t)
+        + warmth_lpf * 0.08 * np.sin(2.0 * np.pi * f_third * 2.0 * t)
+    )
+    pad_r = (
+        0.24 * np.sin(2.0 * np.pi * f_root * 0.999 * t)
+        + 0.20 * np.sin(2.0 * np.pi * f_third * 0.997 * t + 0.4)
+        + 0.16 * np.sin(2.0 * np.pi * f_fifth * 1.003 * t + 0.7)
+        + warmth_lpf * 0.08 * np.sin(2.0 * np.pi * f_fifth * 2.0 * t)
+    )
+
+    swell = 0.80 + 0.20 * np.sin(2.0 * np.pi * pulse_hz * t)
+    fade_in = np.clip(t / min(0.8, dur * 0.2), 0.0, 1.0)
+    fade_out = np.clip((dur - t) / min(1.5, dur * 0.25), 0.0, 1.0)
+    master_env = cell_env * swell * fade_in * fade_out
+
+    left = (sub + pad_l) * master_env
+    right = (sub + pad_r) * master_env
+    peak = float(max(np.max(np.abs(left)), np.max(np.abs(right)), 1e-4))
+    scale = 0.45 / peak
+    stereo = np.stack([left * scale, right * scale], axis=1)
+    pcm = np.clip(stereo * 32767.0, -32768.0, 32767.0).astype("<i2")
+
+    out = Path(output_path).resolve()
+    out.parent.mkdir(parents=True, exist_ok=True)
+    with wave.open(str(out), "wb") as wf:
+        wf.setnchannels(2)
+        wf.setsampwidth(2)
+        wf.setframerate(sr)
+        wf.writeframes(pcm.tobytes())
+    return out
+
+
+def mix_speech_with_background_music(
+    speech_wav: Path,
+    music_path: Path,
+    output_path: Path,
+    music_volume: float = 0.34,
+    intro_sec: float = 0.85,
+    outro_sec: float = 1.9,
+) -> dict[str, Any]:
+    """Blend spoken audio + background music with FFmpeg sidechain auto-ducking & -14 LUFS broadcast mastering."""
+    sp = Path(speech_wav).resolve()
+    mu = Path(music_path).resolve()
+    out = Path(output_path).resolve()
+    out.parent.mkdir(parents=True, exist_ok=True)
+
+    sp_info = probe_media_file(sp, assets_dir=None)
+    sp_dur = max(0.8, float(sp_info.duration_sec or 3.0))
+    intro = max(0.0, float(intro_sec))
+    outro = max(0.4, float(outro_sec))
+    total_dur = intro + sp_dur + outro
+    delay_ms = int(round(intro * 1000))
+    mu_vol = max(0.06, min(0.95, float(music_volume)))
+    fade_out_start = max(0.4, total_dur - min(1.5, outro))
+
+    fc = (
+        f"[0:a]aresample=44100,aformat=channel_layouts=stereo,"
+        f"adelay={delay_ms}|{delay_ms},apad=whole_dur={total_dur:.3f},asplit=2[v_main][v_sc];"
+        f"[1:a]aresample=44100,aformat=channel_layouts=stereo,"
+        f"aloop=loop=-1:size=2000000000,atrim=0:{total_dur:.3f},"
+        f"lowpass=f=11500,volume={mu_vol:.3f},"
+        f"afade=t=in:st=0:d=0.60,afade=t=out:st={fade_out_start:.3f}:d={min(1.5, outro):.3f}[m_pre];"
+        f"[m_pre][v_sc]sidechaincompress=threshold=0.025:ratio=5:attack=35:release=420:makeup=1[m_duck];"
+        f"[v_main][m_duck]amix=inputs=2:duration=longest:dropout_transition=0:normalize=0,"
+        f"loudnorm=I=-14:TP=-1.0:LRA=10[outa]"
+    )
+    codec_args = ["-c:a", "libmp3lame", "-b:a", "320k"] if out.suffix.lower() == ".mp3" else ["-c:a", "pcm_s16le"]
+    res = subprocess.run(
+        [
+            "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+            "-i", str(sp),
+            "-i", str(mu),
+            "-filter_complex", fc,
+            "-map", "[outa]",
+            "-t", f"{total_dur:.3f}",
+            *codec_args,
+            str(out),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if res.returncode != 0 or not out.exists() or out.stat().st_size < 512:
+        raise RuntimeError(f"Background music mix failed: {(res.stderr or '')[-500:]}")
+
+    probed = probe_media_file(out, assets_dir=None)
+    return {
+        "audio_path": str(out),
+        "filename": out.name,
+        "duration_sec": round(float(probed.duration_sec or total_dur), 2),
+    }
 
 
 def clone_voice_offline(

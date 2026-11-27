@@ -48,6 +48,16 @@ impl SimpleIntent {
     pub fn is_audio(&self) -> bool {
         matches!(self, SimpleIntent::Music | SimpleIntent::Speech)
     }
+
+    pub fn studio_index(&self) -> usize {
+        if self.is_audio() {
+            2
+        } else if self.is_video() {
+            1
+        } else {
+            0
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -177,12 +187,16 @@ pub struct ClipForgeApp {
     pub simple_auto_enhance: bool,
     pub simple_four_grid: bool,
     pub simple_auto_hd: bool,
+    pub simple_model_override: String,
+    pub simple_show_engine_picker: bool,
+    pub simple_show_customize: bool,
+    pub models_modal_tab: usize,
     pub simple_selected: Option<SimpleAsset>,
     pub last_gallery_head: String,
     pub last_video_head: String,
     pub last_audio_head: String,
     pub continue_parent_video: Option<String>,
-    // Offline Music (Suno-style) & Speech Studio state
+    // Offline Music & Speech Studio state (Suno-style)
     pub music_custom_mode: bool,
     pub music_idea: String,
     pub music_title: String,
@@ -196,6 +210,17 @@ pub struct ClipForgeApp {
     pub music_duration_sec: f32,
     pub music_bpm: u32,
     pub speech_voice_preset: String,
+    pub speech_custom_mode: bool,
+    pub speech_idea: String,
+    pub speech_style: String,
+    pub speech_bg_music: bool,
+    pub speech_music_style: String,
+    pub speech_music_volume: f32,
+    pub speech_use_ai_score: bool,
+    pub speech_gender: String,
+    pub speech_explicit: bool,
+    pub speech_two_takes: bool,
+    pub speech_title: String,
     pub left_tab: LeftTab,
     pub selected: Option<SelectedEntity>,
     pub px_per_sec: f32,
@@ -347,6 +372,10 @@ impl ClipForgeApp {
             simple_auto_enhance: false,
             simple_four_grid: false,
             simple_auto_hd: false,
+            simple_model_override: String::new(),
+            simple_show_engine_picker: false,
+            simple_show_customize: false,
+            models_modal_tab: 0,
             simple_selected: None,
             last_gallery_head: String::new(),
             last_video_head: String::new(),
@@ -364,7 +393,18 @@ impl ClipForgeApp {
             music_two_takes: true,
             music_duration_sec: 60.0,
             music_bpm: 120,
-            speech_voice_preset: "am_michael".into(),
+            speech_voice_preset: "auto".into(),
+            speech_custom_mode: false,
+            speech_idea: String::new(),
+            speech_style: String::new(),
+            speech_bg_music: true,
+            speech_music_style: String::new(),
+            speech_music_volume: 0.34,
+            speech_use_ai_score: true,
+            speech_gender: "auto".into(),
+            speech_explicit: true,
+            speech_two_takes: true,
+            speech_title: String::new(),
             left_tab: LeftTab::Studio,
             selected: None,
             px_per_sec: 78.0,
@@ -931,6 +971,22 @@ impl ClipForgeApp {
                         self.music_bpm = bpm;
                     }
                     self.music_custom_mode = true;
+                }
+                ApiEvent::SpeechPlanned { title, script, speech_style, music_style, background_music } => {
+                    if !title.is_empty() {
+                        self.speech_title = title;
+                    }
+                    if !script.is_empty() {
+                        self.voice_text = script;
+                    }
+                    if !speech_style.is_empty() {
+                        self.speech_style = speech_style;
+                    }
+                    self.speech_bg_music = background_music;
+                    if !music_style.is_empty() {
+                        self.speech_music_style = music_style;
+                    }
+                    self.speech_custom_mode = true;
                 }
                 ApiEvent::RenderCompleted(rep) => {
                     self.last_render_report = Some(rep);

@@ -724,6 +724,12 @@ pub struct AudioMeta {
     #[serde(default)]
     pub speaker: Option<String>,
     #[serde(default)]
+    pub speech_style: Option<String>,
+    #[serde(default)]
+    pub music_style: Option<String>,
+    #[serde(default)]
+    pub background_music: Option<bool>,
+    #[serde(default)]
     pub instrumental: Option<bool>,
     #[serde(default)]
     pub duration_sec: Option<f64>,

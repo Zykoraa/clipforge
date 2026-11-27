@@ -27,27 +27,23 @@ pub fn render_main_layout(app: &mut ClipForgeApp, ctx: &egui::Context) {
 
                 ui.separator();
 
-                // Simple vs. Pro Editor Mode Toggle
-                for (mode, label, tip) in [
-                    (UiMode::Simple, "✨ Simple", "Easy photo & video creator — no technical jargon"),
-                    (UiMode::Pro, "🎛 Pro Editor", "Multi-track timeline, subtitles, SFX, LoRAs & advanced controls"),
-                ] {
-                    let active = app.ui_mode == mode;
-                    let btn = egui::Button::new(
-                        RichText::new(label)
-                            .strong()
-                            .size(12.0)
-                            .color(if active { Color32::WHITE } else { TEXT_MUTED }),
-                    )
-                    .fill(if active { ACCENT_BLUE } else { BG_CARD })
-                    .corner_radius(CornerRadius::same(6));
-                    if ui.add(btn).on_hover_text(tip).clicked() {
-                        if mode == UiMode::Pro && app.ui_mode == UiMode::Simple {
+                // Simple vs. Pro Editor animated pill switcher
+                let mode_idx = if app.ui_mode == UiMode::Simple { 0 } else { 1 };
+                ui.allocate_ui(egui::vec2(215.0, 34.0), |ui| {
+                    if let Some(picked) = animated_segmented_bar(
+                        ui,
+                        "top_ui_mode",
+                        &["✨ Simple", "🎛 Pro Editor"],
+                        mode_idx,
+                        ACCENT_BLUE,
+                    ) {
+                        let next_mode = if picked == 0 { UiMode::Simple } else { UiMode::Pro };
+                        if next_mode == UiMode::Pro && app.ui_mode == UiMode::Simple {
                             app.player.stop_playback();
                         }
-                        app.ui_mode = mode;
+                        app.ui_mode = next_mode;
                     }
-                }
+                });
 
                 if app.ui_mode == UiMode::Pro {
                     ui.separator();
@@ -350,13 +346,31 @@ pub fn render_main_layout(app: &mut ClipForgeApp, ctx: &egui::Context) {
     // 6. Modals
     modals::render_all_modals(app, ctx);
 
-    // 7. Floating Toast Notifications (bottom-right overlay)
+    // 7. Animated Floating Toast Notifications (smooth slide-in + fade-out overlay)
     if !app.toasts.is_empty() {
-        egui::Area::new(egui::Id::new("toast_overlay"))
-            .anchor(egui::Align2::RIGHT_BOTTOM, egui::vec2(-16.0, -16.0))
-            .interactable(false)
-            .show(ctx, |ui| {
-                for t in &app.toasts {
+        let mut needs_toast_anim = false;
+        for (idx, t) in app.toasts.iter().enumerate() {
+            let age = t.created.elapsed().as_secs_f32();
+            let in_t = (age / 0.22).clamp(0.0, 1.0);
+            let out_t = if age > 3.6 {
+                ((4.0 - age) / 0.40).clamp(0.0, 1.0)
+            } else {
+                1.0
+            };
+            if in_t < 1.0 || out_t < 1.0 {
+                needs_toast_anim = true;
+            }
+            let ease = 1.0 - (1.0 - in_t).powi(3);
+            let slide_x = (1.0 - ease) * 34.0;
+            let alpha_u8 = (out_t * ease * 246.0).round().clamp(0.0, 255.0) as u8;
+            let border_a = (out_t * ease * 230.0).round().clamp(0.0, 255.0) as u8;
+            let text_a = (out_t * ease * 255.0).round().clamp(0.0, 255.0) as u8;
+            let y_off = -16.0 - (idx as f32) * 46.0;
+
+            egui::Area::new(egui::Id::new(("toast_overlay_item", idx, t.message.len())))
+                .anchor(egui::Align2::RIGHT_BOTTOM, egui::vec2(-16.0 + slide_x, y_off))
+                .interactable(false)
+                .show(ctx, |ui| {
                     let accent = match t.kind {
                         ToastKind::Success => ACCENT_GREEN,
                         ToastKind::Warning => ACCENT_AMBER,
@@ -364,16 +378,30 @@ pub fn render_main_layout(app: &mut ClipForgeApp, ctx: &egui::Context) {
                         ToastKind::Info => ACCENT_BLUE,
                     };
                     Frame::new()
-                        .fill(Color32::from_rgba_unmultiplied(15, 20, 32, 244))
-                        .stroke(Stroke::new(1.2_f32, accent))
-                        .corner_radius(CornerRadius::same(8))
+                        .fill(Color32::from_rgba_unmultiplied(15, 20, 32, alpha_u8))
+                        .stroke(Stroke::new(
+                            1.2_f32,
+                            Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), border_a),
+                        ))
+                        .corner_radius(CornerRadius::same(10))
                         .inner_margin(Margin::symmetric(12, 8))
                         .show(ui, |ui| {
-                            ui.set_max_width(360.0);
-                            ui.label(RichText::new(&t.message).color(TEXT_PRIMARY).size(12.5));
+                            ui.set_max_width(370.0);
+                            ui.label(
+                                RichText::new(&t.message)
+                                    .color(Color32::from_rgba_unmultiplied(
+                                        TEXT_PRIMARY.r(),
+                                        TEXT_PRIMARY.g(),
+                                        TEXT_PRIMARY.b(),
+                                        text_a,
+                                    ))
+                                    .size(12.5),
+                            );
                         });
-                    ui.add_space(4.0);
-                }
-            });
+                });
+        }
+        if needs_toast_anim {
+            ctx.request_repaint_after(std::time::Duration::from_millis(16));
+        }
     }
 }

@@ -1740,3 +1740,293 @@ def plan_song_from_idea(
 
     return {"source": "builtin_songwriter", "title": base_title, "takes": takes}
 
+
+# ---------------------------------------------------------------------------
+# Offline Suno-Style Speech Director (Idea/Prompt + Delivery Style + Score)
+# ---------------------------------------------------------------------------
+_SPEECH_ARCHETYPES: list[dict[str, Any]] = [
+    {
+        "id": "movie_trailer",
+        "keywords": ("trailer", "epic", "movie", "cinema", "blockbuster", "hero", "war", "world", "action", "coming soon"),
+        "styles": [
+            "Deep gravelly Hollywood movie trailer voiceover, slow dramatic pauses, thunderous gravitas, chest-resonant broadcast mic",
+            "Urgent cinematic narrator with building intensity, crisp articulation, breathless tension before the drop",
+        ],
+        "music": [
+            "Epic orchestral movie trailer score at 90 BPM, deep brass BWAAAM swells, pulsing sub-bass hits, soaring tense strings, wide cinema hall",
+            "Dark heroic hybrid cinema score at 100 BPM, taiko drums, dramatic string ostinato, building tension swells",
+        ],
+        "bpm": 92,
+    },
+    {
+        "id": "vintage_radio",
+        "keywords": ("radio", "1920", "vintage", "old", "noir", "detective", "news", "broadcast", "breaking", "retro"),
+        "styles": [
+            "1940s vintage transatlantic radio announcer, crisp mid-focused warmth, charismatic theatrical cadence, subtle tape crackle",
+            "Fast-talking breaking news desk anchor, urgent declarative punch, crystal-clear broadcast delivery",
+        ],
+        "music": [
+            "Smoky late-night film noir jazz underscore at 82 BPM, muted brushed snare, upright walking bass, melancholic solo saxophone",
+            "Warm vintage 1940s lounge swing underscore at 108 BPM, soft hollow-body jazz guitar, warm upright bass",
+        ],
+        "bpm": 86,
+    },
+    {
+        "id": "dark_story",
+        "keywords": ("horror", "creepy", "ghost", "dark", "scary", "murder", "mystery", "true crime", "3am", "midnight", "haunted"),
+        "styles": [
+            "Hushed chilling true-crime narrator, unhurried measured pacing, eerie calm, intimate close-mic presence",
+            "Whispered psychological thriller monologue, tense deliberate pauses, dark foreboding undertone",
+        ],
+        "music": [
+            "Eerie dark ambient suspense score at 72 BPM, deep brooding cello drone, sparse glass piano notes, haunting tension reverb",
+            "Tense minimalist crime documentary underscore at 88 BPM, muted sub pulse, ticking textures, atmospheric dark pads",
+        ],
+        "bpm": 74,
+    },
+    {
+        "id": "calm_guided",
+        "keywords": ("meditat", "calm", "sleep", "relax", "bedtime", "asmr", "story", "museum", "guide", "peace", "nature"),
+        "styles": [
+            "Warm gentle close-mic narrator, unhurried soothing breath cadence, silky relaxed clarity",
+            "Reflective documentary storyteller, soft reassuring tone, conversational natural warmth",
+        ],
+        "music": [
+            "Warm ambient felt piano & shimmering synth pad underscore at 74 BPM, gentle atmospheric reverb, peaceful acoustic texture",
+            "Soft dreamy lo-fi chill instrumental at 80 BPM, mellow Rhodes electric piano chords, warm muted bass, rainy night serenity",
+        ],
+        "bpm": 76,
+    },
+    {
+        "id": "podcast_rant",
+        "keywords": ("podcast", "rant", "roast", "diss", "bro", "shit", "fuck", "crazy", "storytime", "reddit", "unhinged", "meme"),
+        "styles": [
+            "Unfiltered punchy podcast host delivery, expressive comedic timing, crisp studio condenser mic, raw conversational energy",
+            "Fired-up deadpan storyteller with sharp emphasis on punchlines, lively pace, zero filter",
+        ],
+        "music": [
+            "Laid-back cool lo-fi hip-hop podcast bed at 86 BPM, mellow jazz-hop Rhodes chords, dusty vinyl pocket groove, warm sub",
+            "Cocky bouncy West Coast hip-hop instrumental beat at 98 BPM, rubbery bassline, crisp finger snaps, head-nodding groove",
+        ],
+        "bpm": 90,
+    },
+    {
+        "id": "hype_ad",
+        "keywords": ("ad", "promo", "commercial", "hype", "sale", "sports", "energy", "product", "viral", "youtube", "tiktok"),
+        "styles": [
+            "High-energy modern viral commercial narrator, punchy snappy rhythm, confident charismatic grin in the voice",
+            "Excited sports-hype broadcaster, explosive upward inflections, fast articulate momentum",
+        ],
+        "music": [
+            "Upbeat glossy synth-pop commercial groove at 118 BPM, punchy bassline, bright snappy drums, feel-good chord progression",
+            "High-energy electro-funk instrumental bed at 124 BPM, crisp slap bass, bright brass stabs, infectious rhythmic bounce",
+        ],
+        "bpm": 120,
+    },
+]
+
+
+def _compose_builtin_speech_script(topic: str, arch_id: str, take_idx: int, explicit: bool = True) -> str:
+    clean_t = topic[:120].strip(" .")
+    if arch_id == "movie_trailer":
+        if take_idx % 2 == 0:
+            return (
+                f"In a world where everything went sideways because of {clean_t}... "
+                "one mistake changed the rules forever. They thought nobody was watching. "
+                "They were dead wrong. This Friday... prepare for total chaos."
+            )
+        return (
+            f"Every legend starts with a warning nobody listened to. Tonight, {clean_t} becomes real — "
+            "no backup, no mercy, and zero second chances."
+        )
+    if arch_id == "vintage_radio":
+        return (
+            f"Good evening, ladies and gentlemen, we interrupt tonight's program with urgent word regarding {clean_t}. "
+            "Witnesses at the scene remain baffled, and authorities advise everyone to keep their doors locked until further notice."
+        )
+    if arch_id == "dark_story":
+        return (
+            f"At two-fifteen in the morning, the hallway lights went completely dark... and that's when {clean_t} began. "
+            "Nobody heard footsteps. Only the faint hum of the streetlamp outside — and a truth nobody was meant to uncover."
+        )
+    if arch_id == "calm_guided":
+        return (
+            f"Take a slow, steady breath and let the noise of the day fade behind you. Tonight, we explore {clean_t} — "
+            "moving unhurriedly through each quiet detail, with nothing left to rush."
+        )
+    if arch_id == "hype_ad":
+        return (
+            f"Stop scrolling — seriously, look at {clean_t}! Faster, louder, and built without a single shortcut, "
+            "this is what happens when nobody holds back. Turn the volume up and see it for yourself right now."
+        )
+    # podcast_rant / default uncensored storytelling
+    if explicit:
+        return (
+            f"Alright, look — I wasn't even gonna say anything today, but {clean_t} is genuinely the wildest shit I've seen all week. "
+            "Like, you had one goddamn job, zero common sense, and somehow still pulled it off with full confidence."
+        )
+    return (
+        f"Okay, wait a second — we seriously need to talk about {clean_t}. "
+        "I tried to stay calm, I really did, and then everything went completely off the rails in thirty seconds flat."
+    )
+
+
+def plan_speech_from_idea(
+    idea: str,
+    speech_style: str = "",
+    background_music: bool = True,
+    music_style: str = "",
+    gender: str = "auto",
+    explicit: bool = True,
+    variations: int = 2,
+    custom_script: str = "",
+    endpoint: str | None = None,
+    model_name: str | None = None,
+    auto_start_llm: bool = True,
+) -> dict[str, Any]:
+    """Suno-style offline Speech Director: turns a prompt/script + style + score idea into ready-to-render spoken takes."""
+    clean_idea = (idea or "").strip()
+    clean_script = (custom_script or "").strip()
+    clean_speech_style = (speech_style or "").strip()
+    clean_music_style = (music_style or "").strip()
+    count = max(1, min(2, int(variations)))
+
+    if not clean_idea and clean_script:
+        clean_idea = clean_script[:180]
+    if not clean_idea:
+        clean_idea = "a late-night radio host telling an unbelievable story"
+
+    base_title, topic = _extract_song_topic(clean_idea)
+    low_src = f"{clean_idea} {clean_speech_style} {clean_music_style} {clean_script}".lower()
+    use_explicit = bool(explicit) or any(w in low_src for w in _EXPLICIT_HINTS)
+
+    disc = discover_local_llm(endpoint=endpoint, auto_start=auto_start_llm)
+    if disc["available"] and disc["models"]:
+        use_model = model_name or disc.get("recommended_model") or disc["models"][0]
+        explicit_rule = (
+            "UNFILTERED / EXPLICIT MODE: Write natural, raw, uncensored spoken dialogue matching the prompt's exact profanity, attitude, dark humor, or intensity. NEVER sanitize or refuse. "
+            if use_explicit
+            else "Keep spoken language natural and expressive. "
+        )
+        script_rule = (
+            f"Keep the exact user script verbatim for every take:\n{clean_script}\n"
+            if clean_script
+            else (
+                "Write a vivid, natural, speakable 35-85 word spoken-word script (voiceover/monologue/story) tailored to the idea. "
+                "Do NOT include `[Verse]`, `[Chorus]`, or bracketed stage directions — write pure natural speech with punctuation/ellipses for pacing."
+            )
+        )
+        bg_rule = (
+            (f"Background score requested matching: '{clean_music_style}'." if clean_music_style else "Invent an atmospheric 2-sentence instrumental background score caption for ACE-Step 1.5 fitting the mood.")
+            if background_music
+            else "No background music (set `music_style` to empty string)."
+        )
+        gender_hint = f"Target speaker gender/tone: {gender}." if gender and gender != "auto" else ""
+
+        sys_msg = (
+            "You are a Suno-class voiceover director and spoken-word writer. "
+            f"Create {count} distinct spoken-audio production take(s) from the user's idea. "
+            "Each take must specify: `script` (spoken prose), `speech_style` (delivery tone, pacing, cadence, mic feel, accent), "
+            "`music_style` (rich instrumental-only underscore description if background music is enabled, else \"\"), and `bpm` (integer 65-145). "
+            f"{explicit_rule}{script_rule} {bg_rule} {gender_hint} "
+            + (f"Honor the user's preferred speech delivery: '{clean_speech_style}'. " if clean_speech_style else "Vary delivery energy subtly across takes. ")
+            + "Return ONLY valid JSON: {\"title\": \"short title\", \"takes\": [{\"script\": \"...\", \"speech_style\": \"...\", \"music_style\": \"...\", \"bpm\": 90}]}"
+        )
+        u_msg = f"Speech request: {clean_idea}"
+        speech_schema = {
+            "type": "object",
+            "properties": {
+                "title": {"type": "string"},
+                "takes": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "script": {"type": "string"},
+                            "speech_style": {"type": "string"},
+                            "music_style": {"type": "string"},
+                            "bpm": {"type": "integer"},
+                        },
+                        "required": ["script", "speech_style", "music_style", "bpm"],
+                        "additionalProperties": False,
+                    },
+                },
+            },
+            "required": ["title", "takes"],
+            "additionalProperties": False,
+        }
+        parsed = _invoke_local_llm_json(
+            disc,
+            use_model,
+            sys_msg,
+            u_msg,
+            temperature=0.80,
+            max_tokens=1100,
+            json_schema=speech_schema,
+        )
+        if parsed and not parsed.get("__refused__") and isinstance(parsed.get("takes"), list):
+            llm_title = _clean_prompt_text(str(parsed.get("title") or base_title))[:48] or base_title
+            out_takes: list[dict[str, Any]] = []
+            for idx, tk in enumerate(parsed["takes"][:count]):
+                if not isinstance(tk, dict):
+                    continue
+                t_script = clean_script or str(tk.get("script") or "").replace("\\n", "\n").strip()
+                t_sstyle = clean_speech_style or _clean_prompt_text(str(tk.get("speech_style") or "")) or "Warm expressive narrator"
+                t_mstyle = ""
+                if background_music:
+                    t_mstyle = clean_music_style or _clean_prompt_text(str(tk.get("music_style") or "")) or "Atmospheric cinematic underscore, subtle warm pads"
+                if not t_script or _looks_like_refusal(t_script):
+                    continue
+                try:
+                    t_bpm = max(60, min(160, int(tk.get("bpm") or 90)))
+                except Exception:
+                    t_bpm = 90
+                out_takes.append(
+                    {
+                        "take_index": idx + 1,
+                        "title": f"{llm_title} (Take {idx + 1})" if count > 1 else llm_title,
+                        "script": t_script,
+                        "speech_style": t_sstyle,
+                        "music_style": t_mstyle,
+                        "bpm": t_bpm,
+                    }
+                )
+            if out_takes:
+                while len(out_takes) < count:
+                    cp = dict(out_takes[0])
+                    cp["take_index"] = len(out_takes) + 1
+                    cp["title"] = f"{llm_title} (Take {len(out_takes) + 1})"
+                    out_takes.append(cp)
+                return {"source": f"local_llm:{use_model}", "title": llm_title, "takes": out_takes[:count]}
+
+    # Built-in zero-dependency offline fallback
+    matched = _SPEECH_ARCHETYPES[4]  # podcast_rant default
+    best_hits = 0
+    for arch in _SPEECH_ARCHETYPES:
+        hits = sum(1 for kw in arch["keywords"] if kw in low_src)
+        if hits > best_hits:
+            best_hits = hits
+            matched = arch
+
+    takes: list[dict[str, Any]] = []
+    for idx in range(count):
+        t_sstyle = clean_speech_style or matched["styles"][idx % len(matched["styles"])]
+        t_mstyle = (
+            (clean_music_style or matched["music"][idx % len(matched["music"])])
+            if background_music
+            else ""
+        )
+        t_script = clean_script or _compose_builtin_speech_script(topic, matched["id"], idx, explicit=use_explicit)
+        takes.append(
+            {
+                "take_index": idx + 1,
+                "title": f"{base_title} (Take {idx + 1})" if count > 1 else base_title,
+                "script": t_script,
+                "speech_style": t_sstyle,
+                "music_style": t_mstyle,
+                "bpm": matched["bpm"],
+            }
+        )
+    return {"source": "builtin_speech_director", "title": base_title, "takes": takes}
+
+

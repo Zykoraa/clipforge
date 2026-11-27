@@ -122,92 +122,168 @@ fn render_starter_pack_banner(app: &mut ClipForgeApp, ui: &mut egui::Ui) {
     ui.add_space(8.0);
 }
 
+fn select_simple_intent(app: &mut ClipForgeApp, intent: SimpleIntent) {
+    app.simple_intent = intent;
+    app.checkpoint_override.clear();
+    app.simple_model_override.clear();
+    if !intent.is_video() {
+        app.continue_parent_video = None;
+    }
+    if intent.is_video() {
+        app.set_studio_mode(StudioMode::Video, true, Some("auto".into()));
+        app.want_audio = intent == SimpleIntent::AudioVideo;
+    } else {
+        app.set_studio_mode(StudioMode::Image, true, Some("auto".into()));
+    }
+}
+
 fn render_intent_cards(app: &mut ClipForgeApp, ui: &mut egui::Ui) {
     ui.horizontal(|ui| {
-        ui.label(RichText::new("What do you want to make?").size(13.5).strong().color(Color32::WHITE));
+        ui.label(RichText::new("Create").size(14.5).strong().color(Color32::WHITE));
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             if !app.gen_status.comfyui_running {
                 let starting = app.busy_flags.contains("start_comfy");
                 if ui
-                    .add_enabled(!starting, egui::Button::new(if starting { "Starting..." } else { "▶ Start AI" }))
+                    .add_enabled(!starting, egui::Button::new(if starting { "Starting AI..." } else { "▶ Start AI" }))
                     .clicked()
                 {
                     app.busy_flags.insert("start_comfy".into());
                     app.api.send(ApiCommand::StartComfyUi);
                 }
             } else {
-                badge(ui, "● Ready", ACCENT_GREEN);
+                pulsing_status_pill(ui, "AI Ready", ACCENT_GREEN, true);
             }
         });
     });
+    ui.add_space(4.0);
+
+    // Tier 1: Smooth animated 3-Studio selector (no cramped 8-box grid!)
+    let studio_idx = app.simple_intent.studio_index();
+    let studio_accent = match studio_idx {
+        1 => ACCENT_CYAN,
+        2 => ACCENT_PURPLE,
+        _ => ACCENT_BLUE,
+    };
+    if let Some(next_studio) = animated_segmented_bar(
+        ui,
+        "simple_studio_bar",
+        &["🖼 Images", "🎬 Video", "🎵 Audio"],
+        studio_idx,
+        studio_accent,
+    ) {
+        if next_studio != studio_idx {
+            let def_intent = match next_studio {
+                1 => SimpleIntent::Animate,
+                2 => SimpleIntent::Music,
+                _ => SimpleIntent::Photo,
+            };
+            select_simple_intent(app, def_intent);
+        }
+    }
+
     ui.add_space(6.0);
 
-    let intents = [
-        (SimpleIntent::Photo, "📷 Photo", "Realistic images & text"),
-        (SimpleIntent::Friend, "👥 Friend in Scene", "Put friends into any scene"),
-        (SimpleIntent::Anime, "🎨 Anime / Art", "Illustration & stylized art"),
-        (SimpleIntent::Animate, "🎬 Animate Photo", "Turn any photo into video"),
-        (SimpleIntent::AudioVideo, "🔊 Video + Sound", "Video with matching audio"),
-        (SimpleIntent::Talk, "🗣 Talking Friend", "Make any friend speak"),
-        (SimpleIntent::Music, "🎵 Song (Music)", "Full songs with vocals & lyrics"),
-        (SimpleIntent::Speech, "🎙 Speech / Voice", "Offline voiceovers & cloning"),
-    ];
+    // Tier 2: Crisp contextual sub-mode pills (only 2-3 clean choices for active studio)
+    let sub_choices: Vec<(SimpleIntent, &str, &str)> = match studio_idx {
+        0 => vec![
+            (SimpleIntent::Photo, "📷 Photo", "Realistic images, memes & text signs"),
+            (SimpleIntent::Friend, "👥 Friend in Scene", "Place saved friends into any photo"),
+            (SimpleIntent::Anime, "🎨 Anime / Art", "Illustrations, manga & stylized art"),
+        ],
+        1 => vec![
+            (SimpleIntent::Animate, "🎬 Animate Photo", "Bring any photo to life (5s clip)"),
+            (SimpleIntent::AudioVideo, "🔊 Video + Sound", "Generate video with matching SFX/voice"),
+            (SimpleIntent::Talk, "🗣 Talking Friend", "Make any friend speak with lip-sync"),
+        ],
+        _ => vec![
+            (SimpleIntent::Music, "🎵 Songs", "Suno-style songs from an idea or lyrics"),
+            (SimpleIntent::Speech, "🎙 Speech & Score", "Voiceovers + delivery tone + background music"),
+        ],
+    };
 
-    let card_w = ((ui.available_width() - 8.0) / 2.0).max(150.0);
-    egui::Grid::new("simple_intent_grid")
-        .num_columns(2)
-        .spacing([8.0, 8.0])
-        .show(ui, |ui| {
-            for (idx, (intent, title, sub)) in intents.iter().enumerate() {
-                let active = app.simple_intent == *intent;
-                let fill = if active {
-                    Color32::from_rgb(30, 58, 112)
-                } else {
-                    BG_CARD
-                };
-                let stroke = if active {
-                    Stroke::new(1.5_f32, ACCENT_BLUE)
-                } else {
-                    Stroke::new(1.0_f32, BORDER_SUBTLE)
-                };
-                let frame_resp = Frame::new()
-                    .fill(fill)
-                    .stroke(stroke)
-                    .corner_radius(CornerRadius::same(9))
-                    .inner_margin(Margin::symmetric(10, 8))
-                    .show(ui, |ui| {
-                        ui.set_width(card_w - 20.0);
-                        ui.label(
-                            RichText::new(*title)
-                                .size(12.5)
-                                .strong()
-                                .color(if active { Color32::WHITE } else { TEXT_PRIMARY }),
-                        );
-                        ui.label(RichText::new(*sub).size(10.5).color(TEXT_MUTED));
-                    });
-                let click_resp = ui.interact(
-                    frame_resp.response.rect,
-                    ui.id().with(("intent_card", idx)),
-                    Sense::click(),
-                );
-                if click_resp.clicked() {
-                    app.simple_intent = *intent;
-                    app.checkpoint_override.clear();
-                    if !intent.is_video() {
-                        app.continue_parent_video = None;
-                    }
-                    if intent.is_video() {
-                        app.set_studio_mode(StudioMode::Video, true, Some("auto".into()));
-                        app.want_audio = *intent == SimpleIntent::AudioVideo;
-                    } else {
-                        app.set_studio_mode(StudioMode::Image, true, Some("auto".into()));
-                    }
-                }
-                if idx % 2 == 1 {
-                    ui.end_row();
-                }
+    let pill_w = ((ui.available_width() - ((sub_choices.len() as f32 - 1.0) * 6.0)) / (sub_choices.len() as f32)).max(90.0);
+    ui.horizontal(|ui| {
+        for (idx, (intent, title, tip)) in sub_choices.iter().enumerate() {
+            let active = app.simple_intent == *intent;
+            let (rect, resp) = ui.allocate_exact_size(Vec2::new(pill_w, 30.0), Sense::click());
+            let hov = ui
+                .ctx()
+                .animate_bool_with_time(ui.id().with(("sub_pill_hov", idx, studio_idx)), resp.hovered(), 0.14);
+            let painter = ui.painter_at(rect);
+            let bg = if active {
+                lerp_color(BG_CARD, studio_accent, 0.24)
+            } else {
+                lerp_color(BG_CARD, BG_ELEVATED, hov)
+            };
+            let stroke_col = if active {
+                studio_accent
+            } else {
+                lerp_color(BORDER_SUBTLE, studio_accent, hov * 0.5)
+            };
+            painter.rect_filled(rect, 9.0, bg);
+            painter.rect_stroke(
+                rect,
+                9.0,
+                Stroke::new(if active { 1.4_f32 } else { 1.0_f32 }, stroke_col),
+                egui::StrokeKind::Inside,
+            );
+            painter.text(
+                rect.center(),
+                egui::Align2::CENTER_CENTER,
+                *title,
+                egui::FontId::proportional(11.5),
+                if active { Color32::WHITE } else { lerp_color(TEXT_MUTED, Color32::WHITE, hov * 0.7) },
+            );
+            let click_resp = resp.on_hover_text(*tip);
+            if click_resp.clicked() && !active {
+                select_simple_intent(app, *intent);
             }
-        });
+        }
+    });
+}
+
+/// Curated plain-English guide so Simple Mode shows ONLY the 2-4 relevant engines for the current task.
+fn guided_models_for_intent(intent: SimpleIntent, unfiltered_vid: bool) -> Vec<(&'static str, &'static str, &'static str)> {
+    match intent {
+        SimpleIntent::Photo => vec![
+            ("z_image_turbo", "Fast Everyday", "Sharp candid photos & signs (~6s)"),
+            ("lustify_sdxl", "Unfiltered Realism", "Zero-filter raw photos & adult humor"),
+            ("pony_realism", "Unfiltered Expressive", "Bold poses & stylized realism"),
+            ("krea2_turbo", "Editorial Studio", "Maximum skin & portrait detail"),
+        ],
+        SimpleIntent::Friend => vec![
+            ("flux2_klein_9b", "Best Likeness", "Puts a friend into any new scene"),
+            ("qwen_edit_2511", "2-Friend Combiner", "Best for 2 friends or outfit swaps"),
+            ("lustify_sdxl", "Unfiltered + Face Lock", "Raw unfiltered scene + Face Lock"),
+            ("pony_realism", "Bold Unfiltered + Face Lock", "Expressive meme poses + Face Lock"),
+        ],
+        SimpleIntent::Anime => vec![
+            ("illustrious_xl", "Anime Flagship", "Crisp anime, manga & illustration"),
+            ("chroma_hd", "Surreal Art / Posters", "Uncensored creative styles"),
+            ("pony_realism", "Semi-Real Stylized", "2.5D & stylized characters"),
+        ],
+        SimpleIntent::Animate => {
+            if unfiltered_vid {
+                vec![
+                    ("wan22_remix_i2v", "Unfiltered Action", "Bold natural motion (no filter)"),
+                    ("wan22_smoothmix_i2v", "Unfiltered Smooth", "Fluid cinematic unfiltered motion"),
+                    ("wan22_i2v", "Standard Smooth", "Balanced everyday photo animation"),
+                ]
+            } else {
+                vec![
+                    ("wan22_i2v", "Best Photo Motion", "Smooth natural 5s animation"),
+                    ("wan22_remix_i2v", "Unfiltered Action", "Expressive zero-refusal motion"),
+                    ("wan22_5b", "Quick Draft (~25s)", "Fast preview before full render"),
+                ]
+            }
+        }
+        SimpleIntent::AudioVideo => vec![
+            ("ltx23", "Video + Synced Audio", "Generates matching SFX & dialogue together"),
+            ("wan22_t2v", "Cinema Silent Video", "Pure visual motion from text alone"),
+            ("wan22_5b", "Fast Video Draft", "Quick ~25s preview"),
+        ],
+        _ => vec![],
+    }
 }
 
 fn render_simple_talk_card(app: &mut ClipForgeApp, ui: &mut egui::Ui) {
@@ -306,6 +382,7 @@ fn render_simple_talk_card(app: &mut ClipForgeApp, ui: &mut egui::Ui) {
 
 fn render_builtin_voice_picker(app: &mut ClipForgeApp, ui: &mut egui::Ui, id_salt: &str) {
     let presets = [
+        ("auto", "✨ Auto-Match Best Voice for Style"),
         ("am_michael", "🎙 Michael · Deep Studio Male (US)"),
         ("af_heart", "🎙 Heart · Warm Natural Female (US)"),
         ("am_adam", "🎙 Adam · Viral Narrator Male (US)"),
@@ -323,7 +400,7 @@ fn render_builtin_voice_picker(app: &mut ClipForgeApp, ui: &mut egui::Ui, id_sal
         .iter()
         .find(|(id, _)| *id == app.speech_voice_preset)
         .map(|(_, l)| *l)
-        .unwrap_or("🎙 Michael · Deep Studio Male (US)");
+        .unwrap_or("✨ Auto-Match Best Voice for Style");
     let kokoro_ready = app.gen_status.voice.kokoro_ready
         || app.gen_status.models.get("kokoro_tts").map(|m| m.ready).unwrap_or(false);
     ui.horizontal(|ui| {
@@ -383,30 +460,17 @@ fn render_simple_music_card(app: &mut ClipForgeApp, ui: &mut egui::Ui) {
             });
         });
 
-        // Suno-style Simple vs Custom toggle
+        // Suno-style Simple vs Custom animated toggle
         ui.add_space(4.0);
-        ui.horizontal(|ui| {
-            let simple_btn = egui::Button::new(
-                RichText::new("✨ Simple (Just an Idea)")
-                    .size(11.0)
-                    .color(if !app.music_custom_mode { Color32::WHITE } else { TEXT_MUTED }),
-            )
-            .fill(if !app.music_custom_mode { ACCENT_PURPLE } else { BG_ELEVATED })
-            .corner_radius(CornerRadius::same(10));
-            if ui.add(simple_btn).clicked() {
-                app.music_custom_mode = false;
-            }
-            let custom_btn = egui::Button::new(
-                RichText::new("🎛 Custom (Lyrics & Style)")
-                    .size(11.0)
-                    .color(if app.music_custom_mode { Color32::WHITE } else { TEXT_MUTED }),
-            )
-            .fill(if app.music_custom_mode { ACCENT_BLUE } else { BG_ELEVATED })
-            .corner_radius(CornerRadius::same(10));
-            if ui.add(custom_btn).clicked() {
-                app.music_custom_mode = true;
-            }
-        });
+        if let Some(tab) = animated_segmented_bar(
+            ui,
+            "music_mode_tabs",
+            &["✨ Simple (Just an Idea)", "🎛 Custom (Lyrics & Style)"],
+            if app.music_custom_mode { 1 } else { 0 },
+            ACCENT_PURPLE,
+        ) {
+            app.music_custom_mode = tab == 1;
+        }
         ui.add_space(6.0);
 
         if !app.music_custom_mode {
@@ -623,13 +687,7 @@ fn render_simple_music_card(app: &mut ClipForgeApp, ui: &mut egui::Ui) {
         }
 
         let create_btn_lbl = if app.music_two_takes { "🎵 Create 2 Songs" } else { "🎵 Create Song" };
-        if ui
-            .add_enabled(
-                is_ready,
-                primary_button(create_btn_lbl).min_size(Vec2::new(ui.available_width(), 42.0)),
-            )
-            .clicked()
-        {
+        if animated_cta_button(ui, "create_music_cta", create_btn_lbl, ACCENT_PURPLE, is_ready, 42.0).clicked() {
             let variations = if app.music_two_takes { 2 } else { 1 };
             let quality = if app.music_studio_quality { "studio" } else { "fast" };
             if !app.music_custom_mode {
@@ -677,80 +735,285 @@ fn render_simple_music_card(app: &mut ClipForgeApp, ui: &mut egui::Ui) {
 }
 
 fn render_simple_speech_card(app: &mut ClipForgeApp, ui: &mut egui::Ui) {
+    let music_ready = app.gen_status.models.get("ace_step_music_xl").map(|m| m.ready).unwrap_or(false)
+        || app.gen_status.models.get("ace_step_music").map(|m| m.ready).unwrap_or(false);
+    let kokoro_ready = app.gen_status.voice.kokoro_ready
+        || app.gen_status.models.get("kokoro_tts").map(|m| m.ready).unwrap_or(false);
+
     card_frame().show(ui, |ui| {
         ui.horizontal(|ui| {
-            ui.label(RichText::new("🎙 Create Offline Speech / Voiceover").size(13.0).strong());
+            ui.label(RichText::new("🎙 Speech & Spoken Word").size(13.5).strong().color(Color32::WHITE));
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                if ui.small_button("+ Add Friend Voice").clicked() {
-                    app.show_cast_modal = true;
+                if kokoro_ready {
+                    pulsing_status_pill(ui, "Neural Voices", ACCENT_GREEN, false);
+                } else {
+                    badge(ui, "OS Voice Fallback", ACCENT_AMBER);
                 }
             });
         });
-        ui.label(
-            RichText::new("Generate crisp offline voiceovers instantly with built-in voices, or clone any saved friend's real voice.")
-                .size(11.0)
-                .color(TEXT_MUTED),
-        );
+
+        ui.add_space(4.0);
+        // Suno-style Prompt Mode vs Custom Script Mode
+        if let Some(tab) = animated_segmented_bar(
+            ui,
+            "speech_mode_tabs",
+            &["✨ Prompt (Auto-Script)", "🎛 Custom Script"],
+            if app.speech_custom_mode { 1 } else { 0 },
+            ACCENT_BLUE,
+        ) {
+            app.speech_custom_mode = tab == 1;
+        }
         ui.add_space(6.0);
 
-        let voice_friends: Vec<_> = app.gen_status.cast.iter().filter(|c| c.has_voice).cloned().collect();
-        let selected_speaker_lbl = if app.voice_cast_id.is_empty() {
-            "🔊 Built-in Offline Narrator (Instant)".to_string()
-        } else {
-            voice_friends
-                .iter()
-                .find(|c| c.id == app.voice_cast_id)
-                .map(|c| format!("🎙 {}'s Cloned Voice", c.name))
-                .unwrap_or_else(|| "🔊 Built-in Offline Narrator (Instant)".to_string())
-        };
-        ui.label(RichText::new("Speaker").size(11.0).strong().color(TEXT_MUTED));
-        egui::ComboBox::from_id_salt("simple_speech_speaker_cb")
-            .selected_text(selected_speaker_lbl)
-            .width(ui.available_width() - 4.0)
-            .show_ui(ui, |ui| {
-                ui.selectable_value(&mut app.voice_cast_id, String::new(), "🔊 Built-in Offline Narrator (Instant)");
-                for c in &voice_friends {
-                    ui.selectable_value(&mut app.voice_cast_id, c.id.clone(), format!("🎙 {} ({}) · Cloned Voice", c.name, c.handle));
-                }
+        if !app.speech_custom_mode {
+            ui.horizontal(|ui| {
+                ui.label(RichText::new("What is the speech about?").size(11.5).strong());
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    if ui.small_button("🎲 Random Idea").clicked() {
+                        let ideas = [
+                            "a dramatic movie trailer warning that my friend Jake forgot his wallet again",
+                            "a 1940s vintage radio broadcast about a raccoon breaking into Waffle House at 2am",
+                            "a chilling midnight true-crime monologue about an unanswered text message",
+                            "a calm museum audio guide explaining a cursed group chat screenshot",
+                            "an unfiltered podcast rant about slow left-lane drivers on the highway",
+                            "a hype energy-drink commercial for surviving Monday mornings",
+                        ];
+                        let idx = (rand::random::<usize>()) % ideas.len();
+                        app.speech_idea = ideas[idx].to_string();
+                    }
+                });
             });
-
-        if app.voice_cast_id.is_empty() || !voice_friends.iter().any(|c| c.id == app.voice_cast_id) {
-            ui.add_space(4.0);
-            render_builtin_voice_picker(app, ui, "speech_builtin_voice_cb");
+            ui.add(
+                egui::TextEdit::multiline(&mut app.speech_idea)
+                    .desired_rows(3)
+                    .desired_width(f32::INFINITY)
+                    .hint_text("Describe any topic, mood, or narrator (e.g. 'epic movie trailer about Friday night' or 'midnight horror story')..."),
+            );
+            let planning = app.busy_flags.contains("plan_speech");
+            if ui
+                .add_enabled(!planning, egui::Button::new(if planning { "Writing Script..." } else { "✨ Preview / Edit Script" }))
+                .on_hover_text("Uses your local uncensored AI brain to write the script, delivery style & score so you can edit before generating")
+                .clicked()
+            {
+                let idea = app.speech_idea.trim().to_string();
+                if idea.is_empty() {
+                    app.push_toast("Type a rough speech idea first.", ToastKind::Warning);
+                } else {
+                    app.busy_flags.insert("plan_speech".into());
+                    app.api.send(ApiCommand::PlanSpeech(json!({
+                        "idea": idea,
+                        "speech_style": app.speech_style.trim(),
+                        "background_music": app.speech_bg_music,
+                        "music_style": app.speech_music_style.trim(),
+                        "gender": app.speech_gender,
+                        "explicit": app.speech_explicit,
+                        "variations": if app.speech_two_takes { 2 } else { 1 },
+                    })));
+                }
+            }
+        } else {
+            ui.label(RichText::new("Exact Script").size(11.5).strong());
+            ui.add(
+                egui::TextEdit::multiline(&mut app.voice_text)
+                    .desired_rows(4)
+                    .desired_width(f32::INFINITY)
+                    .hint_text("Type or paste your exact script, monologue, narration, or dialogue..."),
+            );
+            ui.horizontal(|ui| {
+                ui.label(RichText::new("Title:").size(10.5).color(TEXT_MUTED));
+                ui.add(
+                    egui::TextEdit::singleline(&mut app.speech_title)
+                        .desired_width(f32::INFINITY)
+                        .hint_text("Optional track title"),
+                );
+            });
         }
 
         ui.add_space(6.0);
-        ui.label(RichText::new("What should the voice say?").size(11.5).strong());
-        ui.add(
-            egui::TextEdit::multiline(&mut app.voice_text)
-                .desired_rows(4)
-                .desired_width(f32::INFINITY)
-                .hint_text("Type any narration, meme intro, or dialogue line..."),
-        );
 
-        ui.add_space(4.0);
-        ui.horizontal(|ui| {
-            ui.label(RichText::new("Speed:").size(11.0).color(TEXT_MUTED));
-            ui.add(egui::Slider::new(&mut app.voice_speed, 0.70..=1.50).step_by(0.05));
+        // Suno "Style of Speech" tone prompt + instant chips
+        card_frame_soft().show(ui, |ui| {
+            ui.label(RichText::new("Style of Speech (Delivery & Vibe)").size(11.0).strong().color(TEXT_PRIMARY));
+            let tone_chips = [
+                ("🎬 Movie Trailer", "deep gravelly Hollywood movie trailer voiceover, slow dramatic pauses"),
+                ("📻 Vintage Radio", "1940s vintage transatlantic radio announcer, warm theatrical broadcast"),
+                ("🎙 Podcast", "punchy unfiltered podcast host, natural conversational timing"),
+                ("🕯 Dark Story", "chilling whispered horror narrator, tense slow pauses"),
+                ("📢 Hype Ad", "fast energetic viral commercial narrator, confident punch"),
+                ("🧘 Calm Guide", "warm gentle close-mic narrator, soothing slow breath cadence"),
+            ];
+            ui.horizontal_wrapped(|ui| {
+                for (lbl, val) in tone_chips {
+                    let act = app.speech_style.eq_ignore_ascii_case(val);
+                    let btn = egui::Button::new(RichText::new(lbl).size(10.0).color(if act { Color32::WHITE } else { TEXT_MUTED }))
+                        .fill(if act { ACCENT_BLUE } else { BG_ELEVATED })
+                        .corner_radius(CornerRadius::same(12));
+                    if ui.add(btn).clicked() {
+                        app.speech_style = val.to_string();
+                    }
+                }
+            });
+            ui.add(
+                egui::TextEdit::singleline(&mut app.speech_style)
+                    .desired_width(f32::INFINITY)
+                    .hint_text("e.g. Warm calm British narrator, dramatic pauses, intimate close mic... (optional)"),
+            );
         });
 
-        ui.add_space(8.0);
-        if ui
-            .add(primary_button("🎙 Create Speech").min_size(Vec2::new(ui.available_width(), 42.0)))
-            .clicked()
-        {
-            let txt = app.voice_text.trim().to_string();
-            if txt.is_empty() {
-                app.push_toast("Type what you want the voice to say first.", ToastKind::Warning);
+        ui.add_space(6.0);
+
+        // Suno Background Music toggle + score style + volume
+        card_frame_soft().show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.checkbox(&mut app.speech_bg_music, RichText::new("🎵 Background Music Score").strong().size(11.5));
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    if app.speech_bg_music {
+                        if music_ready && app.speech_use_ai_score {
+                            badge(ui, "AI Score + Auto-Duck", ACCENT_PURPLE);
+                        } else {
+                            badge(ui, "Instant Ambient Score", ACCENT_CYAN);
+                        }
+                    }
+                });
+            });
+
+            if app.speech_bg_music {
+                let mood_chips = [
+                    ("🎻 Dramatic", "dramatic cinematic orchestral score, deep brass swells, tense strings"),
+                    ("🌧 Sad Piano", "sad emotional felt piano ballad underscore, soft rain ambience"),
+                    ("🎹 Lo-Fi Beats", "chill lo-fi hip-hop Rhodes beat, warm subtle vinyl pocket"),
+                    ("🔪 Dark Suspense", "dark horror suspense ambient drone, brooding low cello"),
+                    ("⚡ Upbeat Ad", "upbeat catchy electro-pop commercial groove, bright synth pluck"),
+                ];
+                ui.horizontal_wrapped(|ui| {
+                    for (lbl, val) in mood_chips {
+                        let act = app.speech_music_style.eq_ignore_ascii_case(val);
+                        let btn = egui::Button::new(RichText::new(lbl).size(10.0).color(if act { Color32::WHITE } else { TEXT_MUTED }))
+                            .fill(if act { ACCENT_PURPLE } else { BG_ELEVATED })
+                            .corner_radius(CornerRadius::same(12));
+                        if ui.add(btn).clicked() {
+                            app.speech_music_style = val.to_string();
+                        }
+                    }
+                });
+                ui.add(
+                    egui::TextEdit::singleline(&mut app.speech_music_style)
+                        .desired_width(f32::INFINITY)
+                        .hint_text("Describe background music (e.g. dramatic cinema strings, lo-fi beats, eerie ambient...)"),
+                );
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new("Music Level:").size(10.5).color(TEXT_MUTED));
+                    ui.add(egui::Slider::new(&mut app.speech_music_volume, 0.12..=0.65).show_value(false));
+                    if music_ready {
+                        ui.checkbox(&mut app.speech_use_ai_score, "🎼 Full AI Score")
+                            .on_hover_text("On = generates custom ACE-Step instrumental bed (~15s). Off = instant (<1s) ambient pad score.");
+                    }
+                });
+            }
+        });
+
+        ui.add_space(6.0);
+
+        // Speaker Gender / Friend Clone + Speed
+        let voice_friends: Vec<_> = app.gen_status.cast.iter().filter(|c| c.has_voice).cloned().collect();
+        let gender_idx = match app.speech_gender.as_str() {
+            "male" => 1,
+            "female" => 2,
+            "friend" => 3,
+            _ => 0,
+        };
+        if let Some(g_pick) = animated_segmented_bar(
+            ui,
+            "speech_gender_bar",
+            &["Auto Voice", "Male", "Female", "👥 Friend"],
+            gender_idx,
+            ACCENT_INDIGO,
+        ) {
+            app.speech_gender = match g_pick {
+                1 => "male".into(),
+                2 => "female".into(),
+                3 => "friend".into(),
+                _ => "auto".into(),
+            };
+            if g_pick != 3 {
+                app.voice_cast_id.clear();
+            }
+        }
+        ui.add_space(4.0);
+
+        if app.speech_gender == "friend" {
+            if voice_friends.is_empty() {
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new("Save a friend with a voice sample first.").size(11.0).color(ACCENT_AMBER));
+                    if ui.small_button("+ Add Friend Voice").clicked() {
+                        app.show_cast_modal = true;
+                    }
+                });
             } else {
-                let use_cast = voice_friends.iter().any(|c| c.id == app.voice_cast_id);
+                let sel_lbl = voice_friends
+                    .iter()
+                    .find(|c| c.id == app.voice_cast_id)
+                    .map(|c| format!("🎙 {}'s Cloned Voice", c.name))
+                    .unwrap_or_else(|| format!("🎙 {}'s Cloned Voice", voice_friends[0].name));
+                if app.voice_cast_id.is_empty() {
+                    app.voice_cast_id = voice_friends[0].id.clone();
+                }
+                egui::ComboBox::from_id_salt("speech_friend_clone_cb")
+                    .selected_text(sel_lbl)
+                    .width(ui.available_width() - 4.0)
+                    .show_ui(ui, |ui| {
+                        for c in &voice_friends {
+                            ui.selectable_value(&mut app.voice_cast_id, c.id.clone(), format!("🎙 {} ({})", c.name, c.handle));
+                        }
+                    });
+            }
+        } else {
+            render_builtin_voice_picker(app, ui, "speech_builtin_voice_cb");
+        }
+
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("Speed:").size(10.5).color(TEXT_MUTED));
+            ui.add(egui::Slider::new(&mut app.voice_speed, 0.75..=1.40).step_by(0.05));
+        });
+        ui.horizontal_wrapped(|ui| {
+            ui.checkbox(&mut app.speech_two_takes, "🎲 Make 2 takes")
+                .on_hover_text("Creates 2 distinct takes with varied voice & pacing to compare");
+            ui.checkbox(&mut app.speech_explicit, "🔥 Uncensored / Explicit")
+                .on_hover_text("Never censors or sanitizes raw scripts/prompts");
+        });
+
+        ui.add_space(6.0);
+        let btn_txt = if app.speech_two_takes {
+            if app.speech_bg_music { "🎙 Create 2 Scored Speech Takes" } else { "🎙 Create 2 Speech Takes" }
+        } else if app.speech_bg_music {
+            "🎙 Create Speech + Background Music"
+        } else {
+            "🎙 Create Speech"
+        };
+        if animated_cta_button(ui, "create_speech_cta", btn_txt, ACCENT_BLUE, true, 42.0).clicked() {
+            let use_friend = app.speech_gender == "friend" && voice_friends.iter().any(|c| c.id == app.voice_cast_id);
+            let txt = if app.speech_custom_mode { app.voice_text.trim().to_string() } else { String::new() };
+            let idea = if !app.speech_custom_mode { app.speech_idea.trim().to_string() } else { String::new() };
+            if txt.is_empty() && idea.is_empty() {
+                app.push_toast("Enter a speech prompt or script first.", ToastKind::Warning);
+            } else {
                 let mut body = json!({
                     "text": txt,
+                    "idea": idea,
+                    "title": app.speech_title.trim(),
+                    "speech_style": app.speech_style.trim(),
+                    "background_music": app.speech_bg_music,
+                    "music_style": app.speech_music_style.trim(),
+                    "music_volume": app.speech_music_volume,
+                    "use_ai_score": app.speech_use_ai_score,
+                    "gender": if use_friend { "auto" } else { app.speech_gender.as_str() },
+                    "explicit": app.speech_explicit,
+                    "variations": if app.speech_two_takes { 2 } else { 1 },
                     "voice_preset": app.speech_voice_preset,
                     "speed": app.voice_speed,
                     "add_to_timeline": false,
                 });
-                if use_cast {
+                if use_friend {
                     body["cast_id"] = json!(app.voice_cast_id);
                 }
                 app.api.send(ApiCommand::SpeakText(body));
@@ -769,7 +1032,11 @@ fn render_simple_create_card(app: &mut ClipForgeApp, ui: &mut egui::Ui) {
     } else {
         app.simple_intent.as_api_intent()
     };
-    let eff_model_id = app.resolve_auto_model_for_intent(mode, Some(eff_intent));
+    let eff_model_id = if !app.simple_model_override.is_empty() {
+        app.simple_model_override.clone()
+    } else {
+        app.resolve_auto_model_for_intent(mode, Some(eff_intent))
+    };
     let eff_model = app.gen_status.models.get(&eff_model_id).cloned();
 
     // Clear visual banner when continuing from a previous video clip!
@@ -1000,113 +1267,7 @@ fn render_simple_create_card(app: &mut ClipForgeApp, ui: &mut egui::Ui) {
 
         ui.add_space(6.0);
 
-        // Quick Camera / Visual Vibe chips
-        ui.label(RichText::new("Camera Vibe").size(11.0).strong().color(TEXT_MUTED));
-        let quick_presets = [
-            ("none", "Natural"),
-            ("raw_iphone", "iPhone Flash"),
-            ("disposable_35mm", "90s Film"),
-            ("bodycam", "Bodycam"),
-            ("ring_doorbell", "Doorbell"),
-            ("cinema_35mm", "Movie"),
-            ("anime_90s", "90s Anime"),
-        ];
-        ui.horizontal_wrapped(|ui| {
-            for (pid, lbl) in quick_presets {
-                let on = app.preset_id == pid;
-                let btn = egui::Button::new(
-                    RichText::new(lbl)
-                        .size(11.0)
-                        .color(if on { Color32::WHITE } else { TEXT_MUTED }),
-                )
-                .fill(if on { ACCENT_BLUE } else { BG_ELEVATED })
-                .corner_radius(CornerRadius::same(12));
-                if ui.add(btn).clicked() {
-                    app.preset_id = pid.to_string();
-                }
-            }
-        });
-
-        // Installed Community Art Styles (only shown if user downloaded custom Full Styles — zero jargon!)
-        if !is_video {
-            let custom_styles: Vec<_> = app
-                .gen_status
-                .checkpoints
-                .iter()
-                .filter(|c| !c.is_builtin && c.compatible_models.iter().any(|m| m == &eff_model_id))
-                .cloned()
-                .collect();
-            if !custom_styles.is_empty() {
-                ui.add_space(6.0);
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new("Art Style:").size(11.0).color(TEXT_MUTED));
-                    let sel_txt = if app.checkpoint_override.is_empty() {
-                        "Default Look".to_string()
-                    } else {
-                        friendly_file_label(&app.checkpoint_override)
-                    };
-                    egui::ComboBox::from_id_salt("simple_style_override")
-                        .selected_text(sel_txt)
-                        .width((ui.available_width() - 80.0).max(120.0))
-                        .show_ui(ui, |ui| {
-                            ui.selectable_value(&mut app.checkpoint_override, String::new(), "Default Look");
-                            for ck in &custom_styles {
-                                ui.selectable_value(
-                                    &mut app.checkpoint_override,
-                                    ck.name.clone(),
-                                    friendly_file_label(&ck.filename),
-                                );
-                            }
-                        });
-                });
-            }
-        }
-
-        // Installed Style Boosters (only user-installed non-builtin add-ons, as simple toggle pills!)
-        let user_boosters: Vec<_> = app
-            .gen_status
-            .loras
-            .iter()
-            .filter(|l| !l.is_builtin)
-            .cloned()
-            .collect();
-        if !user_boosters.is_empty() {
-            ui.add_space(6.0);
-            ui.label(RichText::new("Style Boosters").size(11.0).strong().color(TEXT_MUTED));
-            ui.horizontal_wrapped(|ui| {
-                for l in &user_boosters {
-                    let is_on = app.active_loras.contains_key(&l.name);
-                    let lbl = friendly_file_label(&l.filename);
-                    let btn = egui::Button::new(
-                        RichText::new(if is_on { format!("✓ {lbl}") } else { lbl })
-                            .size(10.5)
-                            .color(if is_on { Color32::WHITE } else { TEXT_MUTED }),
-                    )
-                    .fill(if is_on { ACCENT_PURPLE } else { BG_ELEVATED })
-                    .corner_radius(CornerRadius::same(12));
-                    if ui.add(btn).clicked() {
-                        if is_on {
-                            app.active_loras.remove(&l.name);
-                        } else if app.active_loras.len() < 3 {
-                            app.active_loras.insert(
-                                l.name.clone(),
-                                ActiveLora {
-                                    name: l.name.clone(),
-                                    strength: 0.8,
-                                    trigger: l.trigger.clone(),
-                                },
-                            );
-                        } else {
-                            app.push_toast("You can enable up to 3 Style Boosters at once.", ToastKind::Warning);
-                        }
-                    }
-                }
-            });
-        }
-
-        ui.add_space(6.0);
-
-        // Unfiltered Engine Toggle on Photo AND Friend in Scene (with Automatic Face Lock!)
+        // Primary Mode Toggle (clean 2-pill selector — no clutter!)
         if matches!(app.simple_intent, SimpleIntent::Photo | SimpleIntent::Friend) {
             let has_unfiltered_img = ["lustify_sdxl", "pony_realism", "chroma_hd"]
                 .iter()
@@ -1117,45 +1278,28 @@ fn render_simple_create_card(app: &mut ClipForgeApp, ui: &mut egui::Ui) {
                 .get("face_swap")
                 .map(|m| m.ready)
                 .unwrap_or(false);
-            ui.horizontal(|ui| {
-                ui.label(RichText::new("Mode:").size(11.0).color(TEXT_MUTED));
-                let fast_lbl = if app.simple_intent == SimpleIntent::Friend {
-                    "⚡ Standard Edit"
-                } else {
-                    "⚡ Fast Everyday"
-                };
-                let fast_btn = egui::Button::new(
-                    RichText::new(fast_lbl)
-                        .size(11.0)
-                        .color(if !app.simple_unfiltered { Color32::WHITE } else { TEXT_MUTED }),
-                )
-                .fill(if !app.simple_unfiltered { ACCENT_BLUE } else { BG_ELEVATED })
-                .corner_radius(CornerRadius::same(10));
-                if ui.add(fast_btn).clicked() {
-                    app.simple_unfiltered = false;
-                }
-                let unf_lbl = if app.simple_intent == SimpleIntent::Friend {
-                    "🔥 Unfiltered + Face Lock"
-                } else {
-                    "🔥 Unfiltered (No Limits)"
-                };
-                let unf_btn = egui::Button::new(
-                    RichText::new(unf_lbl)
-                        .size(11.0)
-                        .color(if app.simple_unfiltered { Color32::WHITE } else { TEXT_MUTED }),
-                )
-                .fill(if app.simple_unfiltered { ACCENT_RED } else { BG_ELEVATED })
-                .corner_radius(CornerRadius::same(10));
-                if ui
-                    .add(unf_btn)
-                    .on_hover_text("Generates completely unfiltered scenes and automatically locks your real friend's face onto the result")
-                    .clicked()
-                {
-                    app.simple_unfiltered = true;
-                }
-            });
+            let fast_lbl = if app.simple_intent == SimpleIntent::Friend {
+                "⚡ Standard Edit"
+            } else {
+                "⚡ Fast Everyday"
+            };
+            let unf_lbl = if app.simple_intent == SimpleIntent::Friend {
+                "🔥 Unfiltered + Face Lock"
+            } else {
+                "🔥 Unfiltered (No Limits)"
+            };
+            if let Some(pick) = animated_segmented_bar(
+                ui,
+                "simple_photo_mode",
+                &[fast_lbl, unf_lbl],
+                if app.simple_unfiltered { 1 } else { 0 },
+                if app.simple_unfiltered { ACCENT_RED } else { ACCENT_BLUE },
+            ) {
+                app.simple_unfiltered = pick == 1;
+                app.simple_model_override.clear();
+            }
             if app.simple_unfiltered {
-                ui.add_space(3.0);
+                ui.add_space(4.0);
                 ui.horizontal_wrapped(|ui| {
                     if !has_unfiltered_img {
                         if ui.small_button("⬇ Get Unfiltered Pack (7.2 GB)").clicked() {
@@ -1169,7 +1313,7 @@ fn render_simple_create_card(app: &mut ClipForgeApp, ui: &mut egui::Ui) {
                         badge(ui, "✓ Auto Friend Face Lock ON", ACCENT_GREEN);
                     }
                     if !app.gen_status.models.get("lustify_sdxl").map(|m| m.ready).unwrap_or(false) && has_unfiltered_img {
-                        if ui.small_button("⬇ Upgrade to Best Unfiltered Photo (6.5 GB)").clicked() {
+                        if ui.small_button("⬇ Best Unfiltered Photo (6.5 GB)").clicked() {
                             app.api.send(ApiCommand::DownloadModel("lustify_sdxl".into()));
                         }
                     }
@@ -1180,40 +1324,27 @@ fn render_simple_create_card(app: &mut ClipForgeApp, ui: &mut egui::Ui) {
 
         // Video Adherence & Unfiltered Motion Toggle
         if app.simple_intent == SimpleIntent::Animate {
-            ui.horizontal_wrapped(|ui| {
-                ui.label(RichText::new("Quality:").size(11.0).color(TEXT_MUTED));
-                let fast_v = egui::Button::new(
-                    RichText::new("⚡ Fast (~35s)")
-                        .size(11.0)
-                        .color(if !app.simple_high_adherence { Color32::WHITE } else { TEXT_MUTED }),
-                )
-                .fill(if !app.simple_high_adherence { ACCENT_BLUE } else { BG_ELEVATED })
-                .corner_radius(CornerRadius::same(10));
-                if ui.add(fast_v).clicked() {
-                    app.simple_high_adherence = false;
-                }
-                let hq_v = egui::Button::new(
-                    RichText::new("🎯 Follow Prompt Closer (~90s)")
-                        .size(11.0)
-                        .color(if app.simple_high_adherence { Color32::WHITE } else { TEXT_MUTED }),
-                )
-                .fill(if app.simple_high_adherence { ACCENT_PURPLE } else { BG_ELEVATED })
-                .corner_radius(CornerRadius::same(10));
-                if ui
-                    .add(hq_v)
-                    .on_hover_text("Turns off the speed shortcut and runs full guidance so the video obeys your prompt much more closely")
-                    .clicked()
-                {
-                    app.simple_high_adherence = true;
-                }
-            });
+            if let Some(pick) = animated_segmented_bar(
+                ui,
+                "simple_video_q",
+                &["⚡ Fast (~35s)", "🎯 Follow Closer (~90s)"],
+                if app.simple_high_adherence { 1 } else { 0 },
+                if app.simple_high_adherence { ACCENT_PURPLE } else { ACCENT_BLUE },
+            ) {
+                app.simple_high_adherence = pick == 1;
+            }
             ui.add_space(3.0);
             let unf_vid_ready = ["wan22_remix_i2v", "wan22_smoothmix_i2v"]
                 .iter()
                 .any(|id| app.gen_status.models.get(*id).map(|m| m.ready).unwrap_or(false));
             ui.horizontal_wrapped(|ui| {
-                ui.checkbox(&mut app.simple_unfiltered_video, "🔥 Unfiltered Motion")
-                    .on_hover_text("Uses uncensored community video motion model (zero refusal, expressive action)");
+                if ui
+                    .checkbox(&mut app.simple_unfiltered_video, "🔥 Unfiltered Motion")
+                    .on_hover_text("Uses uncensored community video motion model (zero refusal, expressive action)")
+                    .changed()
+                {
+                    app.simple_model_override.clear();
+                }
                 if app.simple_unfiltered_video && !unf_vid_ready {
                     if ui.small_button("⬇ Get Unfiltered Video (18 GB)").clicked() {
                         app.api.send(ApiCommand::DownloadModel("wan22_remix_i2v".into()));
@@ -1223,18 +1354,226 @@ fn render_simple_create_card(app: &mut ClipForgeApp, ui: &mut egui::Ui) {
             ui.add_space(4.0);
         }
 
-        // Plain-English quality switches
-        ui.horizontal_wrapped(|ui| {
-            ui.checkbox(&mut app.simple_auto_enhance, "✨ Auto-rewrite prompt")
-                .on_hover_text("Off = sends your exact words verbatim. On = reformats/expands your prompt.");
-            if !is_video {
-                ui.checkbox(&mut app.simple_four_grid, "🎲 Make 4 options")
-                    .on_hover_text("Creates 4 different versions at once so you can pick the best one.");
-                ui.checkbox(&mut app.simple_auto_hd, "✨ Extra sharp HD")
-                    .on_hover_text("Automatically sharpens and doubles resolution when finished.");
-            } else {
-                ui.checkbox(&mut app.simple_auto_hd, "✨ Extra smooth motion")
-                    .on_hover_text("Automatically doubles framerate for silky-smooth video motion.");
+        // Progressive Disclosure: Clean collapsible Look, Camera & Options card (keeps default screen uncluttered!)
+        let quick_presets = [
+            ("none", "Natural"),
+            ("raw_iphone", "iPhone Flash"),
+            ("disposable_35mm", "90s Film"),
+            ("bodycam", "Bodycam"),
+            ("ring_doorbell", "Doorbell"),
+            ("cinema_35mm", "Movie"),
+            ("anime_90s", "90s Anime"),
+        ];
+        let preset_lbl = quick_presets
+            .iter()
+            .find(|(id, _)| *id == app.preset_id)
+            .map(|(_, l)| *l)
+            .unwrap_or("Natural");
+        let mut opt_tags = vec![preset_lbl.to_string()];
+        if !is_video && app.simple_four_grid {
+            opt_tags.push("4 options".into());
+        }
+        if app.simple_auto_hd {
+            opt_tags.push(if is_video { "32fps Smooth".into() } else { "2× HD".into() });
+        }
+        if app.simple_auto_enhance {
+            opt_tags.push("Auto-AI".into());
+        }
+        if !app.active_loras.is_empty() {
+            opt_tags.push(format!("{} Booster(s)", app.active_loras.len()));
+        }
+
+        card_frame_soft().show(ui, |ui| {
+            ui.horizontal(|ui| {
+                let arrow = if app.simple_show_customize { "▾" } else { "▸" };
+                if ui
+                    .selectable_label(false, RichText::new(format!("{arrow} ⚙ Look, Camera & Options")).size(11.5).strong())
+                    .clicked()
+                {
+                    app.simple_show_customize = !app.simple_show_customize;
+                }
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    ui.label(RichText::new(opt_tags.join(" · ")).size(10.5).color(TEXT_MUTED));
+                });
+            });
+
+            if app.simple_show_customize {
+                ui.add_space(4.0);
+                ui.label(RichText::new("Camera Vibe").size(10.5).strong().color(TEXT_MUTED));
+                ui.horizontal_wrapped(|ui| {
+                    for (pid, lbl) in quick_presets {
+                        let on = app.preset_id == pid;
+                        let btn = egui::Button::new(
+                            RichText::new(lbl)
+                                .size(11.0)
+                                .color(if on { Color32::WHITE } else { TEXT_MUTED }),
+                        )
+                        .fill(if on { ACCENT_BLUE } else { BG_ELEVATED })
+                        .corner_radius(CornerRadius::same(12));
+                        if ui.add(btn).clicked() {
+                            app.preset_id = pid.to_string();
+                        }
+                    }
+                });
+
+                if !is_video {
+                    let custom_styles: Vec<_> = app
+                        .gen_status
+                        .checkpoints
+                        .iter()
+                        .filter(|c| !c.is_builtin && c.compatible_models.iter().any(|m| m == &eff_model_id))
+                        .cloned()
+                        .collect();
+                    if !custom_styles.is_empty() {
+                        ui.add_space(4.0);
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new("Art Style:").size(11.0).color(TEXT_MUTED));
+                            let sel_txt = if app.checkpoint_override.is_empty() {
+                                "Default Look".to_string()
+                            } else {
+                                friendly_file_label(&app.checkpoint_override)
+                            };
+                            egui::ComboBox::from_id_salt("simple_style_override")
+                                .selected_text(sel_txt)
+                                .width((ui.available_width() - 80.0).max(120.0))
+                                .show_ui(ui, |ui| {
+                                    ui.selectable_value(&mut app.checkpoint_override, String::new(), "Default Look");
+                                    for ck in &custom_styles {
+                                        ui.selectable_value(
+                                            &mut app.checkpoint_override,
+                                            ck.name.clone(),
+                                            friendly_file_label(&ck.filename),
+                                        );
+                                    }
+                                });
+                        });
+                    }
+                }
+
+                let user_boosters: Vec<_> = app
+                    .gen_status
+                    .loras
+                    .iter()
+                    .filter(|l| !l.is_builtin)
+                    .cloned()
+                    .collect();
+                if !user_boosters.is_empty() {
+                    ui.add_space(4.0);
+                    ui.label(RichText::new("Style Boosters").size(10.5).strong().color(TEXT_MUTED));
+                    ui.horizontal_wrapped(|ui| {
+                        for l in &user_boosters {
+                            let is_on = app.active_loras.contains_key(&l.name);
+                            let lbl = friendly_file_label(&l.filename);
+                            let btn = egui::Button::new(
+                                RichText::new(if is_on { format!("✓ {lbl}") } else { lbl })
+                                    .size(10.5)
+                                    .color(if is_on { Color32::WHITE } else { TEXT_MUTED }),
+                            )
+                            .fill(if is_on { ACCENT_PURPLE } else { BG_ELEVATED })
+                            .corner_radius(CornerRadius::same(12));
+                            if ui.add(btn).clicked() {
+                                if is_on {
+                                    app.active_loras.remove(&l.name);
+                                } else if app.active_loras.len() < 3 {
+                                    app.active_loras.insert(
+                                        l.name.clone(),
+                                        ActiveLora {
+                                            name: l.name.clone(),
+                                            strength: 0.8,
+                                            trigger: l.trigger.clone(),
+                                        },
+                                    );
+                                } else {
+                                    app.push_toast("You can enable up to 3 Style Boosters at once.", ToastKind::Warning);
+                                }
+                            }
+                        }
+                    });
+                }
+
+                ui.add_space(4.0);
+                ui.horizontal_wrapped(|ui| {
+                    ui.checkbox(&mut app.simple_auto_enhance, "✨ Auto-rewrite prompt")
+                        .on_hover_text("Automatically rewrites your text right when you click Create.");
+                    if !is_video {
+                        ui.checkbox(&mut app.simple_four_grid, "🎲 Make 4 options")
+                            .on_hover_text("Creates 4 different versions at once so you can pick the best one.");
+                        ui.checkbox(&mut app.simple_auto_hd, "✨ Extra sharp HD")
+                            .on_hover_text("Automatically sharpens and doubles resolution when finished.");
+                    } else {
+                        ui.checkbox(&mut app.simple_auto_hd, "✨ Extra smooth motion")
+                            .on_hover_text("Automatically doubles framerate for silky-smooth video motion.");
+                    }
+                });
+            }
+        });
+
+        ui.add_space(6.0);
+
+        // Guided "Active Engine" Pill (Eliminates confusion about which model is running!)
+        let guided = guided_models_for_intent(app.simple_intent, app.simple_unfiltered_video);
+        let active_guide = guided.iter().find(|(id, _, _)| *id == eff_model_id);
+        let active_plain_title = active_guide
+            .map(|(_, t, _)| *t)
+            .or_else(|| eff_model.as_ref().map(|m| m.display_name.as_str()))
+            .unwrap_or(&eff_model_id);
+        let active_best_for = active_guide
+            .map(|(_, _, b)| *b)
+            .unwrap_or("Recommended automatically for this task");
+
+        card_frame_soft().show(ui, |ui| {
+            ui.horizontal(|ui| {
+                let tag_prefix = if app.simple_model_override.is_empty() { "Auto Engine:" } else { "Engine:" };
+                ui.label(RichText::new(format!("🧠 {tag_prefix}")).size(10.5).color(TEXT_MUTED));
+                ui.label(RichText::new(active_plain_title).size(11.0).strong().color(Color32::WHITE));
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    if !guided.is_empty() {
+                        let sw_lbl = if app.simple_show_engine_picker { "Hide ▴" } else { "Switch ▾" };
+                        if ui.small_button(sw_lbl).clicked() {
+                            app.simple_show_engine_picker = !app.simple_show_engine_picker;
+                        }
+                    }
+                });
+            });
+            ui.label(RichText::new(active_best_for).size(10.0).color(TEXT_MUTED));
+
+            if app.simple_show_engine_picker && !guided.is_empty() {
+                ui.add_space(4.0);
+                ui.separator();
+                if ui
+                    .selectable_label(app.simple_model_override.is_empty(), "✨ Auto Recommended (Smart Default)")
+                    .clicked()
+                {
+                    app.simple_model_override.clear();
+                }
+                for (gid, g_name, g_desc) in &guided {
+                    let g_ready = app.gen_status.models.get(*gid).map(|m| m.ready).unwrap_or(false);
+                    let g_miss = app.gen_status.models.get(*gid).map(|m| m.missing_gb).unwrap_or(0.0);
+                    let is_cur = eff_model_id == *gid;
+                    ui.horizontal(|ui| {
+                        ui.vertical(|ui| {
+                            ui.set_max_width((ui.available_width() - 95.0).max(140.0));
+                            ui.label(
+                                RichText::new(*g_name)
+                                    .size(11.0)
+                                    .strong()
+                                    .color(if is_cur { ACCENT_BLUE } else { Color32::WHITE }),
+                            );
+                            ui.label(RichText::new(*g_desc).size(9.5).color(TEXT_MUTED));
+                        });
+                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                            if g_ready {
+                                if is_cur {
+                                    badge(ui, "✓ Active", ACCENT_GREEN);
+                                } else if ui.small_button("Use").clicked() {
+                                    app.simple_model_override = (*gid).to_string();
+                                }
+                            } else if ui.small_button(&format!("⬇ {:.1}G", g_miss)).clicked() {
+                                app.api.send(ApiCommand::DownloadModel((*gid).to_string()));
+                            }
+                        });
+                    });
+                }
             }
         });
 
@@ -1246,12 +1585,8 @@ fn render_simple_create_card(app: &mut ClipForgeApp, ui: &mut egui::Ui) {
             if !m.ready {
                 let is_dl = m.download.as_ref().map(|d| d.status == "downloading").unwrap_or(false);
                 if let Some(d) = m.download.as_ref().filter(|d| d.status == "downloading") {
-                    ui.label(
-                        RichText::new(format!("⬇ Downloading ({:.0}% · {:.1} MB/s)...", d.pct, d.speed_mbps))
-                            .size(11.0)
-                            .color(ACCENT_AMBER),
-                    );
-                    ui.add(egui::ProgressBar::new((d.pct as f32 / 100.0).clamp(0.0, 1.0)).show_percentage());
+                    let txt = format!("⬇ Downloading ({:.0}% · {:.1} MB/s)...", d.pct, d.speed_mbps);
+                    animated_progress_bar(ui, "simple_dl_bar", (d.pct as f32) / 100.0, &txt, ACCENT_AMBER);
                 } else if !is_dl {
                     let friendly_kind = match app.simple_intent {
                         SimpleIntent::Photo => "Photo Creator",
@@ -1263,12 +1598,15 @@ fn render_simple_create_card(app: &mut ClipForgeApp, ui: &mut egui::Ui) {
                         SimpleIntent::Music => "Offline Music Engine",
                         SimpleIntent::Speech => "Offline Speech Engine",
                     };
-                    if ui
-                        .add(
-                            primary_button(&format!("⬇ Download {friendly_kind} ({:.1} GB)", m.missing_gb))
-                                .min_size(Vec2::new(ui.available_width(), 40.0)),
-                        )
-                        .clicked()
+                    if animated_cta_button(
+                        ui,
+                        "simple_dl_cta",
+                        &format!("⬇ Download {friendly_kind} ({:.1} GB)", m.missing_gb),
+                        ACCENT_AMBER,
+                        true,
+                        40.0,
+                    )
+                    .clicked()
                     {
                         app.api.send(ApiCommand::DownloadModel(m.id.clone()));
                     }
@@ -1286,13 +1624,8 @@ fn render_simple_create_card(app: &mut ClipForgeApp, ui: &mut egui::Ui) {
         } else {
             "✨ Create"
         };
-        if ui
-            .add_enabled(
-                is_ready,
-                primary_button(create_lbl).min_size(Vec2::new(ui.available_width(), 42.0)),
-            )
-            .clicked()
-        {
+        let cta_col = if is_video { ACCENT_CYAN } else { ACCENT_BLUE };
+        if animated_cta_button(ui, "simple_main_cta", create_lbl, cta_col, is_ready, 44.0).clicked() {
             submit_simple_creation(app, is_video);
         }
     });
@@ -1314,10 +1647,16 @@ fn submit_simple_creation(app: &mut ClipForgeApp, is_video: bool) {
     let loras = app.active_loras_json();
     let auto_face_swap = !is_video && app.simple_intent == SimpleIntent::Friend && app.simple_unfiltered;
 
+    let model_choice = if app.simple_model_override.is_empty() {
+        "auto".to_string()
+    } else {
+        app.simple_model_override.clone()
+    };
+
     if is_video {
         let mut body = json!({
             "prompt": prompt,
-            "model": "auto",
+            "model": model_choice,
             "intent": intent,
             "image_path": app.ref1.as_ref().map(|r| r.path.clone()),
             "style_preset": app.preset_id,
@@ -1339,7 +1678,7 @@ fn submit_simple_creation(app: &mut ClipForgeApp, is_video: bool) {
     } else {
         let mut body = json!({
             "prompt": prompt,
-            "model": "auto",
+            "model": model_choice,
             "intent": intent,
             "image_path": app.ref1.as_ref().map(|r| r.path.clone()),
             "image_path_2": app.ref2.as_ref().map(|r| r.path.clone()),
@@ -1370,21 +1709,28 @@ fn render_simple_active_job(app: &mut ClipForgeApp, ui: &mut egui::Ui) {
         ui.add_space(8.0);
         card_frame().show(ui, |ui| {
             ui.horizontal(|ui| {
-                let kind_lbl = if j.kind == "video" {
-                    "Creating video..."
+                let (kind_lbl, col) = if j.kind == "video" {
+                    ("Creating video...", ACCENT_CYAN)
                 } else if j.kind == "audio" {
-                    "Creating music / speech..."
+                    ("Creating song / speech...", ACCENT_PURPLE)
                 } else {
-                    "Creating image..."
+                    ("Creating photo...", ACCENT_BLUE)
                 };
-                ui.label(RichText::new(format!("⚡ {kind_lbl}")).strong().size(12.0));
+                pulsing_status_pill(ui, kind_lbl, col, true);
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     if ui.small_button("✕ Stop").clicked() {
                         app.api.send(ApiCommand::CancelJob(j.id.clone()));
                     }
                 });
             });
-            ui.add(egui::ProgressBar::new((j.progress_pct as f32 / 100.0).clamp(0.03, 1.0)).show_percentage());
+            ui.add_space(4.0);
+            animated_progress_bar(
+                ui,
+                &format!("job_{}", j.id),
+                (j.progress_pct as f32) / 100.0,
+                &format!("{}%", j.progress_pct),
+                if j.kind == "video" { ACCENT_CYAN } else if j.kind == "audio" { ACCENT_PURPLE } else { ACCENT_BLUE },
+            );
             if !j.message.is_empty() {
                 ui.label(RichText::new(&j.message).size(10.5).color(TEXT_MUTED));
             }
@@ -1502,6 +1848,51 @@ fn render_simple_result_canvas(app: &mut ClipForgeApp, ui: &mut egui::Ui, ctx: &
                 );
             }
         }
+    } else if let Some(j) = active_job.as_ref() {
+        // Animated pulsing AI generation status overlay (e.g. while composing audio or warming models)
+        let cx = stage_rect.center().x;
+        let cy = stage_rect.center().y;
+        let t = ctx.input(|i| i.time) as f32;
+        ctx.request_repaint_after(std::time::Duration::from_millis(32));
+        let accent = if j.kind == "audio" { ACCENT_PURPLE } else if j.kind == "video" { ACCENT_CYAN } else { ACCENT_BLUE };
+        let pulse = 0.5 + 0.5 * (t * 3.0).sin();
+        painter.circle_filled(
+            Pos2::new(cx, cy - 42.0),
+            36.0 + pulse * 10.0,
+            Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), 28),
+        );
+        painter.circle_filled(
+            Pos2::new(cx, cy - 42.0),
+            24.0 + pulse * 4.0,
+            Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), 65),
+        );
+        let icon = if j.kind == "audio" { "🎵" } else if j.kind == "video" { "🎬" } else { "✨" };
+        painter.text(
+            Pos2::new(cx, cy - 42.0),
+            egui::Align2::CENTER_CENTER,
+            icon,
+            egui::FontId::proportional(24.0),
+            Color32::WHITE,
+        );
+        painter.text(
+            Pos2::new(cx, cy + 8.0),
+            egui::Align2::CENTER_CENTER,
+            format!("{}  ·  {}%", j.message.as_str(), j.progress_pct),
+            egui::FontId::proportional(13.5),
+            Color32::WHITE,
+        );
+        // Animated orbit dots
+        for k in 0..8 {
+            let ang = t * 2.4 + (k as f32) * std::f32::consts::TAU / 8.0;
+            let dx = ang.cos() * 48.0;
+            let dy = ang.sin() * 48.0;
+            let dot_a = (((k as f32 / 8.0) + (t * 0.6)) % 1.0 * 180.0 + 40.0) as u8;
+            painter.circle_filled(
+                Pos2::new(cx + dx, cy - 42.0 + dy),
+                2.5,
+                Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), dot_a),
+            );
+        }
     } else if let Some(ResolvedSimpleItem::Video(vid)) = &selected {
         let drawn = app.player.paint_single_frame(&painter, stage_rect);
         if !drawn {
@@ -1529,9 +1920,18 @@ fn render_simple_result_canvas(app: &mut ClipForgeApp, ui: &mut egui::Ui, ctx: &
             .filter(|s| !s.is_empty())
             .unwrap_or(&aud.filename);
         let subtitle = if is_song {
-            meta.and_then(|m| m.tags.as_deref()).unwrap_or("Offline Studio Track")
+            meta.and_then(|m| m.tags.as_deref()).unwrap_or("Offline Studio Track").to_string()
         } else {
-            meta.and_then(|m| m.speaker.as_deref()).unwrap_or("Offline Voiceover")
+            let spk = meta.and_then(|m| m.speaker.as_deref()).unwrap_or("Offline Voiceover");
+            let s_style = meta.and_then(|m| m.speech_style.as_deref()).unwrap_or("");
+            let m_style = meta.and_then(|m| m.music_style.as_deref()).unwrap_or("");
+            if !m_style.is_empty() {
+                format!("{spk} · Score: {m_style}")
+            } else if !s_style.is_empty() {
+                format!("{spk} · {s_style}")
+            } else {
+                spk.to_string()
+            }
         };
 
         // Sleek Album / Waveform Card drawn natively with egui::Painter
@@ -2004,24 +2404,32 @@ fn render_simple_result_canvas(app: &mut ClipForgeApp, ui: &mut egui::Ui, ctx: &
                                         .collect();
                                     let is_part = v.meta.as_ref().and_then(|m| m.parent_video.as_ref()).is_some();
                                     let badge_txt = if is_part { "🔗 Video" } else { "🎬 Video" };
+                                    let tile_id = ui.id().with(("vid_tile", &v.filename));
+                                    let hovered = ui.rect_contains_pointer(ui.available_rect_before_wrap());
+                                    let _ = hovered;
                                     let fr = Frame::new()
-                                        .fill(if is_sel { Color32::from_rgb(30, 58, 112) } else { BG_ELEVATED })
+                                        .fill(if is_sel { lerp_color(BG_ELEVATED, ACCENT_CYAN, 0.25) } else { BG_ELEVATED })
                                         .stroke(Stroke::new(
                                             if is_sel { 2.0_f32 } else { 1.0_f32 },
-                                            if is_sel { ACCENT_BLUE } else { BORDER_SUBTLE },
+                                            if is_sel { ACCENT_CYAN } else { BORDER_SUBTLE },
                                         ))
-                                        .corner_radius(CornerRadius::same(6))
+                                        .corner_radius(CornerRadius::same(8))
                                         .inner_margin(Margin::symmetric(8, 6))
                                         .show(ui, |ui| {
-                                            ui.set_min_size(Vec2::new(82.0, 48.0));
+                                            ui.set_min_size(Vec2::new(86.0, 48.0));
                                             ui.label(RichText::new(badge_txt).size(11.0).strong().color(Color32::WHITE));
                                             ui.label(RichText::new(snippet).size(10.0).color(TEXT_MUTED));
                                         });
-                                    let click = ui.interact(
-                                        fr.response.rect,
-                                        ui.id().with(("vid_tile", &v.filename)),
-                                        Sense::click(),
-                                    );
+                                    let click = ui.interact(fr.response.rect, tile_id, Sense::click());
+                                    let hov_t = ctx.animate_bool_with_time(tile_id.with("h"), click.hovered(), 0.14);
+                                    if hov_t > 0.02 && !is_sel {
+                                        ui.painter().rect_stroke(
+                                            fr.response.rect,
+                                            8.0,
+                                            Stroke::new(1.5_f32, lerp_color(BORDER_SUBTLE, ACCENT_CYAN, hov_t)),
+                                            egui::StrokeKind::Inside,
+                                        );
+                                    }
                                     if click.clicked() {
                                         app.simple_selected = Some(SimpleAsset::Video(v.filename.clone()));
                                     }
@@ -2029,6 +2437,7 @@ fn render_simple_result_canvas(app: &mut ClipForgeApp, ui: &mut egui::Ui, ctx: &
                                 StripEntry::Aud(a) => {
                                     let is_sel = matches!(&selected, Some(ResolvedSimpleItem::Audio(s)) if s.filename == a.filename);
                                     let is_song = a.meta.as_ref().and_then(|m| m.subtype.as_deref()) == Some("song");
+                                    let has_bgm = a.meta.as_ref().and_then(|m| m.background_music).unwrap_or(false);
                                     let snippet: String = a
                                         .meta
                                         .as_ref()
@@ -2037,25 +2446,37 @@ fn render_simple_result_canvas(app: &mut ClipForgeApp, ui: &mut egui::Ui, ctx: &
                                         .chars()
                                         .take(14)
                                         .collect();
-                                    let badge_txt = if is_song { "🎵 Song" } else { "🎙 Speech" };
+                                    let badge_txt = if is_song {
+                                        "🎵 Song"
+                                    } else if has_bgm {
+                                        "🎙+🎵 Speech"
+                                    } else {
+                                        "🎙 Speech"
+                                    };
+                                    let tile_id = ui.id().with(("aud_tile", &a.filename));
                                     let fr = Frame::new()
-                                        .fill(if is_sel { Color32::from_rgb(56, 30, 96) } else { BG_ELEVATED })
+                                        .fill(if is_sel { lerp_color(BG_ELEVATED, ACCENT_PURPLE, 0.28) } else { BG_ELEVATED })
                                         .stroke(Stroke::new(
                                             if is_sel { 2.0_f32 } else { 1.0_f32 },
                                             if is_sel { ACCENT_PURPLE } else { BORDER_SUBTLE },
                                         ))
-                                        .corner_radius(CornerRadius::same(6))
+                                        .corner_radius(CornerRadius::same(8))
                                         .inner_margin(Margin::symmetric(8, 6))
                                         .show(ui, |ui| {
-                                            ui.set_min_size(Vec2::new(82.0, 48.0));
+                                            ui.set_min_size(Vec2::new(86.0, 48.0));
                                             ui.label(RichText::new(badge_txt).size(11.0).strong().color(Color32::WHITE));
                                             ui.label(RichText::new(snippet).size(10.0).color(TEXT_MUTED));
                                         });
-                                    let click = ui.interact(
-                                        fr.response.rect,
-                                        ui.id().with(("aud_tile", &a.filename)),
-                                        Sense::click(),
-                                    );
+                                    let click = ui.interact(fr.response.rect, tile_id, Sense::click());
+                                    let hov_t = ctx.animate_bool_with_time(tile_id.with("h"), click.hovered(), 0.14);
+                                    if hov_t > 0.02 && !is_sel {
+                                        ui.painter().rect_stroke(
+                                            fr.response.rect,
+                                            8.0,
+                                            Stroke::new(1.5_f32, lerp_color(BORDER_SUBTLE, ACCENT_PURPLE, hov_t)),
+                                            egui::StrokeKind::Inside,
+                                        );
+                                    }
                                     if click.clicked() {
                                         app.simple_selected = Some(SimpleAsset::Audio(a.filename.clone()));
                                     }

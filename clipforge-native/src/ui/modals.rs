@@ -3,7 +3,7 @@ use crate::app::{ClipForgeApp, MaskStroke};
 use crate::models::{GalleryImage, StoryboardBeat};
 use crate::theme::*;
 use base64::Engine as _;
-use egui::{Color32, CornerRadius, Image, Pos2, Rect, RichText, Sense, Stroke, Vec2};
+use egui::{Align, Color32, CornerRadius, Image, Pos2, Rect, RichText, Sense, Stroke, Vec2};
 use serde_json::json;
 
 pub fn render_all_modals(app: &mut ClipForgeApp, ctx: &egui::Context) {
@@ -445,14 +445,42 @@ fn submit_lightbox_followup(app: &mut ClipForgeApp, item: &GalleryImage) {
     app.lightbox.open = false;
 }
 
+fn plain_english_model_guide(id: &str) -> &'static str {
+    match id {
+        "z_image_turbo" => "Best for: Fast everyday candid photos, crisp visible signs/text & memes (~6s)",
+        "krea2_turbo" => "Best for: High-end editorial & studio portrait skin detail (~8s)",
+        "lustify_sdxl" => "Best for: Completely unfiltered, raw realistic photos & edgy humor",
+        "pony_realism" => "Best for: Unfiltered bold expressive scenes, dynamic poses & stylized realism",
+        "chroma_hd" => "Best for: Uncensored Flux art & surreal posters with strong prompt adherence",
+        "illustrious_xl" => "Best for: Anime, manga, illustration & crisp 2.5D stylized artwork",
+        "flux2_klein_9b" => "Best for: Highest-quality placing a friend's photo into a new scene",
+        "flux2_klein" => "Best for: Lightweight faster scene edits keeping a friend's face",
+        "qwen_edit_2511" => "Best for: Best 2-friend photo combiner & complex outfit/scene edits",
+        "qwen_edit" => "Best for: Fast multi-photo scene edits for 1-2 friends",
+        "wan22_i2v" => "Best for: Smooth, natural 5-second video motion from any still photo",
+        "wan22_remix_i2v" => "Best for: Unfiltered expressive physical action from a still photo",
+        "wan22_smoothmix_i2v" => "Best for: Unfiltered smooth cinematic motion & expressive transitions",
+        "ltx23" => "Best for: Text/photo into video WITH synchronized sound effects & dialogue audio",
+        "wan22_t2v" => "Best for: Full 5-second realistic video directly from text alone",
+        "wan22_5b" => "Best for: Fast ~25s rough video drafts before committing a full render",
+        "wan22_s2v" => "Best for: Lip-synced talking/singing friend video driven by speech or voice clip",
+        "ace_step_music_xl" => "Best for: Pro Suno-grade 4B songs with sharpest vocals & lyrics",
+        "ace_step_music" => "Best for: Fast full songs with vocals or instrumentals (lighter download)",
+        "kokoro_tts" => "Best for: 12 studio-real neural human voices (replaces robotic OS voices)",
+        "face_swap" => "Best for: 1-second automatic friend Face Lock on any generated or meme photo",
+        "rife_vfi" => "Best for: Doubling video framerate cleanly to 32fps smooth motion",
+        _ => "Best for: General offline local creation",
+    }
+}
+
 // ---------------------------------------------------------------------------
-// 2. Downloads & Starter Packs Modal (Simple Packs First + Advanced Engines Collapsible)
+// 2. Downloads & Starter Packs Modal (Guided Tabs + Plain-English Recommendations)
 // ---------------------------------------------------------------------------
 fn render_models_modal(app: &mut ClipForgeApp, ctx: &egui::Context) {
     let mut open = app.show_models_modal;
     let is_simple = app.ui_mode == crate::app::UiMode::Simple;
     let title = if is_simple {
-        "⬇ Setup & Starter Packs"
+        "📦 Packs & Offline AI Engines"
     } else {
         "🧠 Local Offline AI Engine Manager"
     };
@@ -460,49 +488,141 @@ fn render_models_modal(app: &mut ClipForgeApp, ctx: &egui::Context) {
         .open(&mut open)
         .resizable(true)
         .collapsible(false)
-        .default_size([740.0, 580.0])
+        .default_size([770.0, 610.0])
         .anchor(egui::Align2::CENTER_CENTER, Vec2::ZERO)
         .show(ctx, |ui| {
             ui.horizontal(|ui| {
                 if !is_simple {
                     ui.label(RichText::new(format!("Storage: {}", app.gen_status.comfyui_dir)).size(11.0).color(TEXT_MUTED));
                 } else {
-                    ui.label(RichText::new("Everything runs 100% offline on your computer — pick a Starter Pack below.").size(11.5).color(TEXT_MUTED));
+                    ui.label(RichText::new("Everything runs 100% offline — pick Starter Packs first, or browse by studio category.").size(11.5).color(TEXT_MUTED));
                 }
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
                     if ui.small_button("✨ Get Styles").clicked() {
                         app.show_models_modal = false;
                         app.show_civitai_modal = true;
                     }
                     if app.gen_status.comfyui_running {
-                        badge(ui, "● AI Ready", ACCENT_GREEN);
+                        pulsing_status_pill(ui, "AI Ready", ACCENT_GREEN, true);
                     } else if ui.small_button("▶ Start AI").clicked() {
                         app.api.send(ApiCommand::StartComfyUi);
                     }
                 });
             });
-            ui.separator();
+            ui.add_space(6.0);
+
+            if let Some(tab) = animated_segmented_bar(
+                ui,
+                "models_modal_tabs",
+                &["🚀 Starter Packs", "🖼 Photos", "🎬 Video", "🎵 Music & Voice", "⚙ Utilities"],
+                app.models_modal_tab,
+                ACCENT_BLUE,
+            ) {
+                app.models_modal_tab = tab;
+            }
+            ui.add_space(6.0);
 
             let starter_packs = app.gen_status.starter_packs.clone();
             let models: Vec<_> = app.gen_status.models.values().cloned().collect();
-            egui::ScrollArea::vertical().show(ui, |ui| {
-                if !starter_packs.is_empty() {
-                    ui.label(RichText::new("🚀 1-Click Starter Packs").size(13.0).strong());
+
+            let render_model_cards = |app: &mut ClipForgeApp, ui: &mut egui::Ui, kinds: &[&str]| {
+                for m in models.iter().filter(|x| kinds.contains(&x.kind.as_str())) {
+                    card_frame().show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.vertical(|ui| {
+                                ui.set_max_width((ui.available_width() - 165.0).max(240.0));
+                                ui.horizontal_wrapped(|ui| {
+                                    ui.label(RichText::new(&m.display_name).strong().size(12.5).color(Color32::WHITE));
+                                    badge(ui, &m.badge, if m.ready { ACCENT_GREEN } else { ACCENT_BLUE });
+                                });
+                                ui.label(
+                                    RichText::new(plain_english_model_guide(&m.id))
+                                        .size(11.0)
+                                        .strong()
+                                        .color(Color32::from_rgb(165, 195, 255)),
+                                );
+                                ui.label(RichText::new(&m.description).size(10.5).color(TEXT_MUTED));
+                                let status_meta = if m.ready {
+                                    format!("{}/{} files · {:.2} GB installed", m.total_files, m.total_files, m.total_gb)
+                                } else {
+                                    format!("{}/{} present · {:.2} GB remaining", m.present_count, m.total_files, m.missing_gb)
+                                };
+                                ui.label(RichText::new(status_meta).size(10.0).color(TEXT_MUTED));
+                            });
+                            ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
+                                let is_dl = m.download.as_ref().map(|d| d.status == "downloading").unwrap_or(false);
+                                if m.ready {
+                                    if m.kind != "utility" && m.kind != "audio" && !is_simple {
+                                        let use_lbl = if m.requires_audio { "Talk-Sync" } else { "Use" };
+                                        if ui.button(use_lbl).clicked() {
+                                            if m.requires_audio {
+                                                app.left_tab = crate::app::LeftTab::Subs;
+                                                app.show_models_modal = false;
+                                            } else {
+                                                let sm = if m.kind == "image" {
+                                                    crate::app::StudioMode::Image
+                                                } else {
+                                                    crate::app::StudioMode::Video
+                                                };
+                                                app.set_studio_mode(sm, true, Some(m.id.clone()));
+                                                app.left_tab = crate::app::LeftTab::Studio;
+                                                app.show_models_modal = false;
+                                            }
+                                        }
+                                    }
+                                    badge(
+                                        ui,
+                                        if m.kind == "utility" { "✓ Auto-Active" } else { "✓ Ready" },
+                                        ACCENT_GREEN,
+                                    );
+                                } else if is_dl {
+                                    if ui.button("Pause").clicked() {
+                                        app.api.send(ApiCommand::CancelDownload(m.id.clone()));
+                                    }
+                                } else {
+                                    let partial = m.missing_files.iter().any(|f| f.partial_gb > 0.0);
+                                    let lbl = if partial {
+                                        format!("▶ Resume ({:.1} GB)", m.missing_gb)
+                                    } else {
+                                        format!("⬇ Download ({:.1} GB)", m.missing_gb)
+                                    };
+                                    if ui.add(primary_button(&lbl)).clicked() {
+                                        app.api.send(ApiCommand::DownloadModel(m.id.clone()));
+                                    }
+                                }
+                            });
+                        });
+                        if let Some(d) = m.download.as_ref().filter(|d| d.status == "downloading") {
+                            ui.add_space(5.0);
+                            let txt = format!(
+                                "{} · {:.2}/{:.2} GB · {:.1} MB/s ({:.0}%)",
+                                d.current_file, d.downloaded_gb, d.total_gb, d.speed_mbps, d.pct
+                            );
+                            animated_progress_bar(ui, &format!("mdl_{}", m.id), (d.pct as f32) / 100.0, &txt, ACCENT_BLUE);
+                        }
+                    });
+                    ui.add_space(5.0);
+                }
+            };
+
+            egui::ScrollArea::vertical().id_salt("models_modal_scroll").show(ui, |ui| match app.models_modal_tab {
+                0 => {
                     for pack in &starter_packs {
                         card_frame().show(ui, |ui| {
                             ui.horizontal(|ui| {
                                 ui.vertical(|ui| {
-                                    ui.horizontal(|ui| {
-                                        ui.label(RichText::new(&pack.title).strong().size(12.0));
+                                    ui.set_max_width((ui.available_width() - 155.0).max(240.0));
+                                    ui.horizontal_wrapped(|ui| {
+                                        ui.label(RichText::new(&pack.title).strong().size(12.5).color(Color32::WHITE));
                                         badge(
                                             ui,
                                             &pack.badge,
                                             if pack.recommended { ACCENT_BLUE } else { ACCENT_PURPLE },
                                         );
                                     });
-                                    ui.label(RichText::new(&pack.description).size(10.5).color(TEXT_MUTED));
+                                    ui.label(RichText::new(&pack.description).size(11.0).color(TEXT_MUTED));
                                 });
-                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
                                     if pack.ready {
                                         badge(ui, "✓ Installed", ACCENT_GREEN);
                                     } else if pack.downloading {
@@ -516,102 +636,13 @@ fn render_models_modal(app: &mut ClipForgeApp, ctx: &egui::Context) {
                                 });
                             });
                         });
-                        ui.add_space(4.0);
+                        ui.add_space(5.0);
                     }
-                    ui.separator();
                 }
-
-                let render_individual = |app: &mut ClipForgeApp, ui: &mut egui::Ui| {
-                    for (kind, heading) in [
-                        ("image", "🖼 Image & Photo Generators"),
-                        ("video", "🎬 Video & Lip-Sync Generators"),
-                        ("audio", "🎵 Offline Music & Song Engines"),
-                        ("utility", "⚡ Quality Enhancers & Face Lock (Auto-Active)"),
-                    ] {
-                        ui.add_space(6.0);
-                        ui.label(RichText::new(heading).size(13.0).strong());
-                        for m in models.iter().filter(|x| x.kind == kind) {
-                            card_frame().show(ui, |ui| {
-                                ui.horizontal(|ui| {
-                                    ui.vertical(|ui| {
-                                        ui.horizontal(|ui| {
-                                            ui.label(RichText::new(&m.display_name).strong().size(12.5));
-                                            badge(ui, &m.badge, if m.ready { ACCENT_GREEN } else { ACCENT_BLUE });
-                                        });
-                                        ui.label(RichText::new(&m.description).size(11.0).color(TEXT_MUTED));
-                                        let status_meta = if m.ready {
-                                            format!("{}/{} files · {:.2} GB", m.total_files, m.total_files, m.total_gb)
-                                        } else {
-                                            format!("{}/{} present · {:.2} GB remaining", m.present_count, m.total_files, m.missing_gb)
-                                        };
-                                        ui.label(RichText::new(status_meta).size(10.5).color(TEXT_MUTED));
-                                    });
-                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                        let is_dl = m.download.as_ref().map(|d| d.status == "downloading").unwrap_or(false);
-                                        if m.ready {
-                                            if m.kind != "utility" && m.kind != "audio" && !is_simple {
-                                                let use_lbl = if m.requires_audio { "Talk-Sync" } else { "Use" };
-                                                if ui.button(use_lbl).clicked() {
-                                                    if m.requires_audio {
-                                                        app.left_tab = crate::app::LeftTab::Subs;
-                                                        app.show_models_modal = false;
-                                                    } else {
-                                                        let sm = if m.kind == "image" {
-                                                            crate::app::StudioMode::Image
-                                                        } else {
-                                                            crate::app::StudioMode::Video
-                                                        };
-                                                        app.set_studio_mode(sm, true, Some(m.id.clone()));
-                                                        app.left_tab = crate::app::LeftTab::Studio;
-                                                        app.show_models_modal = false;
-                                                    }
-                                                }
-                                            }
-                                            badge(
-                                                ui,
-                                                if m.kind == "utility" { "✓ Auto-Active" } else { "✓ Ready" },
-                                                ACCENT_GREEN,
-                                            );
-                                        } else if is_dl {
-                                            if ui.button("Pause").clicked() {
-                                                app.api.send(ApiCommand::CancelDownload(m.id.clone()));
-                                            }
-                                        } else {
-                                            let partial = m.missing_files.iter().any(|f| f.partial_gb > 0.0);
-                                            let lbl = if partial {
-                                                format!("▶ Resume ({:.1} GB)", m.missing_gb)
-                                            } else {
-                                                format!("⬇ Download ({:.1} GB)", m.missing_gb)
-                                            };
-                                            if ui.add(primary_button(&lbl)).clicked() {
-                                                app.api.send(ApiCommand::DownloadModel(m.id.clone()));
-                                            }
-                                        }
-                                    });
-                                });
-                                if let Some(d) = m.download.as_ref().filter(|d| d.status == "downloading") {
-                                    ui.add_space(4.0);
-                                    ui.add(
-                                        egui::ProgressBar::new((d.pct as f32 / 100.0).clamp(0.0, 1.0))
-                                            .text(format!(
-                                                "{} · {:.2}/{:.2} GB · {:.1} MB/s",
-                                                d.current_file, d.downloaded_gb, d.total_gb, d.speed_mbps
-                                            )),
-                                    );
-                                }
-                            });
-                            ui.add_space(4.0);
-                        }
-                    }
-                };
-
-                if is_simple {
-                    egui::CollapsingHeader::new("⚙ Individual AI Generators (Optional / Advanced)")
-                        .default_open(false)
-                        .show(ui, |ui| render_individual(app, ui));
-                } else {
-                    render_individual(app, ui);
-                }
+                1 => render_model_cards(app, ui, &["image"]),
+                2 => render_model_cards(app, ui, &["video"]),
+                3 => render_model_cards(app, ui, &["audio"]),
+                _ => render_model_cards(app, ui, &["utility"]),
             });
         });
     if !open {

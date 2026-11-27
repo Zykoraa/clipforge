@@ -240,6 +240,25 @@ pub fn render_studio_tab(app: &mut ClipForgeApp, ui: &mut egui::Ui, ctx: &egui::
         }
 
         if let Some(m) = &active_model {
+            let best_hint = match m.id.as_str() {
+                "z_image_turbo" => "Best for: Fast candid photos, visible text/signs & memes",
+                "krea2_turbo" => "Best for: Studio editorial realism & crisp skin texture",
+                "lustify_sdxl" => "Best for: Unfiltered raw photorealistic scenes & edgy comedy",
+                "pony_realism" => "Best for: Unfiltered expressive poses & stylized realism",
+                "chroma_hd" => "Best for: Uncensored Flux posters & vivid imaginative scenes",
+                "illustrious_xl" => "Best for: Anime, manga & Danbooru illustration art",
+                "flux2_klein_9b" | "flux2_klein" => "Best for: Putting a friend photo seamlessly into any scene",
+                "qwen_edit_2511" | "qwen_edit" => "Best for: 2-friend scene blending & direct photo edits",
+                "wan22_i2v" => "Best for: Smooth realistic 5s video from a start photo",
+                "wan22_remix_i2v" | "wan22_smoothmix_i2v" => "Best for: Unfiltered bold physical action & motion",
+                "ltx23" => "Best for: Video WITH synchronized dialogue & sound effects",
+                "wan22_t2v" => "Best for: Text-only cinema & dynamic action clips",
+                "wan22_5b" => "Best for: Fast rough draft previews (~25s)",
+                _ => "",
+            };
+            if !best_hint.is_empty() {
+                ui.label(RichText::new(best_hint).size(10.5).strong().color(Color32::from_rgb(165, 195, 255)));
+            }
             if !m.description.is_empty() {
                 ui.label(RichText::new(&m.description).size(10.5).color(TEXT_MUTED));
             }

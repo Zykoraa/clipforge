@@ -65,6 +65,7 @@ pub enum ApiCommand {
     GenerateVideo(Value),
     PlanSong(Value),
     GenerateMusic(Value),
+    PlanSpeech(Value),
     SpeakText(Value),
     DeleteAudioTrack(String),
     PolishImage { filename: String, scale: u32 },
@@ -111,6 +112,7 @@ pub enum ApiEvent {
     DirectorExpanded(DirectorExpandResponse),
     StoryboardPlanned { beats: Vec<StoryboardBeat>, source: String },
     SongPlanned { title: String, tags: String, lyrics: String, bpm: u32 },
+    SpeechPlanned { title: String, script: String, speech_style: String, music_style: String, background_music: bool },
     RenderCompleted(RenderReport),
     StitchCompleted(StitchReport),
     ImagePolished { filename: String, engine: String, width: u32, height: u32 },
@@ -868,11 +870,38 @@ fn execute_command(base: &str, tok: &str, cmd: ApiCommand, tx: &Sender<ApiEvent>
             }
             let _ = tx.send(ApiEvent::ActionDone("generate".into()));
         }
+        ApiCommand::PlanSpeech(body) => {
+            match post_json_val(base, tok, "/api/speech/plan", &body, 60) {
+                Ok(v) => {
+                    let title = v.get("title").and_then(|x| x.as_str()).unwrap_or("").to_string();
+                    let first = v.get("takes").and_then(|t| t.as_array()).and_then(|a| a.first());
+                    let script = first.and_then(|f| f.get("script")).and_then(|x| x.as_str()).unwrap_or("").to_string();
+                    let speech_style = first.and_then(|f| f.get("speech_style")).and_then(|x| x.as_str()).unwrap_or("").to_string();
+                    let music_style = first.and_then(|f| f.get("music_style")).and_then(|x| x.as_str()).unwrap_or("").to_string();
+                    let background_music = !music_style.is_empty();
+                    let _ = tx.send(ApiEvent::SpeechPlanned {
+                        title,
+                        script,
+                        speech_style,
+                        music_style,
+                        background_music,
+                    });
+                    emit_ok(tx, "Wrote script & delivery direction — review or click Create!");
+                }
+                Err(e) => emit_err(tx, e),
+            }
+            let _ = tx.send(ApiEvent::ActionDone("plan_speech".into()));
+        }
         ApiCommand::SpeakText(body) => {
             match post_json_val(base, tok, "/api/voice/speak", &body, 60) {
                 Ok(v) => {
-                    let jid = v.get("job_id").and_then(|x| x.as_str()).unwrap_or("");
-                    emit_ok(tx, format!("Generating offline speech ({jid})..."));
+                    let vars = v.get("variations").and_then(|x| x.as_u64()).unwrap_or(1);
+                    let msg = if vars > 1 {
+                        format!("Creating {vars} speech takes offline...")
+                    } else {
+                        "Generating offline speech...".into()
+                    };
+                    emit_ok(tx, msg);
                     execute_command(base, tok, ApiCommand::RefreshGenStatus, tx);
                 }
                 Err(e) => emit_err(tx, e),

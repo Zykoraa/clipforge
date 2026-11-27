@@ -39,6 +39,7 @@ from .director import (
     expand_meme_prompt_local,
     ollama_pull_manager,
     plan_song_from_idea,
+    plan_speech_from_idea,
     plan_storyboard_beats_local,
 )
 from .engine import ProjectEngine
@@ -74,7 +75,14 @@ from .media import IMAGE_EXTENSIONS, MEDIA_EXTENSIONS, VIDEO_EXTENSIONS
 from .models import MemeTemplateType, TransitionType
 from .platform_utils import detect_gpu_info
 from .sfx import ensure_builtin_sfx_file, list_builtin_sfx
-from .voice import clone_voice_offline, get_voice_cloner_status, synthesize_speech_offline
+from .voice import (
+    clone_voice_offline,
+    get_voice_cloner_status,
+    mix_speech_with_background_music,
+    pick_kokoro_voice_for_style,
+    synthesize_procedural_score,
+    synthesize_speech_offline,
+)
 
 AUDIO_EXTENSIONS = {".mp3", ".wav", ".flac", ".ogg", ".opus", ".m4a"}
 
@@ -552,8 +560,28 @@ class GenerateMusicRequest(BaseModel):
     volume: float = 0.85
 
 
+class PlanSpeechRequest(BaseModel):
+    idea: str = ""
+    speech_style: str = ""
+    background_music: bool = True
+    music_style: str = ""
+    gender: str = "auto"
+    explicit: bool = True
+    variations: int = 2
+    custom_script: str = ""
+
+
 class SpeakTextRequest(BaseModel):
-    text: str
+    text: str = ""
+    idea: str = ""
+    speech_style: str = ""
+    background_music: bool = False
+    music_style: str = ""
+    music_volume: float = 0.34
+    use_ai_score: bool = True
+    gender: str = "auto"
+    explicit: bool = True
+    variations: int = 1
     cast_id: str | None = None
     voice_preset: str = "auto"
     speed: float = 1.0
@@ -1075,12 +1103,31 @@ async def api_clone_voice(req: CloneVoiceRequest) -> dict[str, Any]:
     return {"job_id": job.id, "status": "queued", "jobs": job_manager.list_jobs()}
 
 
+@app.post("/api/speech/plan")
+async def api_plan_speech(req: PlanSpeechRequest) -> dict[str, Any]:
+    """Turn a rough 1-line speech prompt into ready-to-edit script, delivery style, and background score."""
+    if not (req.idea or "").strip() and not (req.custom_script or "").strip():
+        raise HTTPException(status_code=400, detail="Enter a speech prompt or script first.")
+    return await asyncio.to_thread(
+        plan_speech_from_idea,
+        idea=req.idea,
+        speech_style=req.speech_style,
+        background_music=req.background_music,
+        music_style=req.music_style,
+        gender=req.gender,
+        explicit=req.explicit,
+        variations=req.variations,
+        custom_script=req.custom_script,
+    )
+
+
 @app.post("/api/voice/speak")
 async def api_speak_text(req: SpeakTextRequest) -> dict[str, Any]:
-    """Generate offline speech/voiceover using either a friend's cloned voice (F5-TTS) or instant built-in offline voices."""
+    """Suno-style offline Speech studio: script OR prompt, delivery tone, optional AI/instant background score + auto-duck mix, 1-2 takes."""
     clean_text = (req.text or "").strip()
-    if not clean_text:
-        raise HTTPException(status_code=400, detail="Speech text cannot be empty.")
+    clean_idea = (req.idea or "").strip()
+    if not clean_text and not clean_idea:
+        raise HTTPException(status_code=400, detail="Enter a script or speech idea first.")
 
     member = None
     if req.cast_id:
@@ -1089,80 +1136,250 @@ async def api_speak_text(req: SpeakTextRequest) -> dict[str, Any]:
             raise HTTPException(status_code=404, detail="Cast member not found.")
 
     use_clone = bool(member and member.get("voice_path"))
+    num_takes = max(1, min(2, int(req.variations or 1)))
     speaker_name = member["name"] if member else (req.voice_preset or "Narrator")
     job_model = "f5_tts" if use_clone else "offline_tts"
-    job = job_manager.create(kind="audio", model=job_model, prompt=f"🎙 {speaker_name}: {clean_text[:60]}")
+    prompt_preview = (clean_text or clean_idea)[:60]
+    job = job_manager.create(kind="audio", model=job_model, prompt=f"🎙 {speaker_name}: {prompt_preview}")
 
     async def _run_speak_job() -> None:
         out_dir = engine.workspace_dir / "generated_audio"
         out_dir.mkdir(parents=True, exist_ok=True)
+        t_start = time.perf_counter()
+        avail = await asyncio.to_thread(get_model_availability)
+        music_engine_ready = bool(
+            avail.get("ace_step_music_xl", {}).get("ready") or avail.get("ace_step_music", {}).get("ready")
+        )
+        created_tracks: list[dict[str, Any]] = []
+
         try:
-            if use_clone and member:
-                job_manager.update(job.id, status="running", progress_pct=25, message=f"Cloning {member['name']}'s voice (F5-TTS)...")
-                res = await asyncio.to_thread(
-                    clone_voice_offline,
-                    text=clean_text,
-                    ref_audio_path=member["voice_path"],
-                    output_dir=out_dir,
-                    ref_text=member.get("voice_ref_text", ""),
-                    speed=req.speed,
+            # Build 1..2 takes using Suno Speech Planner when given a rough idea or multi-take mode
+            if clean_idea or num_takes > 1:
+                job_manager.update(job.id, status="running", progress_pct=6, message="Writing script & directing voice delivery...")
+                plan = await asyncio.to_thread(
+                    plan_speech_from_idea,
+                    idea=clean_idea or clean_text[:180],
+                    speech_style=req.speech_style,
+                    background_music=req.background_music,
+                    music_style=req.music_style,
+                    gender=req.gender,
+                    explicit=req.explicit,
+                    variations=num_takes,
+                    custom_script=clean_text,
                 )
+                takes = plan.get("takes") or []
+                planned_title = str(plan.get("title") or "Spoken Track")
             else:
-                job_manager.update(job.id, status="running", progress_pct=35, message="Synthesizing offline voiceover...")
-                res = await asyncio.to_thread(
-                    synthesize_speech_offline,
-                    text=clean_text,
-                    output_dir=out_dir,
-                    voice_preset=req.voice_preset,
-                    speed=req.speed,
+                planned_title = (req.title or "").strip() or f"{speaker_name}: {clean_text[:28]}"
+                takes = [
+                    {
+                        "take_index": 1,
+                        "title": planned_title,
+                        "script": clean_text,
+                        "speech_style": req.speech_style or "Clear studio voiceover",
+                        "music_style": req.music_style or "Cinematic atmospheric underscore",
+                        "bpm": 90,
+                    }
+                ]
+
+            for idx, tk in enumerate(takes):
+                if job.cancel_event.is_set():
+                    raise GenerationCanceledError("Canceled by user.")
+                tk_script = str(tk.get("script") or clean_text or clean_idea).strip()
+                tk_sstyle = str(tk.get("speech_style") or req.speech_style or "").strip()
+                tk_mstyle = str(tk.get("music_style") or req.music_style or "").strip()
+                tk_title = (
+                    (f"{req.title.strip()} (Take {idx + 1})" if len(takes) > 1 else req.title.strip())
+                    if (req.title or "").strip()
+                    else str(tk.get("title") or planned_title)
                 )
 
-            out_file = Path(res["audio_path"])
-            clean_title = (req.title or "").strip() or f"{speaker_name}: {clean_text[:32]}"
-            write_asset_metadata(
-                out_file,
-                {
-                    "kind": "audio",
-                    "subtype": "speech",
-                    "model": res.get("engine", job_model),
-                    "title": clean_title,
-                    "text": clean_text,
-                    "speaker": speaker_name,
-                    "voice_preset": req.voice_preset,
-                    "speed": req.speed,
-                    "duration_sec": res.get("duration_sec", 0.0),
-                    "generation_time_sec": res.get("generation_time_sec", 0.0),
-                },
-            )
+                base_pct = int((idx / max(1, len(takes))) * 88) + 8
+                step_span = int(88 / max(1, len(takes)))
+                kokoro_voice, sug_speed, fx_key = pick_kokoro_voice_for_style(
+                    speech_style=tk_sstyle,
+                    gender=req.gender,
+                    requested_preset=req.voice_preset,
+                    take_idx=idx,
+                )
+                eff_speed = req.speed if abs(float(req.speed) - 1.0) > 0.04 else sug_speed
+
+                if use_clone and member:
+                    job_manager.update(
+                        job.id,
+                        progress_pct=base_pct + 5,
+                        message=f"Take {idx + 1}/{len(takes)}: Cloning {member['name']}'s voice...",
+                    )
+                    res = await asyncio.to_thread(
+                        clone_voice_offline,
+                        text=tk_script,
+                        ref_audio_path=member["voice_path"],
+                        output_dir=out_dir,
+                        ref_text=member.get("voice_ref_text", ""),
+                        speed=eff_speed,
+                    )
+                    eff_speaker = member["name"]
+                else:
+                    job_manager.update(
+                        job.id,
+                        progress_pct=base_pct + 5,
+                        message=f"Take {idx + 1}/{len(takes)}: Speaking ({kokoro_voice})...",
+                    )
+                    res = await asyncio.to_thread(
+                        synthesize_speech_offline,
+                        text=tk_script,
+                        output_dir=out_dir,
+                        voice_preset=kokoro_voice,
+                        speed=eff_speed,
+                        acoustic_fx=fx_key,
+                    )
+                    eff_speaker = res.get("voice_label") or kokoro_voice
+
+                out_file = Path(res["audio_path"])
+                final_dur = float(res.get("duration_sec") or 2.0)
+
+                # Optional cohesive background music score + FFmpeg sidechain auto-duck mix!
+                if req.background_music:
+                    score_dur = max(12.0, min(90.0, final_dur + 3.5))
+                    score_tmp = out_dir / f"_score_tmp_{uuid.uuid4().hex[:8]}.wav"
+                    used_score_engine = "instant_score"
+                    ai_score_file: Path | None = None
+                    try:
+                        if req.use_ai_score and music_engine_ready:
+                            job_manager.update(
+                                job.id,
+                                progress_pct=base_pct + int(step_span * 0.45),
+                                message=f"Take {idx + 1}/{len(takes)}: Composing custom AI background score...",
+                            )
+                            try:
+                                mu_res = await asyncio.to_thread(
+                                    generate_music_via_comfyui,
+                                    tags=tk_mstyle or "warm cinematic instrumental underscore, subtle pads, no vocals",
+                                    output_dir=out_dir,
+                                    lyrics="[Instrumental]",
+                                    title=f"_bg_{uuid.uuid4().hex[:6]}",
+                                    instrumental=True,
+                                    quality="fast",
+                                    master_audio=False,
+                                    duration_sec=score_dur,
+                                    bpm=int(tk.get("bpm") or 90),
+                                    base_url=COMFYUI_URL,
+                                    comfy_dir=COMFYUI_DIR,
+                                    auto_start=True,
+                                    cancel_event=job.cancel_event,
+                                )
+                                ai_score_file = Path(mu_res["audio_path"])
+                                score_src = ai_score_file
+                                used_score_engine = "ace_step_score"
+                            except Exception:
+                                score_src = await asyncio.to_thread(
+                                    synthesize_procedural_score, score_tmp, score_dur, tk_mstyle
+                                )
+                        else:
+                            job_manager.update(
+                                job.id,
+                                progress_pct=base_pct + int(step_span * 0.45),
+                                message=f"Take {idx + 1}/{len(takes)}: Generating studio background score...",
+                            )
+                            score_src = await asyncio.to_thread(
+                                synthesize_procedural_score, score_tmp, score_dur, tk_mstyle
+                            )
+
+                        job_manager.update(
+                            job.id,
+                            progress_pct=base_pct + int(step_span * 0.80),
+                            message=f"Take {idx + 1}/{len(takes)}: Auto-ducking score under vocals...",
+                        )
+                        scored_out = out_dir / f"speech_scored_{uuid.uuid4().hex[:8]}.mp3"
+                        mix_res = await asyncio.to_thread(
+                            mix_speech_with_background_music,
+                            out_file,
+                            score_src,
+                            scored_out,
+                            req.music_volume,
+                        )
+                        out_file.unlink(missing_ok=True)
+                        out_file = Path(mix_res["audio_path"])
+                        final_dur = float(mix_res["duration_sec"])
+                        res["engine"] = f"{res.get('engine', job_model)}+{used_score_engine}"
+                    finally:
+                        score_tmp.unlink(missing_ok=True)
+                        if ai_score_file is not None:
+                            ai_score_file.unlink(missing_ok=True)
+                            ai_score_file.with_suffix(ai_score_file.suffix + ".meta.json").unlink(missing_ok=True)
+
+                total_gen_time = round(time.perf_counter() - t_start, 2)
+                write_asset_metadata(
+                    out_file,
+                    {
+                        "kind": "audio",
+                        "subtype": "speech",
+                        "model": res.get("engine", job_model),
+                        "title": tk_title,
+                        "text": tk_script,
+                        "speaker": eff_speaker,
+                        "speech_style": tk_sstyle,
+                        "background_music": bool(req.background_music),
+                        "music_style": tk_mstyle if req.background_music else "",
+                        "voice_preset": kokoro_voice,
+                        "speed": eff_speed,
+                        "duration_sec": final_dur,
+                        "generation_time_sec": total_gen_time,
+                    },
+                )
+                created_tracks.append(
+                    {
+                        **res,
+                        "audio_path": str(out_file),
+                        "filename": out_file.name,
+                        "title": tk_title,
+                        "duration_sec": final_dur,
+                        "audio_url": f"/api/generate/audio/{out_file.name}",
+                    }
+                )
+
+            last_tr = created_tracks[-1]
             overlay_id = None
-            if req.add_to_timeline:
+            if req.add_to_timeline and created_tracks:
                 ov = await asyncio.to_thread(
                     engine.add_audio_overlay,
                     None,
-                    str(out_file),
+                    created_tracks[0]["audio_path"],
                     req.start_sec,
                     req.volume,
                     req.duck_main_audio,
-                    f"🎙 {clean_title[:28]}",
+                    f"🎙 {created_tracks[0]['title'][:28]}",
                 )
                 overlay_id = ov.id
+            done_msg = (
+                f"Created {len(created_tracks)} speech versions!"
+                if len(created_tracks) > 1
+                else f"Speech ready ({last_tr['duration_sec']}s)"
+            )
             job_manager.update(
                 job.id,
                 status="completed",
                 progress_pct=100,
-                message=f"Speech ready ({res['duration_sec']}s)",
+                message=done_msg,
                 result={
-                    **res,
-                    "title": clean_title,
-                    "audio_url": f"/api/generate/audio/{out_file.name}",
+                    **last_tr,
+                    "tracks": created_tracks,
+                    "variations": len(created_tracks),
                     "overlay_id": overlay_id,
                 },
             )
+        except GenerationCanceledError:
+            job_manager.update(job.id, status="canceled", message="Canceled by user")
         except Exception as exc:
             job_manager.update(job.id, status="failed", message=str(exc), error=str(exc))
 
     asyncio.create_task(_run_speak_job())
-    return {"job_id": job.id, "status": "queued", "jobs": job_manager.list_jobs()}
+    return {
+        "job_id": job.id,
+        "variations": num_takes,
+        "status": "queued",
+        "jobs": job_manager.list_jobs(),
+    }
 
 
 @app.post("/api/voice/talk-video")
