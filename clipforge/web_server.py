@@ -538,12 +538,14 @@ class GenerateMusicRequest(BaseModel):
     instrumental: bool = False
     explicit: bool = True
     strict_lyrics: bool = False
+    quality: str = "studio"
+    master_audio: bool = True
     variations: int = 2
     duration_sec: float = 60.0
     bpm: int | None = None
     keyscale: str = ""
     language: str = "en"
-    steps: int = 8
+    steps: int | None = None
     cfg: float = 1.0
     seed: int = -1
     add_to_timeline: bool = False
@@ -2058,7 +2060,7 @@ async def api_generate_music(req: GenerateMusicRequest) -> dict[str, Any]:
         raise HTTPException(status_code=400, detail="Describe a song idea, style, or lyrics first.")
 
     avail = await asyncio.to_thread(get_model_availability)
-    if not avail.get("ace_step_music", {}).get("ready"):
+    if not avail.get("ace_step_music_xl", {}).get("ready") and not avail.get("ace_step_music", {}).get("ready"):
         miss = avail.get("ace_step_music", {}).get("missing_gb", 10.0)
         raise HTTPException(
             status_code=400,
@@ -2119,6 +2121,8 @@ async def api_generate_music(req: GenerateMusicRequest) -> dict[str, Any]:
                     title=take_title,
                     instrumental=req.instrumental,
                     strict_lyrics=req.strict_lyrics,
+                    quality=req.quality,
+                    master_audio=req.master_audio,
                     duration_sec=req.duration_sec,
                     bpm=int(tk["bpm"]),
                     keyscale=req.keyscale.strip() or tk.get("keyscale", "C major"),

@@ -798,6 +798,8 @@ pub struct VoiceStatus {
     #[serde(default)]
     pub ready: bool,
     #[serde(default)]
+    pub kokoro_ready: bool,
+    #[serde(default)]
     pub builtin_tts_ready: bool,
     #[serde(default)]
     pub builtin_voices: Vec<BuiltinVoice>,

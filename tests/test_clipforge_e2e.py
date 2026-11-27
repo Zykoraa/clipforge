@@ -455,6 +455,8 @@ def test_offline_generator_workflows_and_ref_upload_security(tmp_path: Path, mon
         "qwen_edit",
         "qwen_edit_2511",
         "ace_step_music",
+        "ace_step_music_xl",
+        "kokoro_tts",
         "face_swap",
         "upscale_ultrasharp",
         "rife_vfi",
@@ -1111,7 +1113,7 @@ def test_civitai_new_architectures_starter_packs_and_checkpoints(tmp_path: Path,
     assert resolve_auto_model("image", intent="anime", comfy_dir=fake_comfy) == "illustrious_xl"
 
     packs = get_starter_packs(fake_comfy)
-    assert {p["id"] for p in packs} == {"fast_8gb", "hq_16gb", "uncensored_meme_pack", "music_pack", "anime_civitai"}
+    assert {p["id"] for p in packs} == {"fast_8gb", "hq_16gb", "uncensored_meme_pack", "music_pack", "music_xl_pack", "anime_civitai"}
     assert any(p["recommended"] for p in packs)
 
     # 7. CivitAI URL parser, SSRF validation, folder routing, and secret store
@@ -1148,7 +1150,7 @@ def test_civitai_new_architectures_starter_packs_and_checkpoints(tmp_path: Path,
     r_st = client.get("/api/generate/status", headers=hdrs).json()
     assert r_st["civitai"]["has_api_key"] is True
     assert len(r_st["civitai"]["curated"]) >= 16
-    assert len(r_st["starter_packs"]) == 5
+    assert len(r_st["starter_packs"]) == 6
     assert len(r_st["checkpoints"]) == 2
 
     # 9. Simple Mode direct video Continue (end-frame) + Stitch Chain endpoints
@@ -1301,6 +1303,14 @@ def test_uncensored_facelock_music_and_offline_speech(tmp_path: Path, monkeypatc
     wf_strict = build_ace_step_music_workflow(tags="trap", lyrics=norm, strict_lyrics=True, duration_sec=45.0)
     assert wf_strict["3"]["inputs"]["generate_audio_codes"] is False
     assert wf_strict["5"]["inputs"]["seconds"] >= 90.0
+
+    from clipforge.generator import build_ace_step_xl_music_workflow
+
+    wf_xl = build_ace_step_xl_music_workflow(tags="hard trap", lyrics="[Verse]\nTest", duration_sec=60.0)
+    assert wf_xl["1"]["class_type"] == "UNETLoader"
+    assert wf_xl["1c"]["class_type"] == "DualCLIPLoader"
+    assert wf_xl["1c"]["inputs"]["type"] == "ace"
+    assert wf_xl["1v"]["class_type"] == "VAELoader"
 
 
 

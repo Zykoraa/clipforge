@@ -306,39 +306,76 @@ fn render_simple_talk_card(app: &mut ClipForgeApp, ui: &mut egui::Ui) {
 
 fn render_builtin_voice_picker(app: &mut ClipForgeApp, ui: &mut egui::Ui, id_salt: &str) {
     let presets = [
-        ("auto", "Default Narrator"),
-        ("male_deep", "Male Narrator (Deep)"),
-        ("female_clear", "Female Narrator (Clear)"),
-        ("hype_fast", "Fast Meme Announcer"),
-        ("dramatic_slow", "Dramatic Documentary"),
+        ("am_michael", "🎙 Michael · Deep Studio Male (US)"),
+        ("af_heart", "🎙 Heart · Warm Natural Female (US)"),
+        ("am_adam", "🎙 Adam · Viral Narrator Male (US)"),
+        ("af_bella", "🎙 Bella · Expressive Female (US)"),
+        ("am_fenrir", "🎙 Fenrir · Gritty Dramatic Male (US)"),
+        ("am_onyx", "🎙 Onyx · Smooth Low Male (US)"),
+        ("am_puck", "🎙 Puck · Energetic Meme Male (US)"),
+        ("af_sky", "🎙 Sky · Bright Young Female (US)"),
+        ("af_nicole", "🎙 Nicole · Soft Intimate Female (US)"),
+        ("bm_george", "🎙 George · British Documentary Male"),
+        ("bf_emma", "🎙 Emma · Natural British Female"),
+        ("bm_lewis", "🎙 Lewis · Smooth British Male"),
     ];
     let cur_lbl = presets
         .iter()
         .find(|(id, _)| *id == app.speech_voice_preset)
         .map(|(_, l)| *l)
-        .unwrap_or("Default Narrator");
+        .unwrap_or("🎙 Michael · Deep Studio Male (US)");
+    let kokoro_ready = app.gen_status.voice.kokoro_ready
+        || app.gen_status.models.get("kokoro_tts").map(|m| m.ready).unwrap_or(false);
     ui.horizontal(|ui| {
-        ui.label(RichText::new("Voice Style:").size(11.0).color(TEXT_MUTED));
+        ui.label(RichText::new("Voice:").size(11.0).color(TEXT_MUTED));
         egui::ComboBox::from_id_salt(id_salt)
             .selected_text(cur_lbl)
-            .width((ui.available_width() - 80.0).max(150.0))
+            .width((ui.available_width() - 55.0).max(170.0))
             .show_ui(ui, |ui| {
                 for (pid, lbl) in presets {
                     ui.selectable_value(&mut app.speech_voice_preset, pid.to_string(), lbl);
                 }
             });
     });
+    if kokoro_ready {
+        ui.label(RichText::new("● Real Neural Human Voices Active (24kHz Studio)").size(10.0).color(ACCENT_GREEN));
+    } else {
+        let dl_state = app
+            .gen_status
+            .models
+            .get("kokoro_tts")
+            .and_then(|m| m.download.as_ref())
+            .cloned();
+        if let Some(d) = dl_state.filter(|d| d.status == "downloading") {
+            ui.label(
+                RichText::new(format!("⬇ Downloading Real Human Voices ({:.0}%)...", d.pct))
+                    .size(10.5)
+                    .color(ACCENT_AMBER),
+            );
+        } else if ui
+            .small_button("⬇ Upgrade to Real Human Voices (0.35 GB)")
+            .on_hover_text("Replaces basic robotic OS speech with 12 realistic neural human voices")
+            .clicked()
+        {
+            app.api.send(ApiCommand::DownloadModel("kokoro_tts".into()));
+        }
+    }
 }
 
 fn render_simple_music_card(app: &mut ClipForgeApp, ui: &mut egui::Ui) {
-    let music_model = app.gen_status.models.get("ace_step_music").cloned();
-    let is_ready = music_model.as_ref().map(|m| m.ready).unwrap_or(false);
+    let xl_model = app.gen_status.models.get("ace_step_music_xl").cloned();
+    let base_model = app.gen_status.models.get("ace_step_music").cloned();
+    let xl_ready = xl_model.as_ref().map(|m| m.ready).unwrap_or(false);
+    let base_ready = base_model.as_ref().map(|m| m.ready).unwrap_or(false);
+    let is_ready = xl_ready || base_ready;
 
     card_frame().show(ui, |ui| {
         ui.horizontal(|ui| {
             ui.label(RichText::new("🎵 Create Songs Offline").size(13.0).strong());
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                if is_ready {
+                if xl_ready {
+                    badge(ui, "★ Pro Studio XL Active", ACCENT_PURPLE);
+                } else if base_ready {
                     badge(ui, "● Music Ready", ACCENT_GREEN);
                 } else {
                     badge(ui, "1-Click Setup", ACCENT_AMBER);
@@ -508,9 +545,63 @@ fn render_simple_music_card(app: &mut ClipForgeApp, ui: &mut egui::Ui) {
                 .on_hover_text("Auto-extends song length to fit all your lyrics and bypasses the planner filter so explicit lines aren't skipped");
         }
 
+        ui.add_space(6.0);
+        // Quality & Mastering selector + optional 1-click Pro Studio XL 4B upgrade
+        if is_ready {
+            ui.horizontal(|ui| {
+                ui.label(RichText::new("Sound:").size(11.0).color(TEXT_MUTED));
+                let studio_btn = egui::Button::new(
+                    RichText::new("✨ Studio Master")
+                        .size(10.5)
+                        .color(if app.music_studio_quality { Color32::WHITE } else { TEXT_MUTED }),
+                )
+                .fill(if app.music_studio_quality { ACCENT_PURPLE } else { BG_ELEVATED })
+                .corner_radius(CornerRadius::same(10));
+                if ui
+                    .add(studio_btn)
+                    .on_hover_text("Higher-detail 14-step vocals & melodies + radio -14 LUFS mastering")
+                    .clicked()
+                {
+                    app.music_studio_quality = true;
+                }
+                let fast_btn = egui::Button::new(
+                    RichText::new("⚡ Fast Draft")
+                        .size(10.5)
+                        .color(if !app.music_studio_quality { Color32::WHITE } else { TEXT_MUTED }),
+                )
+                .fill(if !app.music_studio_quality { ACCENT_BLUE } else { BG_ELEVATED })
+                .corner_radius(CornerRadius::same(10));
+                if ui.add(fast_btn).on_hover_text("Fast 8-step preview + radio mastering").clicked() {
+                    app.music_studio_quality = false;
+                }
+            });
+            if !xl_ready {
+                if let Some(xm) = &xl_model {
+                    if let Some(d) = xm.download.as_ref().filter(|d| d.status == "downloading") {
+                        ui.add_space(3.0);
+                        ui.label(
+                            RichText::new(format!("⬇ Downloading Pro Studio XL ({:.0}% · {:.1} MB/s)...", d.pct, d.speed_mbps))
+                                .size(10.5)
+                                .color(ACCENT_AMBER),
+                        );
+                        ui.add(egui::ProgressBar::new((d.pct as f32 / 100.0).clamp(0.0, 1.0)).show_percentage());
+                    } else {
+                        ui.add_space(3.0);
+                        if ui
+                            .small_button(&format!("⬆ Upgrade to Pro Studio XL 4B ({:.1} GB) — Best Vocals", xm.missing_gb))
+                            .on_hover_text("2× larger music model + 2× smarter lyric/melody brain — automatically replaces base engine once downloaded")
+                            .clicked()
+                        {
+                            app.api.send(ApiCommand::DownloadModel("ace_step_music_xl".into()));
+                        }
+                    }
+                }
+            }
+        }
+
         ui.add_space(8.0);
-        if let Some(m) = &music_model {
-            if !m.ready {
+        if !is_ready {
+            if let Some(m) = &base_model {
                 if let Some(d) = m.download.as_ref().filter(|d| d.status == "downloading") {
                     ui.label(
                         RichText::new(format!("⬇ Downloading Music Engine ({:.0}% · {:.1} MB/s)...", d.pct, d.speed_mbps))
@@ -540,6 +631,7 @@ fn render_simple_music_card(app: &mut ClipForgeApp, ui: &mut egui::Ui) {
             .clicked()
         {
             let variations = if app.music_two_takes { 2 } else { 1 };
+            let quality = if app.music_studio_quality { "studio" } else { "fast" };
             if !app.music_custom_mode {
                 let idea = app.music_idea.trim().to_string();
                 if idea.is_empty() {
@@ -550,6 +642,8 @@ fn render_simple_music_card(app: &mut ClipForgeApp, ui: &mut egui::Ui) {
                         "instrumental": app.music_instrumental,
                         "explicit": app.music_explicit,
                         "strict_lyrics": app.music_strict_lyrics,
+                        "quality": quality,
+                        "master_audio": true,
                         "variations": variations,
                         "duration_sec": app.music_duration_sec,
                         "add_to_timeline": false,
@@ -569,6 +663,8 @@ fn render_simple_music_card(app: &mut ClipForgeApp, ui: &mut egui::Ui) {
                         "instrumental": app.music_instrumental,
                         "explicit": app.music_explicit,
                         "strict_lyrics": app.music_strict_lyrics,
+                        "quality": quality,
+                        "master_audio": true,
                         "variations": variations,
                         "duration_sec": app.music_duration_sec,
                         "bpm": app.music_bpm,

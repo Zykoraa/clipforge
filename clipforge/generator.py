@@ -57,7 +57,7 @@ ImageModelId = Literal[
     "qwen_edit",
     "qwen_edit_2511",
 ]
-AudioModelId = Literal["ace_step_music"]
+AudioModelId = Literal["ace_step_music", "ace_step_music_xl"]
 GeneratorModelId = Literal[
     "wan22_5b",
     "wan22_i2v",
@@ -77,6 +77,8 @@ GeneratorModelId = Literal[
     "qwen_edit",
     "qwen_edit_2511",
     "ace_step_music",
+    "ace_step_music_xl",
+    "kokoro_tts",
     "face_swap",
     "upscale_ultrasharp",
     "rife_vfi",
@@ -1077,16 +1079,16 @@ MODEL_SPECS: dict[str, dict[str, Any]] = {
     # -------------------------------------------------------------------------
     "ace_step_music": {
         "kind": "audio",
-        "display_name": "ACE-Step 1.5 Turbo (Offline Suno-Style Songs)",
-        "badge": "SONGS + VOCALS",
-        "description": "Generate full 15s-180s studio songs with singing vocals, custom lyrics, genres/beats, or pure instrumentals completely offline in ~8 steps.",
+        "display_name": "ACE-Step 1.5 Turbo (Offline Songs, 10 GB)",
+        "badge": "FAST SONGS + VOCALS",
+        "description": "Fast single-file offline song engine — generates full 15s-180s songs with vocals, custom lyrics, or pure instrumentals.",
         "requires_image": False,
         "supports_image": False,
         "supports_second_image": False,
         "supports_audio": True,
         "default_width": 0,
         "default_height": 0,
-        "default_steps": 8,
+        "default_steps": 14,
         "default_cfg": 1.0,
         "dim_step": 1,
         "files": [
@@ -1095,6 +1097,78 @@ MODEL_SPECS: dict[str, dict[str, Any]] = {
                 "remote_path": "checkpoints/ace_step_1.5_turbo_aio.safetensors",
                 "local_rel": "models/checkpoints/ace_step_1.5_turbo_aio.safetensors",
                 "size_gb": 10.03,
+            },
+        ],
+    },
+    "ace_step_music_xl": {
+        "kind": "audio",
+        "display_name": "ACE-Step 1.5 XL Studio (4B+4B Flagship Music)",
+        "badge": "PRO SUNO-GRADE 4B",
+        "description": "Massive 4B acoustic DiT + 4B Qwen music planner — dramatically richer vocals, tighter lyric accuracy, and studio-grade melodies.",
+        "requires_image": False,
+        "supports_image": False,
+        "supports_second_image": False,
+        "supports_audio": True,
+        "default_width": 0,
+        "default_height": 0,
+        "default_steps": 14,
+        "default_cfg": 1.0,
+        "dim_step": 1,
+        "files": [
+            {
+                "repo_id": "Comfy-Org/ace_step_1.5_ComfyUI_files",
+                "remote_path": "split_files/diffusion_models/acestep_v1.5_xl_turbo_bf16.safetensors",
+                "local_rel": "models/diffusion_models/acestep_v1.5_xl_turbo_bf16.safetensors",
+                "size_gb": 9.98,
+            },
+            {
+                "repo_id": "Comfy-Org/ace_step_1.5_ComfyUI_files",
+                "remote_path": "split_files/text_encoders/qwen_0.6b_ace15.safetensors",
+                "local_rel": "models/text_encoders/qwen_0.6b_ace15.safetensors",
+                "size_gb": 1.19,
+            },
+            {
+                "repo_id": "Comfy-Org/ace_step_1.5_ComfyUI_files",
+                "remote_path": "split_files/text_encoders/qwen_4b_ace15.safetensors",
+                "local_rel": "models/text_encoders/qwen_4b_ace15.safetensors",
+                "size_gb": 8.38,
+            },
+            {
+                "repo_id": "Comfy-Org/ace_step_1.5_ComfyUI_files",
+                "remote_path": "split_files/vae/ace_1.5_vae.safetensors",
+                "local_rel": "models/vae/ace_1.5_vae.safetensors",
+                "size_gb": 0.34,
+            },
+        ],
+    },
+    "kokoro_tts": {
+        "kind": "utility",
+        "display_name": "Kokoro-82M Neural Studio Voices (350 MB)",
+        "badge": "REAL HUMAN VOICES",
+        "description": "12 studio-grade realistic human neural voices (US & UK, male & female) replacing basic OS speech — instant offline 24kHz synthesis.",
+        "requires_image": False,
+        "supports_image": False,
+        "supports_second_image": False,
+        "supports_audio": True,
+        "default_width": 0,
+        "default_height": 0,
+        "default_steps": 1,
+        "default_cfg": 1.0,
+        "dim_step": 1,
+        "files": [
+            {
+                "repo_id": "thewh1teagle/kokoro-onnx",
+                "remote_path": "kokoro-v1.0.onnx",
+                "url": "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/kokoro-v1.0.onnx",
+                "local_rel": "models/kokoro/kokoro-v1.0.onnx",
+                "size_gb": 0.33,
+            },
+            {
+                "repo_id": "thewh1teagle/kokoro-onnx",
+                "remote_path": "voices-v1.0.bin",
+                "url": "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/voices-v1.0.bin",
+                "local_rel": "models/kokoro/voices-v1.0.bin",
+                "size_gb": 0.03,
             },
         ],
     },
@@ -1211,6 +1285,8 @@ def resolve_auto_model(
     avail = get_model_availability(comfy_dir)
     intent_clean = (intent or "").strip().lower()
     if kind == "audio":
+        if avail.get("ace_step_music_xl", {}).get("ready"):
+            return "ace_step_music_xl"
         return "ace_step_music"
     if kind == "image":
         if intent_clean == "anime":
@@ -1279,10 +1355,18 @@ def get_starter_packs(comfy_dir: Path = COMFYUI_DIR) -> list[dict[str, Any]]:
         },
         {
             "id": "music_pack",
-            "title": "Offline Music & Song Studio Pack (Suno-Style, 10 GB)",
-            "badge": "SONGS + VOCALS",
-            "description": "ACE-Step 1.5 Turbo all-in-one engine — generate full studio songs with singing vocals, custom lyrics, genres, or pure instrumentals completely offline.",
-            "model_ids": ["ace_step_music"],
+            "title": "Offline Music & Real Human Voices Pack (10.4 GB)",
+            "badge": "SONGS + REAL VOICES",
+            "description": "ACE-Step 1.5 Turbo offline song generator + Kokoro-82M (12 realistic human neural voices for speech & talking friends).",
+            "model_ids": ["ace_step_music", "kokoro_tts"],
+            "recommended": False,
+        },
+        {
+            "id": "music_xl_pack",
+            "title": "Pro Studio XL Music Upgrade (4B+4B Flagship, 19.9 GB)",
+            "badge": "PRO SUNO-GRADE",
+            "description": "ACE-Step 1.5 XL 4B DiT + Qwen 4B Music Planner + Kokoro-82M Real Voices — dramatically richer vocals, melodies, and lyric fidelity.",
+            "model_ids": ["ace_step_music_xl", "kokoro_tts"],
             "recommended": False,
         },
         {
@@ -1847,7 +1931,7 @@ class ModelDownloadManager:
                 if existing_fp is not None:
                     exact_sizes.append(existing_fp.stat().st_size)
                 else:
-                    url = f"https://huggingface.co/{f['repo_id']}/resolve/main/{f['remote_path']}"
+                    url = f.get("url") or f"https://huggingface.co/{f['repo_id']}/resolve/main/{f['remote_path']}"
                     try:
                         r = httpx.head(url, headers=base_headers, follow_redirects=True, timeout=15.0)
                         sz = int(r.headers.get("content-length") or 0)
@@ -1881,7 +1965,7 @@ class ModelDownloadManager:
 
                     part = dest.with_name(dest.name + ".part")
                     resume_pos = part.stat().st_size if part.exists() else 0
-                    url = f"https://huggingface.co/{f['repo_id']}/resolve/main/{f['remote_path']}"
+                    url = f.get("url") or f"https://huggingface.co/{f['repo_id']}/resolve/main/{f['remote_path']}"
                     headers = dict(base_headers)
                     if resume_pos > 0:
                         headers["Range"] = f"bytes={resume_pos}-"
@@ -3247,6 +3331,112 @@ def build_ace_step_music_workflow(
     }
 
 
+def build_ace_step_xl_music_workflow(
+    tags: str,
+    lyrics: str = "",
+    duration_sec: float = 60.0,
+    bpm: int = 120,
+    keyscale: str = "C major",
+    language: str = "en",
+    instrumental: bool = False,
+    strict_lyrics: bool = False,
+    steps: int = 14,
+    cfg: float = 1.0,
+    seed: int = -1,
+    filename_prefix: str = "clipforge/ace_xl_song",
+    unet_name: str = "acestep_v1.5_xl_turbo_bf16.safetensors",
+    clip_small: str = "qwen_0.6b_ace15.safetensors",
+    clip_lm: str = "qwen_4b_ace15.safetensors",
+    vae_name: str = "ace_1.5_vae.safetensors",
+) -> dict[str, Any]:
+    """Flagship ACE-Step 1.5 XL (4B DiT + 4B Qwen Planner LM) native ComfyUI workflow for Suno-grade vocals & mixes."""
+    eff_bpm = max(50, min(220, int(bpm)))
+    clean_lyrics = normalize_ace_lyrics(lyrics, instrumental=instrumental)
+    dur = estimate_lyrics_duration_sec(clean_lyrics, bpm=eff_bpm, requested_sec=duration_sec)
+    actual_seed = random.randint(1, 2**31 - 1) if seed < 0 else int(seed)
+    clean_tags = (tags or "").strip() or "upbeat modern pop, catchy synth hook, crisp drums, studio mix"
+    if instrumental and "instrumental" not in clean_tags.lower():
+        clean_tags = f"{clean_tags}, instrumental, no vocals"
+    use_audio_codes = not bool(strict_lyrics)
+
+    return {
+        "1": {"class_type": "UNETLoader", "inputs": {"unet_name": unet_name, "weight_dtype": "default"}},
+        "1c": {
+            "class_type": "DualCLIPLoader",
+            "inputs": {"clip_name1": clip_small, "clip_name2": clip_lm, "type": "ace", "device": "default"},
+        },
+        "1v": {"class_type": "VAELoader", "inputs": {"vae_name": vae_name}},
+        "2": {"class_type": "ModelSamplingAuraFlow", "inputs": {"model": ["1", 0], "shift": 3.0}},
+        "3": {
+            "class_type": "TextEncodeAceStepAudio1.5",
+            "inputs": {
+                "clip": ["1c", 0],
+                "tags": clean_tags,
+                "lyrics": clean_lyrics,
+                "seed": actual_seed,
+                "bpm": eff_bpm,
+                "duration": dur,
+                "timesignature": "4",
+                "language": (language or "en").strip().lower(),
+                "keyscale": keyscale or "C major",
+                "generate_audio_codes": use_audio_codes,
+                "cfg_scale": 2.6,
+                "temperature": 0.74,
+                "top_p": 0.9,
+                "top_k": 0,
+                "min_p": 0.0,
+            },
+        },
+        "4": {"class_type": "ConditioningZeroOut", "inputs": {"conditioning": ["3", 0]}},
+        "5": {"class_type": "EmptyAceStep1.5LatentAudio", "inputs": {"seconds": dur, "batch_size": 1}},
+        "6": {
+            "class_type": "KSampler",
+            "inputs": {
+                "model": ["2", 0],
+                "seed": actual_seed,
+                "steps": max(6, min(32, int(steps))),
+                "cfg": float(cfg),
+                "sampler_name": "euler",
+                "scheduler": "simple",
+                "positive": ["3", 0],
+                "negative": ["4", 0],
+                "latent_image": ["5", 0],
+                "denoise": 1.0,
+            },
+        },
+        "7": {"class_type": "VAEDecodeAudio", "inputs": {"samples": ["6", 0], "vae": ["1v", 0]}},
+        "8": {
+            "class_type": "SaveAudioMP3",
+            "inputs": {"audio": ["7", 0], "filename_prefix": filename_prefix, "quality": "V0"},
+        },
+    }
+
+
+def _master_song_audio(src: Path, dst: Path) -> bool:
+    """Apply transparent studio radio mastering (sub warmth, vocal presence, air shelf, -14 LUFS loudness)."""
+    af = (
+        "highpass=f=28,"
+        "equalizer=f=65:t=q:w=1.2:g=1.8,"
+        "equalizer=f=260:t=q:w=1.5:g=-1.2,"
+        "equalizer=f=3200:t=q:w=1.4:g=1.4,"
+        "equalizer=f=10500:t=q:w=1.0:g=1.8,"
+        "loudnorm=I=-14:TP=-1.0:LRA=9"
+    )
+    res = subprocess.run(
+        [
+            "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+            "-i", str(src),
+            "-af", af,
+            "-c:a", "libmp3lame", "-b:a", "320k",
+            str(dst),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return res.returncode == 0 and dst.exists() and dst.stat().st_size > 4096
+
+
 def build_qwen_edit_workflow(
     prompt: str,
     image_filename: str,
@@ -4236,11 +4426,13 @@ def generate_music_via_comfyui(
     title: str = "",
     instrumental: bool = False,
     strict_lyrics: bool = False,
+    quality: str = "studio",
+    master_audio: bool = True,
     duration_sec: float = 45.0,
     bpm: int = 120,
     keyscale: str = "C major",
     language: str = "en",
-    steps: int = 8,
+    steps: int | None = None,
     cfg: float = 1.0,
     seed: int = -1,
     base_url: str = COMFYUI_URL,
@@ -4251,15 +4443,18 @@ def generate_music_via_comfyui(
     on_prompt_id: Callable[[str], None] | None = None,
     cancel_event: threading.Event | None = None,
 ) -> dict[str, Any]:
-    """Generate a full offline song (vocals + lyrics or pure instrumental) via native ComfyUI ACE-Step 1.5 Turbo."""
+    """Generate a full offline studio-mastered song via native ComfyUI ACE-Step 1.5 (auto-uses XL 4B if installed!)."""
     avail = get_model_availability(comfy_dir)
-    if not avail.get("ace_step_music", {}).get("ready"):
+    use_xl = bool(avail.get("ace_step_music_xl", {}).get("ready"))
+    use_aio = bool(avail.get("ace_step_music", {}).get("ready"))
+    if not use_xl and not use_aio:
         miss = avail.get("ace_step_music", {}).get("missing_gb", 10.0)
         raise RuntimeError(
             f"Offline Music Engine (ACE-Step 1.5 Turbo) needs {miss} GB downloaded first "
-            "(open Setup & Packs -> Offline Music & Song Studio Pack)."
+            "(open Setup & Packs -> Offline Music & Real Human Voices Pack)."
         )
 
+    active_model = "ace_step_music_xl" if use_xl else "ace_step_music"
     if auto_start:
         if on_progress:
             on_progress("Checking local ComfyUI engine...", 3)
@@ -4267,32 +4462,54 @@ def generate_music_via_comfyui(
     elif not is_comfyui_reachable(base_url):
         raise RuntimeError(f"ComfyUI is not running at {base_url}")
 
-    _maybe_unload_on_model_switch("ace_step_music", base_url=base_url)
+    _maybe_unload_on_model_switch(active_model, base_url=base_url)
 
     run_id = uuid.uuid4().hex[:8]
     actual_seed = random.randint(1, 2**31 - 1) if seed < 0 else int(seed)
     clean_lyrics = normalize_ace_lyrics(lyrics, instrumental=instrumental)
     dur = estimate_lyrics_duration_sec(clean_lyrics, bpm=int(bpm), requested_sec=duration_sec)
-    ckpt_name = _resolve_model_slot_filename("ace_step_music", 0, comfy_dir)
+    eff_steps = int(steps) if steps is not None else (8 if (quality or "").lower() == "fast" else 14)
 
-    wf = build_ace_step_music_workflow(
-        tags=tags,
-        lyrics=clean_lyrics,
-        duration_sec=dur,
-        bpm=bpm,
-        keyscale=keyscale,
-        language=language,
-        instrumental=instrumental,
-        strict_lyrics=strict_lyrics,
-        steps=steps,
-        cfg=cfg,
-        seed=actual_seed,
-        filename_prefix=f"clipforge/song_{run_id}",
-        ckpt_name=ckpt_name,
-    )
+    if use_xl:
+        wf = build_ace_step_xl_music_workflow(
+            tags=tags,
+            lyrics=clean_lyrics,
+            duration_sec=dur,
+            bpm=bpm,
+            keyscale=keyscale,
+            language=language,
+            instrumental=instrumental,
+            strict_lyrics=strict_lyrics,
+            steps=eff_steps,
+            cfg=cfg,
+            seed=actual_seed,
+            filename_prefix=f"clipforge/song_xl_{run_id}",
+            unet_name=_resolve_model_slot_filename("ace_step_music_xl", 0, comfy_dir),
+            clip_small=_resolve_model_slot_filename("ace_step_music_xl", 1, comfy_dir),
+            clip_lm=_resolve_model_slot_filename("ace_step_music_xl", 2, comfy_dir),
+            vae_name=_resolve_model_slot_filename("ace_step_music_xl", 3, comfy_dir),
+        )
+    else:
+        ckpt_name = _resolve_model_slot_filename("ace_step_music", 0, comfy_dir)
+        wf = build_ace_step_music_workflow(
+            tags=tags,
+            lyrics=clean_lyrics,
+            duration_sec=dur,
+            bpm=bpm,
+            keyscale=keyscale,
+            language=language,
+            instrumental=instrumental,
+            strict_lyrics=strict_lyrics,
+            steps=eff_steps,
+            cfg=cfg,
+            seed=actual_seed,
+            filename_prefix=f"clipforge/song_{run_id}",
+            ckpt_name=ckpt_name,
+        )
 
     if on_progress:
-        on_progress("Composing song structure & vocals...", 12)
+        eng_lbl = "ACE-Step XL 4B" if use_xl else "ACE-Step 1.5"
+        on_progress(f"Composing song & vocals ({eng_lbl})...", 12)
 
     prompt_id, aud_info, elapsed = _execute_comfyui_workflow(
         workflow=wf,
@@ -4306,10 +4523,25 @@ def generate_music_via_comfyui(
 
     output_dir.mkdir(parents=True, exist_ok=True)
     ext = Path(aud_info["filename"]).suffix.lower() or ".mp3"
-    dest = (output_dir / f"song_{run_id}{ext}").resolve()
+    raw_dest = (output_dir / f"_raw_song_{run_id}{ext}").resolve()
+    dest = (output_dir / f"song_{run_id}.mp3").resolve()
     view_resp = httpx.get(f"{base_url}/view", params=aud_info, timeout=90.0)
     view_resp.raise_for_status()
-    dest.write_bytes(view_resp.content)
+    raw_dest.write_bytes(view_resp.content)
+
+    mastered = False
+    if master_audio:
+        if on_progress:
+            on_progress("Applying studio radio mastering (-14 LUFS)...", 95)
+        try:
+            mastered = _master_song_audio(raw_dest, dest)
+        except Exception:
+            mastered = False
+    if not mastered:
+        dest = (output_dir / f"song_{run_id}{ext}").resolve()
+        raw_dest.replace(dest)
+    else:
+        raw_dest.unlink(missing_ok=True)
 
     # Probe exact actual audio duration
     actual_dur = dur
@@ -4328,11 +4560,14 @@ def generate_music_via_comfyui(
         {
             "kind": "audio",
             "subtype": "song",
-            "model": "ace_step_music",
+            "model": active_model,
             "title": clean_title,
             "tags": tags,
-            "lyrics": "[Instrumental]" if instrumental else lyrics,
+            "lyrics": clean_lyrics,
             "instrumental": bool(instrumental),
+            "strict_lyrics": bool(strict_lyrics),
+            "mastered": mastered,
+            "steps": eff_steps,
             "duration_sec": actual_dur,
             "bpm": int(bpm),
             "keyscale": keyscale,
@@ -4344,9 +4579,11 @@ def generate_music_via_comfyui(
     return {
         "audio_path": str(dest),
         "filename": dest.name,
+        "model": active_model,
         "title": clean_title,
         "tags": tags,
         "instrumental": bool(instrumental),
+        "mastered": mastered,
         "duration_sec": actual_dur,
         "bpm": int(bpm),
         "seed": actual_seed,
